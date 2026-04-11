@@ -2,7 +2,7 @@ use std::io::{BufWriter, IsTerminal, Write, stdout};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use clap::Parser;
 #[cfg(feature = "png")]
 use clap::Subcommand;
@@ -24,7 +24,9 @@ const STYLES: Styles = Styles::styled()
 #[cfg(feature = "png")]
 const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg\x1b[0m
-  \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21T00:00:00Z\x1b[0m
+  \x1b[1;36mcelsius -l Hamburg --at 17\x1b[0m             today at 17:00 UTC
+  \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
+  \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
   \x1b[1;36mcelsius --scene ../skyterm-lab/scenes/golden_hour_cumulus.toml\x1b[0m
   \x1b[1;36mcelsius render --scene scene.toml --out scene.png\x1b[0m
@@ -33,7 +35,9 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
 #[cfg(not(feature = "png"))]
 const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg\x1b[0m
-  \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21T00:00:00Z\x1b[0m
+  \x1b[1;36mcelsius -l Hamburg --at 17\x1b[0m             today at 17:00 UTC
+  \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
+  \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
   \x1b[1;36mcelsius --scene ../skyterm-lab/scenes/golden_hour_cumulus.toml\x1b[0m
 ";
@@ -58,8 +62,11 @@ struct Cli {
     #[arg(long, value_name = "F64", global = true, allow_hyphen_values = true)]
     lon: Option<f64>,
 
-    /// ISO 8601 UTC timestamp to start scrubbing from. Default: now.
-    #[arg(long, value_name = "ISO8601", global = true)]
+    /// UTC time to scrub to. Accepts a bare hour ("17"), HH:MM ("17:30"),
+    /// a relative offset from now ("+3h", "-30m", "+1d"), a date alone
+    /// ("2026-06-21", defaults to 12:00 UTC), or full ISO 8601
+    /// ("2026-06-21T17:00:00Z"). Default: now.
+    #[arg(long, value_name = "TIME", global = true, allow_hyphen_values = true)]
     at: Option<String>,
 
     /// Load a lab scene TOML directly instead of synthesizing from weather.
@@ -159,7 +166,7 @@ fn main() -> Result<()> {
 fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Timeline> {
     let now_unix = Utc::now().timestamp();
     let at_unix = match cli.at.as_deref() {
-        Some(s) => parse_iso8601_utc(s)?,
+        Some(s) => parse_at(s, now_unix)?,
         None => now_unix,
     };
 
@@ -245,22 +252,101 @@ fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
                 .next()
                 .ok_or_else(|| anyhow!("no places matched '{name}'"))?;
             let mut cfg = config::load();
-            cfg.location = Some(LocationPref::Name { name: name.clone() });
+            cfg.location = Some(LocationPref::Name { name });
             config::save(&cfg).context("saving config")?;
             Ok(geo)
         }
     }
 }
 
-fn parse_iso8601_utc(s: &str) -> Result<i64> {
+fn parse_at(raw: &str, now_unix: i64) -> Result<i64> {
+    let s = raw.trim();
+    if s.is_empty() {
+        bail!("--at is empty");
+    }
+
+    // Full RFC 3339, e.g. 2026-06-21T17:00:00Z
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&Utc).timestamp());
     }
-    let trimmed = s.trim_end_matches('Z');
-    let naive = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M"))
-        .map_err(|e| anyhow!("could not parse --at '{s}': {e}"))?;
-    Ok(naive.and_utc().timestamp())
+
+    // Relative offset from now: +3h, -30m, +1d, +90s
+    if s.starts_with('+') || s.starts_with('-') {
+        return parse_relative(s, now_unix);
+    }
+
+    let today = DateTime::<Utc>::from_timestamp(now_unix, 0)
+        .ok_or_else(|| anyhow!("system clock out of range"))?
+        .date_naive();
+
+    // Be friendly about a trailing Z on otherwise naive inputs.
+    let body = s.trim_end_matches('Z');
+
+    // Bare hour: "17", "9"
+    if let Ok(h) = body.parse::<u32>()
+        && h < 24
+    {
+        let t = NaiveTime::from_hms_opt(h, 0, 0).unwrap();
+        return Ok(NaiveDateTime::new(today, t).and_utc().timestamp());
+    }
+
+    // HH:MM or HH:MM:SS today
+    if let Some(t) = parse_clock(body) {
+        return Ok(NaiveDateTime::new(today, t).and_utc().timestamp());
+    }
+
+    // Date only: "2026-06-21" -> noon UTC (most visible sky)
+    if let Ok(d) = NaiveDate::parse_from_str(body, "%Y-%m-%d") {
+        let t = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        return Ok(NaiveDateTime::new(d, t).and_utc().timestamp());
+    }
+
+    // Date + time with either T or space separator.
+    // Accepts a bare hour, HH:MM, or HH:MM:SS on the right side.
+    if let Some((date_part, time_part)) = body.split_once('T').or_else(|| body.split_once(' '))
+        && let Ok(d) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d")
+        && let Some(t) = parse_clock(time_part)
+    {
+        return Ok(NaiveDateTime::new(d, t).and_utc().timestamp());
+    }
+
+    bail!(
+        "could not parse --at '{raw}' (try '17', '17:30', '+3h', '2026-06-21', or '2026-06-21T17:00:00Z')"
+    )
+}
+
+fn parse_clock(s: &str) -> Option<NaiveTime> {
+    if let Ok(h) = s.parse::<u32>()
+        && h < 24
+    {
+        return NaiveTime::from_hms_opt(h, 0, 0);
+    }
+    NaiveTime::parse_from_str(s, "%H:%M")
+        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S"))
+        .ok()
+}
+
+fn parse_relative(s: &str, now_unix: i64) -> Result<i64> {
+    let sign: i64 = if s.starts_with('-') { -1 } else { 1 };
+    let rest = &s[1..];
+    let unit_pos = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .ok_or_else(|| anyhow!("relative offset '{s}' needs a unit (s, m, h, or d)"))?;
+    let (num_str, unit) = rest.split_at(unit_pos);
+    if num_str.is_empty() {
+        bail!("relative offset '{s}' needs a number before the unit");
+    }
+    let n: i64 = num_str
+        .parse()
+        .map_err(|_| anyhow!("bad number in relative offset '{s}'"))?;
+    let secs = match unit {
+        "s" => n,
+        "m" => n * 60,
+        "h" => n * 3600,
+        "d" => n * 86400,
+        _ => bail!("unknown unit '{unit}' in '{s}' (use s, m, h, or d)"),
+    };
+    Ok(now_unix + sign * secs)
 }
 
 fn nearest_hour_index(forecast: &forecast::Forecast, target_unix: i64) -> usize {
@@ -278,4 +364,79 @@ fn nearest_hour_index(forecast: &forecast::Forecast, target_unix: i64) -> usize 
         }
     }
     best
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ymd_hms(y: i32, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> i64 {
+        NaiveDate::from_ymd_opt(y, m, d)
+            .unwrap()
+            .and_hms_opt(hh, mm, ss)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+    }
+
+    // Anchor "now" at 2026-04-11T12:00:00Z for all tests that do "today".
+    fn now() -> i64 {
+        ymd_hms(2026, 4, 11, 12, 0, 0)
+    }
+
+    fn at(s: &str) -> i64 {
+        parse_at(s, now()).unwrap()
+    }
+
+    #[test]
+    fn full_rfc3339_with_z() {
+        assert_eq!(at("2026-06-21T17:00:00Z"), ymd_hms(2026, 6, 21, 17, 0, 0));
+    }
+
+    #[test]
+    fn bare_hour_is_today_utc() {
+        assert_eq!(at("17"), ymd_hms(2026, 4, 11, 17, 0, 0));
+        assert_eq!(at("0"), ymd_hms(2026, 4, 11, 0, 0, 0));
+        assert_eq!(at("23"), ymd_hms(2026, 4, 11, 23, 0, 0));
+    }
+
+    #[test]
+    fn hour_minute_is_today_utc() {
+        assert_eq!(at("17:30"), ymd_hms(2026, 4, 11, 17, 30, 0));
+        assert_eq!(at("09:05"), ymd_hms(2026, 4, 11, 9, 5, 0));
+    }
+
+    #[test]
+    fn relative_offsets() {
+        let n = now();
+        assert_eq!(at("+3h"), n + 3 * 3600);
+        assert_eq!(at("-30m"), n - 30 * 60);
+        assert_eq!(at("+1d"), n + 86400);
+        assert_eq!(at("+90s"), n + 90);
+    }
+
+    #[test]
+    fn date_only_defaults_to_noon() {
+        assert_eq!(at("2026-06-21"), ymd_hms(2026, 6, 21, 12, 0, 0));
+    }
+
+    #[test]
+    fn date_plus_bare_hour() {
+        assert_eq!(at("2026-06-21T17"), ymd_hms(2026, 6, 21, 17, 0, 0));
+        assert_eq!(at("2026-06-21 17"), ymd_hms(2026, 6, 21, 17, 0, 0));
+    }
+
+    #[test]
+    fn date_plus_hhmm_with_trailing_z() {
+        assert_eq!(at("2026-06-21T17:30Z"), ymd_hms(2026, 6, 21, 17, 30, 0));
+    }
+
+    #[test]
+    fn garbage_errors() {
+        let n = now();
+        assert!(parse_at("not-a-time", n).is_err());
+        assert!(parse_at("+h", n).is_err());
+        assert!(parse_at("+3x", n).is_err());
+        assert!(parse_at("25", n).is_err()); // 25 isn't a valid hour and not a date
+    }
 }

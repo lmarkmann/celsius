@@ -22,12 +22,10 @@ build-oracle:
 test:
     cargo test --release --features png
 
-# Render one lab scene to out/<name>.png at the lab's 104x50 authoring size.
 render name:
     mkdir -p out
     cargo run --release --features png -- render --scene {{lab_scenes}}/{{name}}.toml --out out/{{name}}.png
 
-# Render all five lab scenes.
 render-all:
     for s in {{scenes}}; do just render $s; done
 
