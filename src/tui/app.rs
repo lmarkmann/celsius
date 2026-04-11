@@ -105,20 +105,18 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
                             // any key closes help
                             overlay = Overlay::None;
                         }
-                        Overlay::Location { input } => {
-                            match key.code {
-                                KeyCode::Esc => overlay = Overlay::None,
-                                KeyCode::Enter if !input.trim().is_empty() => {
-                                    let name = input.trim().to_string();
-                                    return Ok(RunOutcome::ChangeLocation(name));
-                                }
-                                KeyCode::Char(ch) => input.push(ch),
-                                KeyCode::Backspace => {
-                                    input.pop();
-                                }
-                                _ => {}
+                        Overlay::Location { input } => match key.code {
+                            KeyCode::Esc => overlay = Overlay::None,
+                            KeyCode::Enter if !input.trim().is_empty() => {
+                                let name = input.trim().to_string();
+                                return Ok(RunOutcome::ChangeLocation(name));
                             }
-                        }
+                            KeyCode::Char(ch) => input.push(ch),
+                            KeyCode::Backspace => {
+                                input.pop();
+                            }
+                            _ => {}
+                        },
                         Overlay::None => match key.code {
                             _ if is_quit_key(&key) => return Ok(RunOutcome::Quit),
                             KeyCode::Char(' ') => drift_paused = !drift_paused,
@@ -353,9 +351,23 @@ fn draw_help_overlay(buf: &mut Buffer, area: Rect) {
 fn draw_location_overlay(buf: &mut Buffer, area: Rect, input: &str) {
     let inner = draw_overlay_box(buf, area, 46, 7);
     let mut row = inner.y;
-    put_str(buf, inner.x, row, inner.width, "change location", OVERLAY_FG);
+    put_str(
+        buf,
+        inner.x,
+        row,
+        inner.width,
+        "change location",
+        OVERLAY_FG,
+    );
     row += 2;
-    put_str(buf, inner.x, row, inner.width, "enter place name:", OVERLAY_DIM);
+    put_str(
+        buf,
+        inner.x,
+        row,
+        inner.width,
+        "enter place name:",
+        OVERLAY_DIM,
+    );
     row += 1;
     let cursor = format!("{input}_");
     put_str(buf, inner.x, row, inner.width, &cursor, OVERLAY_FG);
