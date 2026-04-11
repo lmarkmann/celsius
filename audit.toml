@@ -1,0 +1,9 @@
+[advisories]
+# paste 1.0.15 -- unmaintained, transitive via ratatui. No replacement exists
+# upstream; ratatui is tracking this. Revisit when ratatui drops the dep.
+# https://rustsec.org/advisories/RUSTSEC-2024-0436
+#
+# lru 0.12.5 -- unsound IterMut, transitive via ratatui's internal widget cache.
+# We never call into lru directly; exposure is inside ratatui's layout engine.
+# https://rustsec.org/advisories/RUSTSEC-2026-0002
+ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2026-0002"]
