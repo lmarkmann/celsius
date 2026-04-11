@@ -1,0 +1,38 @@
+[package]
+name = "celsius"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[features]
+default = []
+# Compiles in the PNG sink (terminal::encode_png, celsius render subcommand,
+# oracle test). Off by default so `cargo build --release` produces the slim
+# TUI-only binary; the oracle path pulls it in via `--features png`.
+png = ["dep:image"]
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+ratatui = "0.29"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[[test]]
+name = "oracle"
+required-features = ["png"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"

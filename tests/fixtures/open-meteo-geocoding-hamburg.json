@@ -1,0 +1,117 @@
+{
+    "results": [
+        {
+            "id": 2911298,
+            "name": "Hamburg",
+            "latitude": 53.55073,
+            "longitude": 9.99302,
+            "elevation": 9.0,
+            "feature_code": "PPLA",
+            "country_code": "DE",
+            "admin1_id": 2911297,
+            "admin3_id": 6547395,
+            "admin4_id": 7602585,
+            "timezone": "Europe/Berlin",
+            "population": 1845229,
+            "postcodes": [
+                "22539",
+                "20090",
+                "22783"
+            ],
+            "country_id": 2921044,
+            "country": "Germany",
+            "admin1": "Hamburg",
+            "admin3": "Hamburg, Freie und Hansestadt",
+            "admin4": "Hamburg"
+        },
+        {
+            "id": 4113607,
+            "name": "Hamburg",
+            "latitude": 33.22818,
+            "longitude": -91.79763,
+            "elevation": 49.0,
+            "feature_code": "PPLA2",
+            "country_code": "US",
+            "admin1_id": 4099753,
+            "admin2_id": 4099869,
+            "admin3_id": 4104713,
+            "timezone": "America/Chicago",
+            "population": 2791,
+            "postcodes": [
+                "71646"
+            ],
+            "country_id": 6252001,
+            "country": "United States",
+            "admin1": "Arkansas",
+            "admin2": "Ashley",
+            "admin3": "Carter Township"
+        },
+        {
+            "id": 5254739,
+            "name": "Grafton",
+            "latitude": 43.31973,
+            "longitude": -87.95342,
+            "elevation": 231.0,
+            "feature_code": "PPL",
+            "country_code": "US",
+            "admin1_id": 5279468,
+            "admin2_id": 5266102,
+            "admin3_id": 5254745,
+            "timezone": "America/Chicago",
+            "population": 11527,
+            "postcodes": [
+                "53024"
+            ],
+            "country_id": 6252001,
+            "country": "United States",
+            "admin1": "Wisconsin",
+            "admin2": "Ozaukee",
+            "admin3": "Village of Grafton"
+        },
+        {
+            "id": 5119833,
+            "name": "Hamburg",
+            "latitude": 42.71589,
+            "longitude": -78.82948,
+            "elevation": 250.0,
+            "feature_code": "PPL",
+            "country_code": "US",
+            "admin1_id": 5128638,
+            "admin2_id": 5116642,
+            "admin3_id": 5119838,
+            "timezone": "America/New_York",
+            "population": 9576,
+            "postcodes": [
+                "14075"
+            ],
+            "country_id": 6252001,
+            "country": "United States",
+            "admin1": "New York",
+            "admin2": "Erie",
+            "admin3": "Town of Hamburg"
+        },
+        {
+            "id": 5192444,
+            "name": "Hamburg",
+            "latitude": 40.55565,
+            "longitude": -75.98188,
+            "elevation": 122.0,
+            "feature_code": "PPL",
+            "country_code": "US",
+            "admin1_id": 6254927,
+            "admin2_id": 5180052,
+            "admin3_id": 5192448,
+            "timezone": "America/New_York",
+            "population": 4398,
+            "postcodes": [
+                "19526"
+            ],
+            "country_id": 6252001,
+            "country": "United States",
+            "admin1": "Pennsylvania",
+            "admin2": "Berks",
+            "admin3": "Borough of Hamburg"
+        }
+    ],
+    "generationtime_ms": 0.77307224
+}

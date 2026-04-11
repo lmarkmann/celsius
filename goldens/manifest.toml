@@ -1,0 +1,27 @@
+# celsius goldens: raw 104x50 renders (no chrome).
+# scene_sha256 is the SHA-256 of the lab scene TOML the PNG was rendered from;
+# png_sha256 is the SHA-256 of the locked PNG. The oracle test recomputes both
+# and refuses to pass if either drifts. Regenerate with:
+#   just lock
+# Lab scene TOMLs live in ../skyterm-lab/scenes/ (sibling of celsius in ~/Documents).
+
+
+[golden_hour_cumulus]
+scene_sha256 = "c8e5050c01b63f05b7caba61b9f782672e3249dd6adc9ebede67f4ba4d4939f5"
+png_sha256 = "3eb7a62ac5e146135909ed419f7b114f7cd64186dc493b09080329236a209fd5"
+
+[blue_hour_calm]
+scene_sha256 = "ef8239b78c9f83c092bd46f00e04ca30c4337d82ecac5b8da97588bc967d2439"
+png_sha256 = "3c356a92d56fd9fdc87645e81058bf3a1da97cc9cab9fe1fa3f2d61ed3c6a548"
+
+[high_noon_clear]
+scene_sha256 = "a916956d770e55c7d2dec3beecf23455c359444c419d302ff6ace813d80e79d7"
+png_sha256 = "0cfca12221e3218c75138c60daca60a22adf034f7a1e69d65c97bc244e7d99f0"
+
+[moonlit_clear_winter]
+scene_sha256 = "f1a28172183a15c4b1b0ca9f494240e5dc9642cbc658a948a3d0fcc40c5f893e"
+png_sha256 = "a5e4f05fbe5ad543bb8a5b850d236bd9df5d4f012253b25b666493cb84c97ac9"
+
+[stormy_afternoon_advancing]
+scene_sha256 = "28402c319dfcf2aab70e16d6fb81f2594409b7d055f33a5cc193f728c3d1cf40"
+png_sha256 = "3fdbe1eae1a9851eaf46e9a7f69b316a3b98e8edcc492f12a5962dcbbe938aed"

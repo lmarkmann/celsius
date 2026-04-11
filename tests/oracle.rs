@@ -1,0 +1,74 @@
+//! Oracle test: render each lab scene at 104x50 and verify both the scene
+//! TOML and the resulting PNG hash the same as the entries in
+//! `goldens/manifest.toml`. A mismatch on scene_sha256 means the vendored
+//! scene file has been edited; a mismatch on png_sha256 means the render
+//! pipeline has drifted. Regenerate goldens with `just lock` when intended.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result, bail};
+use celsius::{load_scene, render, terminal};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+
+const WIDTH: u32 = 104;
+const HEIGHT: u32 = 50;
+
+#[derive(Deserialize)]
+struct Entry {
+    scene_sha256: String,
+    png_sha256: String,
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("{:x}", h.finalize())
+}
+
+#[test]
+fn lab_scenes_match_locked_goldens() -> Result<()> {
+    let root = repo_root();
+    let manifest_path = root.join("goldens/manifest.toml");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: BTreeMap<String, Entry> = toml::from_str(&manifest_text)?;
+
+    for (name, entry) in &manifest {
+        let scene_path = root
+            .join("../skyterm-lab/scenes")
+            .join(format!("{name}.toml"));
+        if !scene_path.exists() {
+            eprintln!("skipping {name}: {} not present", scene_path.display());
+            continue;
+        }
+        let scene_bytes = fs::read(&scene_path)?;
+        let scene_sha = sha256_hex(&scene_bytes);
+        if scene_sha != entry.scene_sha256 {
+            bail!(
+                "{name}: scene TOML drifted\n  expected {}\n  got      {}",
+                entry.scene_sha256,
+                scene_sha
+            );
+        }
+
+        let state = load_scene(&scene_path)?;
+        let pixels = render(&state, WIDTH, HEIGHT);
+        let png = terminal::encode_png(&pixels)?;
+        let png_sha = sha256_hex(&png);
+        if png_sha != entry.png_sha256 {
+            bail!(
+                "{name}: render drifted\n  expected {}\n  got      {}",
+                entry.png_sha256,
+                png_sha
+            );
+        }
+    }
+    Ok(())
+}

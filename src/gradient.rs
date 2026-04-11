@@ -1,0 +1,57 @@
+//! Keyframe-based vertical gradient sampling in OKLab.
+//!
+//! The sky gradient is authored as (t, sRGB) keyframes where t=0 is the
+//! zenith and t=1 is below the horizon. Keyframes convert to OKLab once at
+//! construction; sampling interpolates in OKLab and leaves sRGB conversion
+//! to the final pixel quantization.
+
+use crate::colorspace::{Oklab, lerp_oklab, rgb_u8_to_oklab};
+
+#[derive(Copy, Clone, Debug)]
+pub struct Stop {
+    pub t: f64,
+    pub color: Oklab,
+}
+
+#[derive(Clone, Debug)]
+pub struct Gradient {
+    stops: Vec<Stop>,
+}
+
+impl Gradient {
+    pub fn from_oklab_stops(stops: Vec<(f64, Oklab)>) -> Self {
+        Self {
+            stops: stops
+                .into_iter()
+                .map(|(t, color)| Stop { t, color })
+                .collect(),
+        }
+    }
+
+    pub fn from_rgb_stops(stops: &[(f64, [u8; 3])]) -> Self {
+        Self {
+            stops: stops
+                .iter()
+                .map(|(t, rgb)| Stop {
+                    t: *t,
+                    color: rgb_u8_to_oklab(rgb[0], rgb[1], rgb[2]),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn sample(&self, t: f64) -> Oklab {
+        let t = t.clamp(0.0, 1.0);
+        let stops = &self.stops;
+        for i in 0..stops.len() - 1 {
+            let s0 = stops[i];
+            let s1 = stops[i + 1];
+            if t <= s1.t {
+                let span = s1.t - s0.t;
+                let k = if span > 0.0 { (t - s0.t) / span } else { 0.0 };
+                return lerp_oklab(s0.color, s1.color, k);
+            }
+        }
+        stops.last().copied().unwrap().color
+    }
+}

@@ -1,0 +1,103 @@
+{
+  "latitude": 53.56,
+  "longitude": 10.0,
+  "generationtime_ms": 0.1901388168334961,
+  "utc_offset_seconds": 0,
+  "timezone": "GMT",
+  "timezone_abbreviation": "GMT",
+  "elevation": 3.0,
+  "hourly_units": {
+    "time": "iso8601",
+    "temperature_2m": "\u00b0C",
+    "cloud_cover_low": "%",
+    "cloud_cover_mid": "%",
+    "cloud_cover_high": "%",
+    "precipitation": "mm",
+    "wind_speed_10m": "km/h",
+    "wind_direction_10m": "\u00b0",
+    "visibility": "m",
+    "weather_code": "wmo code"
+  },
+  "hourly": {
+    "time": [
+      "2026-04-11T00:00",
+      "2026-04-11T01:00",
+      "2026-04-11T02:00",
+      "2026-04-11T03:00",
+      "2026-04-11T04:00",
+      "2026-04-11T05:00"
+    ],
+    "temperature_2m": [
+      4.8,
+      4.5,
+      4.2,
+      3.2,
+      2.9,
+      2.6
+    ],
+    "cloud_cover_low": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      6
+    ],
+    "cloud_cover_mid": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "cloud_cover_high": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "precipitation": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "wind_speed_10m": [
+      4.0,
+      4.0,
+      4.1,
+      4.6,
+      5.1,
+      5.6
+    ],
+    "wind_direction_10m": [
+      90,
+      90,
+      135,
+      135,
+      129,
+      130
+    ],
+    "visibility": [
+      26600.0,
+      29020.0,
+      29360.0,
+      22800.0,
+      26020.0,
+      25320.0
+    ],
+    "weather_code": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+}
