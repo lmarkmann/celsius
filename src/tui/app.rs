@@ -15,7 +15,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Color;
 use ratatui::widgets::Widget;
 
@@ -134,15 +134,55 @@ fn handle_scrub(key: &KeyEvent, index: &mut usize, timeline: &Timeline) {
     *index = timeline.clamp(new);
 }
 
+const CHROME_BG: Color = Color::Rgb(14, 14, 14);
+const CHROME_FG: Color = Color::Rgb(140, 140, 140);
+
 fn draw(buf: &mut Buffer, area: Rect, state: &SkyState) {
     if area.width < MIN_COLS || area.height < MIN_ROWS {
         draw_too_small(buf, area);
         return;
     }
-    let px_width = area.width as u32;
-    let px_height = (area.height as u32) * 2;
+    let [header, sky_area, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+
+    draw_chrome_bar(
+        buf,
+        header,
+        &state.chrome.header_left,
+        &state.chrome.header_right,
+    );
+    draw_chrome_bar(buf, footer, &state.chrome.footer, &state.chrome.keys);
+
+    let px_width = sky_area.width as u32;
+    let px_height = (sky_area.height as u32) * 2;
     let pixels = render(state, px_width, px_height);
-    SkyWidget { pixels: &pixels }.render(area, buf);
+    SkyWidget { pixels: &pixels }.render(sky_area, buf);
+}
+
+fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
+    for x in area.x..area.x + area.width {
+        let cell = &mut buf[(x, area.y)];
+        cell.set_char(' ');
+        cell.set_bg(CHROME_BG);
+        cell.set_fg(CHROME_FG);
+    }
+    let right_chars: Vec<char> = right.chars().collect();
+    let right_len = right_chars.len() as u16;
+    let right_start = (area.x + area.width).saturating_sub(right_len);
+    let max_left = right_start.saturating_sub(area.x + 1) as usize;
+    for (i, ch) in left.chars().enumerate().take(max_left) {
+        buf[(area.x + i as u16, area.y)].set_char(ch);
+    }
+    for (i, ch) in right_chars.into_iter().enumerate() {
+        let x = right_start + i as u16;
+        if x < area.x + area.width {
+            buf[(x, area.y)].set_char(ch);
+        }
+    }
 }
 
 fn draw_too_small(buf: &mut Buffer, area: Rect) {
