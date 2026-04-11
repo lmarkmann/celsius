@@ -14,8 +14,7 @@
 <!-- README subtitle (above the GIF): "The sky above you, in your terminal." -->
 <!-- GitHub repo description: "a sky in your terminal" -->
 
-<!-- TODO: replace src with actual demo.gif once a recording exists -->
-<img src="demo.gif" alt="celsius demo" width="100%">
+<img src="demos/demo.gif" alt="celsius demo" width="100%">
 
 *The sky above you, in your terminal.*
 
