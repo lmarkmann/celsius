@@ -1,9 +1,3 @@
-//! celsius library root.
-//!
-//! The architectural contract is `scene.toml -> SkyState -> PixelBuffer
-//! -> terminal` (or PNG for oracle tests), three pure stages separated by
-//! one typed interface. This module just re-exports the pieces.
-
 pub mod astro;
 pub mod colorspace;
 pub mod config;

@@ -1,8 +1,3 @@
-//! User config: ~/.config/celsius/config.toml
-//!
-//! Stores the default location so bare `celsius` works after first run.
-//! The file is optional; missing == default config == no saved location.
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +7,6 @@ pub struct Config {
     pub location: Option<LocationPref>,
 }
 
-/// Either a place name (geocoded at launch) or explicit coordinates.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum LocationPref {

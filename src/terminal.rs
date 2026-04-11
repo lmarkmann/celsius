@@ -1,11 +1,3 @@
-//! PixelBuffer sinks: PNG for oracle tests, terminal cells for the TUI.
-//!
-//! The TUI path is half-block rendering where each terminal cell holds two
-//! vertically stacked pixels as a foreground/background pair printed as
-//! `▀`. The PNG sink only exists for the oracle path (lab-parity diffing),
-//! so it sits behind the `png` feature and is absent from the default
-//! release binary.
-
 #[cfg(feature = "png")]
 use std::io::Cursor;
 #[cfg(feature = "png")]

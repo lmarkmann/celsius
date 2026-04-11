@@ -1,18 +1,3 @@
-//! Fixture-based tests for the Open-Meteo JSON types.
-//!
-//! No live network — the fixtures are checked in under `tests/fixtures/`.
-//! Regenerate them with:
-//!
-//!   curl "https://geocoding-api.open-meteo.com/v1/search?name=Hamburg&count=5&language=en&format=json" \
-//!     | python3 -m json.tool > tests/fixtures/open-meteo-geocoding-hamburg.json
-//!
-//!   curl "https://api.open-meteo.com/v1/forecast?latitude=53.5511&longitude=9.9937&hourly=temperature_2m,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation,wind_speed_10m,wind_direction_10m,visibility,weather_code&timezone=UTC&forecast_days=2" \
-//!     | python3 -m json.tool > tests/fixtures/open-meteo-forecast-hamburg.json
-//!
-//! The forecast fixture is then truncated to the first 6 hours by hand to
-//! keep the file small. The with-nulls fixture is hand-crafted to exercise
-//! the `Option<f64>` path.
-
 use celsius::weather::forecast::Forecast;
 use celsius::weather::location::GeoResult;
 use serde::Deserialize;

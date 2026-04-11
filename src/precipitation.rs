@@ -1,10 +1,3 @@
-//! Rain and snow particle overlay.
-//!
-//! Streaks are blended into the pixel buffer after the main compositor
-//! runs. Rain uses a vertical color gradient from cool near-white at the
-//! top to slate gray at the bottom so the streaks read against both bright
-//! upper sky and darker storm clouds below. Snow is a single near-white.
-
 use crate::colorspace::{Oklab, PixelBuffer, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::noise::Mt19937;
 use crate::scene::Precipitation;

@@ -1,11 +1,3 @@
-//! Moon disc with phase shading and glow halo.
-//!
-//! Phase convention: 0 = new moon, 0.5 = full moon, 1 = new moon again.
-//! Waxing moons have phase in (0, 0.5) with the right side lit. Waning
-//! moons have phase in (0.5, 1) with the left side lit. The terminator is
-//! a soft ellipse transition rather than a hard edge so it does not look
-//! blocky at terminal resolution. The disc edge also fades softly.
-
 use std::f64::consts::TAU;
 
 use crate::colorspace::{Oklab, lerp_oklab, rgb_u8_to_oklab};

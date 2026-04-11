@@ -1,9 +1,3 @@
-//! Oracle test: render each lab scene at 104x50 and verify both the scene
-//! TOML and the resulting PNG hash the same as the entries in
-//! `goldens/manifest.toml`. A mismatch on scene_sha256 means the vendored
-//! scene file has been edited; a mismatch on png_sha256 means the render
-//! pipeline has drifted. Regenerate goldens with `just lock` when intended.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;

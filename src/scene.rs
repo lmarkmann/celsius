@@ -1,9 +1,3 @@
-//! SkyState plus TOML scene loader.
-//!
-//! A scene TOML is the sole input to the renderer. `load_scene` is the
-//! boundary crossing: `Path -> SkyState`. Field names here match the lab's
-//! TOMLs verbatim so the five reference scenes deserialize unchanged.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -114,7 +108,6 @@ pub struct SkyState {
     pub stars: Option<Stars>,
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
-    /// Wind speed in km/h; drives cloud drift in the TUI. Zero for scene TOMLs.
     pub wind_speed_kmh: f64,
 }
 

@@ -1,10 +1,3 @@
-//! Keyframe-based vertical gradient sampling in OKLab.
-//!
-//! The sky gradient is authored as (t, sRGB) keyframes where t=0 is the
-//! zenith and t=1 is below the horizon. Keyframes convert to OKLab once at
-//! construction; sampling interpolates in OKLab and leaves sRGB conversion
-//! to the final pixel quantization.
-
 use crate::colorspace::{Oklab, lerp_oklab, rgb_u8_to_oklab};
 
 #[derive(Copy, Clone, Debug)]

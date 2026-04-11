@@ -1,32 +1,15 @@
-//! Solar and lunar position from geographic coordinates and UTC timestamp.
-//!
-//! Algorithm: Jean Meeus, "Astronomical Algorithms" 2nd ed., ch. 25 (sun) and ch. 47 (moon).
-//! Sun accuracy ~1 arcmin over 1950-2050. Moon position ~0.3 deg, phase ~0.01.
-//!
-//! Output uses local horizontal coordinates:
-//!   altitude: degrees above the horizon (negative = below)
-//!   azimuth:  degrees clockwise from north (meteorological, 0=N, 90=E)
-//!
-//! Polar edge cases are handled naturally: altitude can stay negative all day
-//! (polar night) or positive all day (midnight sun). The caller decides what
-//! to render; this module just reports what the sky actually looks like.
-
 use std::f64::consts::PI;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AltAz {
-    /// Degrees above the horizon. Negative means below; -90 is nadir.
     pub altitude: f64,
-    /// Degrees clockwise from north: 0=N, 90=E, 180=S, 270=W.
     pub azimuth: f64,
 }
 
 #[derive(Clone, Debug)]
 pub struct MoonState {
     pub altaz: AltAz,
-    /// Illuminated fraction, 0..1. 0=new, ~0.5=quarter, 1=full.
     pub illumination: f64,
-    /// Phase angle 0..1. 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter.
     pub phase: f64,
 }
 
@@ -42,22 +25,18 @@ fn norm(d: f64) -> f64 {
     d.rem_euclid(360.0)
 }
 
-/// Julian Day from Unix UTC (seconds since 1970-01-01T00:00:00Z).
 fn jd(unix_utc: i64) -> f64 {
     2_440_587.5 + unix_utc as f64 / 86_400.0
 }
 
-/// Julian centuries from J2000.0.
 fn jc(jd: f64) -> f64 {
     (jd - 2_451_545.0) / 36_525.0
 }
 
-/// Obliquity of the ecliptic in degrees. Meeus eq. 22.2.
 fn obliquity(t: f64) -> f64 {
     23.439_291_11 - 0.013_004_2 * t - 1.64e-7 * t * t + 5.04e-7 * t * t * t
 }
 
-/// Greenwich Apparent Sidereal Time in degrees. Meeus eq. 12.4 + nutation correction.
 fn gast(jd_val: f64) -> f64 {
     let t = jc(jd_val);
     // Greenwich Mean Sidereal Time
@@ -74,7 +53,6 @@ fn gast(jd_val: f64) -> f64 {
     norm(gmst + eq_equinoxes)
 }
 
-/// Convert equatorial (RA deg, dec deg) to local horizontal given observer lat, lon, and JD.
 fn to_horizontal(ra: f64, dec: f64, lat: f64, lon: f64, jd_val: f64) -> AltAz {
     let ha = rad(norm(gast(jd_val) + lon - ra));
     let dec_r = rad(dec);
@@ -93,10 +71,6 @@ fn to_horizontal(ra: f64, dec: f64, lat: f64, lon: f64, jd_val: f64) -> AltAz {
     AltAz { altitude, azimuth }
 }
 
-/// Sun altitude and azimuth at the given UTC moment and observer location.
-///
-/// `lat` and `lon` are decimal degrees (+N, +E).
-/// `unix_utc` is seconds since 1970-01-01T00:00:00Z.
 pub fn sun_position(lat: f64, lon: f64, unix_utc: i64) -> AltAz {
     let jd_val = jd(unix_utc);
     let t = jc(jd_val);
@@ -123,10 +97,6 @@ pub fn sun_position(lat: f64, lon: f64, unix_utc: i64) -> AltAz {
     to_horizontal(ra, dec, lat, lon, jd_val)
 }
 
-/// Moon position and phase at the given UTC moment and observer location.
-///
-/// `lat` and `lon` are decimal degrees (+N, +E).
-/// `unix_utc` is seconds since 1970-01-01T00:00:00Z.
 pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     let jd_val = jd(unix_utc);
     let t = jc(jd_val);
@@ -227,14 +197,6 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     }
 }
 
-/// Convert sun altitude and azimuth to normalized (x_frac, y_frac) pixel fractions.
-///
-/// y_frac=0 is top (zenith), y_frac=1 is bottom (horizon and below).
-/// x_frac=0 is left, x_frac=1 is right, centered on south (azimuth 180).
-///
-/// The view covers +/-90 degrees of azimuth centered on south (so NE/NW are not
-/// visible, matching a southward-facing sky view). Adjust `center_az` to point the
-/// view elsewhere (e.g. 0 for a north-facing view).
 pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> (f64, f64) {
     // y_frac: altitude 90 (zenith) -> 0, altitude 0 (horizon) -> 1, clamp below
     let y_frac = 1.0 - altaz.altitude / 90.0;

@@ -1,14 +1,3 @@
-//! Open-Meteo hourly forecast client.
-//!
-//! Fetches a seven-day hourly window in UTC for a given (lat, lon). The
-//! synthesis layer (Phase 3) indexes into the returned arrays by hour; the
-//! TUI scrubs by moving the hour index, not by re-fetching.
-//!
-//! Nulls in the hourly arrays are legitimate (Open-Meteo can gap individual
-//! variables for individual hours) so every value is `Option<f64>`. The
-//! synthesis layer falls back to neighbouring hours or defaults when it
-//! encounters a null.
-
 use serde::Deserialize;
 
 use super::WeatherError;
@@ -39,8 +28,6 @@ pub struct Forecast {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HourlyArrays {
-    /// ISO 8601 local-time strings without zone suffix, e.g. "2026-04-11T00:00".
-    /// Because the request uses `timezone=UTC`, these are UTC wall clocks.
     pub time: Vec<String>,
     pub temperature_2m: Vec<Option<f64>>,
     pub cloud_cover_low: Vec<Option<f64>>,
@@ -54,8 +41,6 @@ pub struct HourlyArrays {
 }
 
 impl HourlyArrays {
-    /// Length of the hourly window. Open-Meteo guarantees equal-length arrays
-    /// across all requested variables.
     pub fn len(&self) -> usize {
         self.time.len()
     }
@@ -65,7 +50,6 @@ impl HourlyArrays {
     }
 }
 
-/// Fetch the 7-day hourly forecast for a location in UTC.
 pub fn fetch(lat: f64, lon: f64) -> Result<Forecast, WeatherError> {
     let response = ureq::get(ENDPOINT)
         .query("latitude", &lat.to_string())
