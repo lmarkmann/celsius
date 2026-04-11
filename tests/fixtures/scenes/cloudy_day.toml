@@ -1,0 +1,61 @@
+# cloudy_day
+# Hamburg, typical autumn overcast. Sun hidden at ~25 deg altitude, full cloud
+# cover but no precipitation, no haze. The sky is bright and diffuse -- more
+# light comes from above than from the horizon, so zenith is lighter than the
+# murky bottom edge. Distinct from stormy_afternoon: no rain, no greenish cast,
+# no drama. Just a flat uniform gray that covers half of Hamburg's calendar.
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [168, 172, 180] },
+  { t = 0.30, rgb = [172, 172, 174] },
+  { t = 0.60, rgb = [172, 170, 165] },
+  { t = 0.82, rgb = [174, 170, 160] },
+  { t = 1.00, rgb = [176, 170, 158] },
+]
+
+[sun]
+# mid-morning autumn angle, hidden behind cloud sheet. Keeping it in the
+# upper frame lets the renderer create a natural diffuse bright patch where
+# the sun is -- the way an overcast sky actually looks.
+x_frac  = 0.48
+y_frac  = 0.28
+radius  = 3.0
+visible = false
+
+[haze]
+# just enough to soften the horizon; not enough to flatten everything.
+rgb      = [178, 174, 165]
+onset_t  = 0.55
+strength = 0.48
+exponent = 1.4
+
+[[clouds.layers]]
+# high altostratus sheet -- moderate density so gradient shows through
+cover          = 1.35
+altitude_t     = 0.22
+altitude_sigma = 0.12
+scale_x        = 5.4
+scale_y        = 3.0
+threshold      = 0.28
+seed           = 2291
+offset_x       = 1.0
+offset_y       = 0.8
+
+[[clouds.layers]]
+# stratocumulus layer giving the underside some texture
+cover          = 0.95
+altitude_t     = 0.50
+altitude_sigma = 0.10
+scale_x        = 4.2
+scale_y        = 2.4
+threshold      = 0.38
+seed           = 7744
+offset_x       = 2.2
+offset_y       = 1.6
+
+[chrome]
+header_left  = "skyterm"
+header_right = "hamburg   tue 21 oct   11:34"
+footer       = "12°  overcast   wind w 14   visibility 18 km"
+keys         = "m map    space pause    <- -> scrub    q quit"

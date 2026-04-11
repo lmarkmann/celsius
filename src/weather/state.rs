@@ -41,7 +41,17 @@ pub fn compose(
     let moon = build_moon(&moon_state, center_az);
     let stars = build_stars(sun_altaz.altitude, lat, lon, day_ordinal);
     let clouds = build_clouds(cover_low, cover_mid, cover_high, lat, lon, day_ordinal);
-    let haze = build_haze(forecast.hourly.visibility[h]);
+    let haze = if palette == Palette::CloudyDay {
+        // Cloudy-day palette needs its own horizon haze regardless of visibility.
+        Some(Haze {
+            rgb: [178, 174, 165],
+            onset_t: 0.55,
+            strength: 0.48,
+            exponent: 1.4,
+        })
+    } else {
+        build_haze(forecast.hourly.visibility[h])
+    };
     let precipitation = build_precipitation(
         forecast.hourly.weather_code[h],
         forecast.hourly.precipitation[h],
