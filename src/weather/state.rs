@@ -18,7 +18,7 @@ use crate::scene::{Chrome, CloudLayer, Haze, Moon, Precipitation, SkyState, Star
 
 use super::WeatherError;
 use super::forecast::Forecast;
-use super::gradients::{gradient_for, select_palette};
+use super::gradients::{Palette, gradient_for, select_palette};
 use super::location::GeoResult;
 
 const CENTER_AZ: f64 = 180.0;
@@ -336,6 +336,40 @@ fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
     lat_bits.hash(&mut hasher);
     lon_bits.hash(&mut hasher);
     hasher.finish()
+}
+
+/// A dark, cloud-free sky shown when the weather fetch fails.
+/// The error message appears in the chrome footer; `r` retries.
+pub fn error_sky(msg: &str) -> SkyState {
+    let gradient = gradient_for(Palette::Night);
+    let first_line = msg.lines().next().unwrap_or(msg);
+    let footer = if first_line.len() > 72 {
+        format!("{}...", &first_line[..72])
+    } else {
+        first_line.to_string()
+    };
+    SkyState {
+        name: "error".to_string(),
+        gradient,
+        sun: Sun {
+            x_frac: 0.5,
+            y_frac: 1.5,
+            radius: 0.0,
+            visible: false,
+        },
+        clouds: vec![],
+        chrome: Chrome {
+            header_left: "celsius".to_string(),
+            header_right: String::new(),
+            footer,
+            keys: "r retry   q quit".to_string(),
+        },
+        haze: None,
+        stars: None,
+        moon: None,
+        precipitation: None,
+        wind_speed_kmh: 0.0,
+    }
 }
 
 fn mix_seed(parts: &[u64]) -> u64 {
