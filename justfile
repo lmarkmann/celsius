@@ -41,3 +41,6 @@ lock:
 
 verify:
     cargo test --release --features png -- --nocapture
+
+bench:
+    cargo bench --bench render
