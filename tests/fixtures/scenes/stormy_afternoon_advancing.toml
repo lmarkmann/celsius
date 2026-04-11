@@ -1,0 +1,63 @@
+# stormy_afternoon_advancing
+# overcast low + mid layers, visibility ~6 km, rain advancing from the southwest
+# sun hidden behind full cloud cover; position retained for cloud lighting direction
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [36, 42, 48] },   # dark greenish-gray zenith
+  { t = 0.18, rgb = [62, 66, 72] },   # heavy mid ceiling
+  { t = 0.42, rgb = [96, 94, 90] },
+  { t = 0.62, rgb = [134, 128, 118] },
+  { t = 0.80, rgb = [162, 155, 142] },
+  { t = 1.00, rgb = [190, 182, 168] }, # pale hazy horizon
+]
+
+[sun]
+x_frac  = 0.40
+y_frac  = 0.70
+radius  = 4.0
+visible = false
+
+[[clouds.layers]]
+# mid-level altostratus: primary overcast blanket
+cover          = 1.00
+altitude_t     = 0.36
+altitude_sigma = 0.12
+scale_x        = 4.5
+scale_y        = 3.0
+threshold      = 0.14
+seed           = 553
+offset_x       = 0.6
+offset_y       = 1.1
+
+[[clouds.layers]]
+# low nimbostratus: rain-bearing layer pressing down toward the horizon
+cover          = 0.92
+altitude_t     = 0.57
+altitude_sigma = 0.09
+scale_x        = 5.8
+scale_y        = 2.6
+threshold      = 0.18
+seed           = 1024
+offset_x       = 1.4
+offset_y       = 2.0
+
+[haze]
+rgb      = [188, 180, 168]
+onset_t  = 0.12
+strength = 0.72
+exponent = 1.6
+
+[precipitation]
+kind       = "rain"
+intensity  = 0.45
+angle_deg  = 14.0   # wind SW 28 kts, streaks lean right (toward NE)
+seed       = 8177
+streak_len = 5
+opacity    = 0.40
+
+[chrome]
+header_left  = "skyterm"
+header_right = "hamburg   thu 10 apr   14:23"
+footer       = "9°  overcast   wind sw 28   visibility 6 km   rain advancing"
+keys         = "m map    space pause    ← → scrub    q quit"

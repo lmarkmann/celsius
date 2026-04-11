@@ -1,0 +1,53 @@
+# Golden hour over Hamburg; sun at ~+5 deg altitude, scattered mid-level
+# cumulus, clear air. The hardest scene to get right and therefore the
+# scene we tune first. If this looks beautiful everything else falls in
+# line; if this looks muddy nothing on top will save it.
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [28, 46, 102] },
+  { t = 0.22, rgb = [58, 66, 128] },
+  { t = 0.42, rgb = [132, 88, 144] },
+  { t = 0.60, rgb = [208, 118, 135] },
+  { t = 0.75, rgb = [242, 160, 105] },
+  { t = 0.85, rgb = [252, 170, 92] },
+  { t = 0.92, rgb = [238, 138, 78] },
+  { t = 0.97, rgb = [188, 95, 68] },
+  { t = 1.00, rgb = [118, 62, 55] },
+]
+
+[sun]
+x_frac = 0.68
+y_frac = 0.84
+radius = 3.8
+visible = true
+
+[[clouds.layers]]
+# main cumulus mass: sitting in the warm band so it catches sunset light
+cover = 1.9
+altitude_t = 0.62
+altitude_sigma = 0.070
+scale_x = 2.8
+scale_y = 2.2
+threshold = 0.48
+seed = 101
+offset_x = 0.4
+offset_y = 1.3
+
+[[clouds.layers]]
+# scattered warm-lit puffs on the right for balance with the left mass
+cover = 1.2
+altitude_t = 0.58
+altitude_sigma = 0.055
+scale_x = 3.2
+scale_y = 2.4
+threshold = 0.56
+seed = 4096
+offset_x = 2.6
+offset_y = 0.4
+
+[chrome]
+header_left = "skyterm"
+header_right = "hamburg   sat 11 apr   18:47"
+footer = "11°  clear   wind 18 nw   sunset 20:12   next rain none"
+keys = "m map    space pause    ← → scrub    q quit"
