@@ -1,10 +1,3 @@
-//! Procedural starfield: catalog generation and pixel-buffer painting.
-//!
-//! Stars are precomputed from a seed into a map keyed by (px, py). The
-//! render loop adds the additive OKLab contribution directly so the inner
-//! loop stays tight. Sky luminance from the gradient suppresses stars at
-//! construction time so there is no per-pixel brightness check at render.
-
 use std::collections::HashMap;
 
 use crate::colorspace::Oklab;

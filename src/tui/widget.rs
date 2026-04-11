@@ -1,11 +1,3 @@
-//! PixelBuffer -> ratatui half-block widget.
-//!
-//! Each terminal cell holds two vertically stacked pixels: the top pixel is
-//! the foreground color of `▀`, the bottom pixel is the background. A
-//! PixelBuffer sized `W x 2H` fills a `W x H` cell area exactly. This matches
-//! the lab's authoring aspect (104x50 pixels -> 104x25 cells) and lets the
-//! sky fill any terminal size without stretching.
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;

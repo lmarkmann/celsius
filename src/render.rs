@@ -1,11 +1,3 @@
-//! Render a SkyState into a PixelBuffer.
-//!
-//! Pure function: (&SkyState, width, height) -> PixelBuffer. The renderer
-//! has no knowledge of files, terminals, or image encoders. It samples the
-//! gradient, adds sun glow and disc, composites cloud layers back to
-//! front, applies haze, overlays the moon, and returns sRGB pixels ready
-//! for terminal cell quantization or PNG encoding.
-
 use crate::colorspace::{Oklab, PixelBuffer, Rgb, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::haze;
 use crate::moon;

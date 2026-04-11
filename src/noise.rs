@@ -1,12 +1,3 @@
-//! Seeded 2D value noise with fbm and domain-warping helpers.
-//!
-//! Cloud shapes come from domain-warped fbm. The warping is what makes the
-//! silhouettes look like real clouds instead of noise; see Inigo Quilez's
-//! writeups on domain warping for the canonical reference. The PRNG is
-//! Mersenne Twister MT19937, seeded via init_by_array to match Python's
-//! random.Random(seed) bit-for-bit; this is what keeps the celsius noise
-//! grid, star positions, and precipitation streaks identical to the lab.
-
 pub const NOISE_WIDTH: usize = 96;
 pub const NOISE_HEIGHT: usize = 32;
 

@@ -1,13 +1,3 @@
-//! Compose a SkyState from a forecast hour, a location, and a wall clock.
-//!
-//! This is the heart of the live weather pipeline. Everything upstream is
-//! Open-Meteo JSON; everything downstream is the lab's renderer. The job
-//! here is to make those two halves agree without tuning anything visual --
-//! the gradient palettes are lifted verbatim, the cloud thresholds and
-//! cover values are derived from the lab scenes, and the per-day cloud
-//! seeding is fixed by `(lat, lon, utc_date, layer)` so the same hour
-//! re-rendered tomorrow is byte-identical.
-
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -23,16 +13,6 @@ use super::location::GeoResult;
 
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
 
-/// Build a `SkyState` for a single forecast hour.
-///
-/// `now_unix` is the wall clock at launch and only feeds the chrome label
-/// formatter ("today" vs "yesterday" vs absolute date). The render itself
-/// uses the parsed UTC timestamp of the selected hour for sun and moon
-/// position so the sky is internally consistent regardless of when you
-/// scrubbed there.
-///
-/// `center_az` is the compass bearing the viewer faces (0 = N, 90 = E,
-/// 180 = S, 270 = W). Default 180 for northern-hemisphere observers.
 pub fn compose(
     forecast: &Forecast,
     location: &GeoResult,
@@ -343,8 +323,6 @@ fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
     hasher.finish()
 }
 
-/// A dark, cloud-free sky shown when the weather fetch fails.
-/// The error message appears in the chrome footer; `r` retries.
 pub fn error_sky(msg: &str) -> SkyState {
     let gradient = gradient_for(Palette::Night);
     let first_line = msg.lines().next().unwrap_or(msg);

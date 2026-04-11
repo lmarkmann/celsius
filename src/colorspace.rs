@@ -1,9 +1,3 @@
-//! sRGB <-> linear RGB <-> OKLab conversions.
-//!
-//! All gradient and compositing math runs in OKLab. Conversion to sRGB
-//! happens exactly once, at the final quantization into terminal cell colors
-//! (or PNG pixels during oracle tests).
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Rgb {
     pub r: u8,

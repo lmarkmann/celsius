@@ -1,10 +1,3 @@
-//! Open-Meteo geocoding client.
-//!
-//! Returns up to five candidate matches for a free-form name query. An empty
-//! result vector is a legitimate answer (caller decides what "not found"
-//! means in its context — the TUI renders a beautiful-error sky, the CLI
-//! prints a suggestion).
-
 use serde::Deserialize;
 
 use super::WeatherError;
@@ -28,7 +21,6 @@ pub struct GeoResult {
 }
 
 impl GeoResult {
-    /// A short human label like "Hamburg, Germany" or "Hamburg, Arkansas, US".
     pub fn label(&self) -> String {
         let mut parts = vec![self.name.clone()];
         if let Some(admin) = &self.admin1
@@ -49,11 +41,6 @@ pub(crate) struct GeoResponse {
     pub results: Vec<GeoResult>,
 }
 
-/// Look up candidate locations for a free-form name query.
-///
-/// Returns an empty vector if Open-Meteo has no matches. Returns up to five
-/// results otherwise, ordered by Open-Meteo's relevance ranking (which
-/// roughly tracks population).
 pub fn geocode(query: &str) -> Result<Vec<GeoResult>, WeatherError> {
     let response = ureq::get(ENDPOINT)
         .query("name", query)

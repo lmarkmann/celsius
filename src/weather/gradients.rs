@@ -1,27 +1,11 @@
-//! Lifted sky gradients from the skyterm-lab reference scenes.
-//!
-//! These are the only gradients celsius is allowed to use. New palettes go
-//! into the lab first, get authored against locked goldens, and then land
-//! here verbatim. The five below correspond one-for-one to the lab files
-//! in `../skyterm-lab/scenes/`.
-//!
-//! The synthesis layer picks one of these based on sun altitude and total
-//! cloud cover. Gaps (dawn, heavy cloudy midday, deep starless night) are
-//! intentional and will look imperfect until the lab produces fillers.
-
 use crate::gradient::Gradient;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Palette {
-    /// High noon, deep saturated blue, pale horizon.
     Day,
-    /// Sun low and warm, whole sky pulled through pink and orange.
     GoldenHour,
-    /// Sun just below horizon, cool upper sky with a warm residue below.
     BlueHour,
-    /// Astronomical night, near-black with a faint blue cast.
     Night,
-    /// Full overcast, gray greenish zenith bleeding to a pale horizon.
     Overcast,
 }
 
@@ -90,13 +74,6 @@ pub(super) fn gradient_for(palette: Palette) -> Gradient {
     Gradient::from_rgb_stops(stops)
 }
 
-/// Pick the closest lab palette for the given conditions.
-///
-/// `sun_alt_deg` is the true solar altitude, `total_cover` is the sum of the
-/// three Open-Meteo cloud bands divided by 300 (0..1). Overcast wins over
-/// daylight when the sky is mostly opaque and the sun isn't so high that
-/// the overcast palette would look silly; at steep sun angles the day
-/// palette with heavy cloud layers still looks better than the flat gray.
 pub(super) fn select_palette(sun_alt_deg: f64, total_cover: f64) -> Palette {
     if total_cover >= 0.80 && sun_alt_deg < 55.0 && sun_alt_deg > -3.0 {
         return Palette::Overcast;

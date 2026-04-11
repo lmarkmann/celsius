@@ -1,9 +1,3 @@
-//! Event loop: alternate screen + raw mode, tick-based redraw, scrub keys,
-//! graceful minimum-size fallback, modal overlays.
-//!
-//! Resize is handled implicitly: every draw re-samples `frame.area()` and
-//! re-renders the sky at the current size.
-
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 
@@ -28,17 +22,12 @@ const TICK: Duration = Duration::from_millis(33);
 const MIN_COLS: u16 = 40;
 const MIN_ROWS: u16 = 20;
 
-/// Returned by [`run`] to tell the caller what to do next.
 pub enum RunOutcome {
     Quit,
-    /// User pressed `r` -- caller should re-fetch weather and call `run` again.
     Retry,
-    /// User submitted a new location name from the `l` overlay.
     ChangeLocation(String),
 }
 
-/// A scrubable timeline of pre-composed sky states. `home` is the index that
-/// the `t` key snaps back to (typically the hour matching wall-clock now).
 pub struct Timeline {
     pub states: Vec<SkyState>,
     pub home: usize,
@@ -155,7 +144,6 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
     }
 }
 
-/// Full-screen location prompt shown on first run (no config, no flags).
 pub fn prompt_location() -> Result<String> {
     let mut terminal = enter_terminal().context("entering alternate screen for prompt")?;
     let _guard = RestoreGuard;
@@ -283,7 +271,6 @@ fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
     }
 }
 
-/// Draw a solid-background box, return the inner Rect (inset by 2 on each side).
 fn draw_overlay_box(buf: &mut Buffer, area: Rect, w: u16, h: u16) -> Rect {
     let bx = area.x + area.width.saturating_sub(w) / 2;
     let by = area.y + area.height.saturating_sub(h) / 2;
@@ -349,6 +336,13 @@ fn draw_help_overlay(buf: &mut Buffer, area: Rect) {
 }
 
 fn draw_location_overlay(buf: &mut Buffer, area: Rect, input: &str) {
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_bg(OVERLAY_BG);
+        }
+    }
     let inner = draw_overlay_box(buf, area, 46, 7);
     let mut row = inner.y;
     put_str(
