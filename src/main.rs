@@ -206,9 +206,7 @@ fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
                 .next()
                 .ok_or_else(|| anyhow!("no places matched '{name}'"))?;
             let mut cfg = config::load();
-            cfg.location = Some(LocationPref::Name {
-                name: name.clone(),
-            });
+            cfg.location = Some(LocationPref::Name { name: name.clone() });
             config::save(&cfg).context("saving config")?;
             Ok(geo)
         }
