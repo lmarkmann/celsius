@@ -24,7 +24,7 @@ Sleep 120ms
 Right
 Sleep 120ms
 
-# Golden hour (07:00 Hamburg) — sun cresting the horizon
+# Golden hour (07:00 Hamburg), sun cresting the horizon
 Right
 Sleep 3s
 
@@ -58,7 +58,7 @@ Sleep 120ms
 Right
 Sleep 120ms
 
-# Evening golden hour (20:00 Hamburg) — sun back at the horizon
+# Evening golden hour (20:00 Hamburg), sun back at the horizon
 Right
 Sleep 3s
 

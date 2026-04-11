@@ -1,3 +1,13 @@
 /target
 out/
 .DS_Store
+
+# profiling / coverage artifacts
+perf.data
+perf.data.old
+flamegraph.svg
+*.profraw
+
+# editor scratch
+.idea/
+*.swp
