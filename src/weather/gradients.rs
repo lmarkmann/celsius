@@ -3,9 +3,11 @@ use crate::gradient::Gradient;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Palette {
     Day,
+    Dawn,
     GoldenHour,
     BlueHour,
     Night,
+    CloudyDay,
     Overcast,
 }
 
@@ -17,6 +19,19 @@ const DAY: &[(f64, [u8; 3])] = &[
     (0.78, [176, 204, 228]),
     (0.90, [212, 224, 232]),
     (1.00, [224, 230, 232]),
+];
+
+const DAWN: &[(f64, [u8; 3])] = &[
+    (0.00, [22, 30, 72]),
+    (0.18, [36, 44, 94]),
+    (0.36, [58, 58, 112]),
+    (0.52, [88, 72, 122]),
+    (0.66, [138, 96, 120]),
+    (0.78, [186, 122, 104]),
+    (0.88, [218, 152, 100]),
+    (0.94, [230, 168, 98]),
+    (0.98, [210, 140, 84]),
+    (1.00, [172, 106, 72]),
 ];
 
 const GOLDEN_HOUR: &[(f64, [u8; 3])] = &[
@@ -54,6 +69,14 @@ const NIGHT: &[(f64, [u8; 3])] = &[
     (1.00, [15, 16, 32]),
 ];
 
+const CLOUDY_DAY: &[(f64, [u8; 3])] = &[
+    (0.00, [168, 172, 180]),
+    (0.30, [172, 172, 174]),
+    (0.60, [172, 170, 165]),
+    (0.82, [174, 170, 160]),
+    (1.00, [176, 170, 158]),
+];
+
 const OVERCAST: &[(f64, [u8; 3])] = &[
     (0.00, [36, 42, 48]),
     (0.18, [62, 66, 72]),
@@ -66,22 +89,30 @@ const OVERCAST: &[(f64, [u8; 3])] = &[
 pub(super) fn gradient_for(palette: Palette) -> Gradient {
     let stops: &[(f64, [u8; 3])] = match palette {
         Palette::Day => DAY,
+        Palette::Dawn => DAWN,
         Palette::GoldenHour => GOLDEN_HOUR,
         Palette::BlueHour => BLUE_HOUR,
         Palette::Night => NIGHT,
+        Palette::CloudyDay => CLOUDY_DAY,
         Palette::Overcast => OVERCAST,
     };
     Gradient::from_rgb_stops(stops)
 }
 
 pub(super) fn select_palette(sun_alt_deg: f64, total_cover: f64) -> Palette {
-    if total_cover >= 0.80 && sun_alt_deg < 55.0 && sun_alt_deg > -3.0 {
-        return Palette::Overcast;
+    if total_cover >= 0.80 {
+        if (-3.0..55.0).contains(&sun_alt_deg) {
+            return Palette::Overcast;
+        }
+    } else if total_cover >= 0.50 && (3.0..55.0).contains(&sun_alt_deg) {
+        return Palette::CloudyDay;
     }
     if sun_alt_deg >= 10.0 {
         Palette::Day
-    } else if sun_alt_deg >= -3.0 {
+    } else if sun_alt_deg >= 3.0 {
         Palette::GoldenHour
+    } else if sun_alt_deg >= -3.0 {
+        Palette::Dawn
     } else if sun_alt_deg >= -12.0 {
         Palette::BlueHour
     } else {

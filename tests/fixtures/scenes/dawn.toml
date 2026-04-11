@@ -1,0 +1,37 @@
+# dawn
+# Hamburg, April. Sun at +1 deg altitude, just cresting the horizon.
+# The sky is still mostly dark cool blue but the first warm band is
+# appearing at the horizon. A few bright stars survive at the zenith.
+# Bridges the gap between blue_hour (sun -4) and golden_hour (sun +5).
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [22, 30, 72]  },
+  { t = 0.18, rgb = [36, 44, 94]  },
+  { t = 0.36, rgb = [58, 58, 112] },
+  { t = 0.52, rgb = [88, 72, 122] },
+  { t = 0.66, rgb = [138, 96, 120] },
+  { t = 0.78, rgb = [186, 122, 104] },
+  { t = 0.88, rgb = [218, 152, 100] },
+  { t = 0.94, rgb = [230, 168, 98]  },
+  { t = 0.98, rgb = [210, 140, 84]  },
+  { t = 1.00, rgb = [172, 106, 72]  },
+]
+
+[sun]
+x_frac  = 0.56
+y_frac  = 0.96
+radius  = 2.8
+visible = true
+
+[stars]
+count      = 80
+seed       = 3317
+brightness = 0.48
+sky_threshold = 0.22
+
+[chrome]
+header_left  = "skyterm"
+header_right = "hamburg   sat 11 apr   06:14"
+footer       = "7°  clear   wind ne 8   sunrise 06:08"
+keys         = "m map    space pause    <- -> scrub    q quit"
