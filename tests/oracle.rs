@@ -47,7 +47,11 @@ fn lab_scenes_match_locked_goldens() -> Result<()> {
         let vendor_path = root
             .join("tests/fixtures/scenes")
             .join(format!("{name}.toml"));
-        let scene_path = if lab_path.exists() { lab_path } else { vendor_path };
+        let scene_path = if lab_path.exists() {
+            lab_path
+        } else {
+            vendor_path
+        };
         if !scene_path.exists() {
             bail!("{name}: scene not found at lab path or vendored fixture");
         }
