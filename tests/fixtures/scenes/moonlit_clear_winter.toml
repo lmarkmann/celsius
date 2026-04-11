@@ -1,0 +1,39 @@
+# moonlit_clear_winter
+# sun at -20 deg (astronomical night), waxing gibbous moon at ~+30 deg altitude
+# full starfield, cold still air
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [5,  7,  20] },
+  { t = 0.25, rgb = [7,  10, 26] },
+  { t = 0.50, rgb = [9,  12, 30] },
+  { t = 0.70, rgb = [12, 14, 34] },
+  { t = 0.85, rgb = [16, 17, 38] },
+  { t = 0.94, rgb = [20, 20, 42] },
+  { t = 1.00, rgb = [15, 16, 32] },
+]
+
+[sun]
+x_frac = 0.50
+y_frac = 1.10
+radius = 2.0
+visible = false
+
+[moon]
+x_frac = 0.38
+y_frac = 0.27
+radius = 7.0
+phase = 0.38
+visible = true
+
+[stars]
+count = 340
+seed = 8191
+brightness = 1.0
+sky_threshold = 0.38
+
+[chrome]
+header_left = "skyterm"
+header_right = "hamburg   sat 11 apr   01:40"
+footer = "-2°  clear   wind 3 ne   moonrise 19:04   seeing excellent"
+keys = "m map    space pause    ← → scrub    q quit"
