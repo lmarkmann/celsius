@@ -65,6 +65,11 @@ struct Cli {
     #[arg(long, value_name = "PATH", global = true)]
     scene: Option<PathBuf>,
 
+    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W.
+    /// Default 180 (south) suits northern-hemisphere observers.
+    #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
+    facing: f64,
+
     #[cfg(feature = "png")]
     #[command(subcommand)]
     command: Option<Command>,
@@ -140,8 +145,9 @@ fn build_live_timeline(cli: &Cli) -> Result<Timeline> {
         bail!("forecast returned zero hours for {}", location.label());
     }
 
+    let center_az = cli.facing;
     let states: Vec<_> = (0..hours)
-        .map(|h| compose(&forecast, &location, h, now_unix))
+        .map(|h| compose(&forecast, &location, h, now_unix, center_az))
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
