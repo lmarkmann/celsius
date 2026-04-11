@@ -18,10 +18,9 @@ use crate::scene::{Chrome, CloudLayer, Haze, Moon, Precipitation, SkyState, Star
 
 use super::WeatherError;
 use super::forecast::Forecast;
-use super::gradients::{gradient_for, select_palette};
+use super::gradients::{Palette, gradient_for, select_palette};
 use super::location::GeoResult;
 
-const CENTER_AZ: f64 = 180.0;
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
 
 /// Build a `SkyState` for a single forecast hour.
@@ -31,11 +30,15 @@ const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q
 /// uses the parsed UTC timestamp of the selected hour for sun and moon
 /// position so the sky is internally consistent regardless of when you
 /// scrubbed there.
+///
+/// `center_az` is the compass bearing the viewer faces (0 = N, 90 = E,
+/// 180 = S, 270 = W). Default 180 for northern-hemisphere observers.
 pub fn compose(
     forecast: &Forecast,
     location: &GeoResult,
     hour_index: usize,
     now_unix: i64,
+    center_az: f64,
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
     let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
@@ -54,8 +57,8 @@ pub fn compose(
     let gradient = gradient_for(palette);
 
     let day_ordinal = unix_utc.div_euclid(86_400);
-    let sun = build_sun(&sun_altaz);
-    let moon = build_moon(&moon_state);
+    let sun = build_sun(&sun_altaz, center_az);
+    let moon = build_moon(&moon_state, center_az);
     let stars = build_stars(sun_altaz.altitude, lat, lon, day_ordinal);
     let clouds = build_clouds(cover_low, cover_mid, cover_high, lat, lon, day_ordinal);
     let haze = build_haze(forecast.hourly.visibility[h]);
@@ -66,6 +69,7 @@ pub fn compose(
         lat,
         lon,
         day_ordinal,
+        center_az,
     );
 
     let chrome = build_chrome(
@@ -98,9 +102,9 @@ fn parse_hour_to_unix(time_str: &str) -> Result<i64, WeatherError> {
     Ok(naive.and_utc().timestamp())
 }
 
-fn build_sun(altaz: &AltAz) -> Sun {
-    let (x_frac, y_frac) = astro::to_sky_fracs(altaz, CENTER_AZ);
-    let in_view = lateral_offset_deg(altaz.azimuth).abs() < 90.0;
+fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
+    let (x_frac, y_frac) = astro::to_sky_fracs(altaz, center_az);
+    let in_view = lateral_offset_deg(altaz.azimuth, center_az).abs() < 90.0;
     Sun {
         x_frac,
         y_frac,
@@ -109,9 +113,9 @@ fn build_sun(altaz: &AltAz) -> Sun {
     }
 }
 
-fn build_moon(state: &astro::MoonState) -> Option<Moon> {
-    let (x_frac, y_frac) = astro::to_sky_fracs(&state.altaz, CENTER_AZ);
-    let in_view = lateral_offset_deg(state.altaz.azimuth).abs() < 90.0;
+fn build_moon(state: &astro::MoonState, center_az: f64) -> Option<Moon> {
+    let (x_frac, y_frac) = astro::to_sky_fracs(&state.altaz, center_az);
+    let in_view = lateral_offset_deg(state.altaz.azimuth, center_az).abs() < 90.0;
     if state.altaz.altitude <= 0.0 || !in_view {
         return None;
     }
@@ -124,8 +128,8 @@ fn build_moon(state: &astro::MoonState) -> Option<Moon> {
     })
 }
 
-fn lateral_offset_deg(azimuth: f64) -> f64 {
-    ((azimuth - CENTER_AZ + 540.0) % 360.0) - 180.0
+fn lateral_offset_deg(azimuth: f64, center_az: f64) -> f64 {
+    ((azimuth - center_az + 540.0) % 360.0) - 180.0
 }
 
 fn build_stars(sun_alt: f64, lat: f64, lon: f64, day_ordinal: i64) -> Option<Stars> {
@@ -214,6 +218,7 @@ fn build_precipitation(
     lat: f64,
     lon: f64,
     day_ordinal: i64,
+    center_az: f64,
 ) -> Option<Precipitation> {
     let mm = precip_mm.unwrap_or(0.0);
     if mm < 0.10 {
@@ -227,7 +232,7 @@ fn build_precipitation(
     };
     let intensity = (mm / 5.0).clamp(0.10, 0.85);
     let dir = wind_dir.unwrap_or(180.0);
-    let delta = lateral_offset_deg(dir);
+    let delta = lateral_offset_deg(dir, center_az);
     let angle_deg = (delta * 0.30).clamp(-25.0, 25.0);
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal as u64, 0xBA17_DA75]);
     Some(Precipitation {
@@ -336,6 +341,40 @@ fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
     lat_bits.hash(&mut hasher);
     lon_bits.hash(&mut hasher);
     hasher.finish()
+}
+
+/// A dark, cloud-free sky shown when the weather fetch fails.
+/// The error message appears in the chrome footer; `r` retries.
+pub fn error_sky(msg: &str) -> SkyState {
+    let gradient = gradient_for(Palette::Night);
+    let first_line = msg.lines().next().unwrap_or(msg);
+    let footer = if first_line.len() > 72 {
+        format!("{}...", &first_line[..72])
+    } else {
+        first_line.to_string()
+    };
+    SkyState {
+        name: "error".to_string(),
+        gradient,
+        sun: Sun {
+            x_frac: 0.5,
+            y_frac: 1.5,
+            radius: 0.0,
+            visible: false,
+        },
+        clouds: vec![],
+        chrome: Chrome {
+            header_left: "celsius".to_string(),
+            header_right: String::new(),
+            footer,
+            keys: "r retry   q quit".to_string(),
+        },
+        haze: None,
+        stars: None,
+        moon: None,
+        precipitation: None,
+        wind_speed_kmh: 0.0,
+    }
 }
 
 fn mix_seed(parts: &[u64]) -> u64 {

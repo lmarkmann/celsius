@@ -9,8 +9,8 @@ use clap::Subcommand;
 use clap::builder::styling::{AnsiColor, Styles};
 
 use celsius::config::{self, LocationPref};
-use celsius::tui::Timeline;
-use celsius::weather::{compose, forecast, location};
+use celsius::tui::{RunOutcome, Timeline};
+use celsius::weather::{compose, error_sky, forecast, location};
 use celsius::{load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
@@ -66,6 +66,11 @@ struct Cli {
     #[arg(long, value_name = "PATH", global = true)]
     scene: Option<PathBuf>,
 
+    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W.
+    /// Default 180 (south) suits northern-hemisphere observers.
+    #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
+    facing: f64,
+
     #[cfg(feature = "png")]
     #[command(subcommand)]
     command: Option<Command>,
@@ -108,32 +113,57 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let timeline = if let Some(scene_path) = cli.scene.as_ref() {
+    // Scene-file path: single state, no retry loop needed.
+    if let Some(scene_path) = cli.scene.as_ref() {
         let state = load_scene(scene_path)
             .with_context(|| format!("loading scene {}", scene_path.display()))?;
-        Timeline::single(state)
-    } else {
-        build_live_timeline(&cli)?
-    };
+        let timeline = Timeline::single(state);
+        if stdout().is_terminal() {
+            match tui::run(&timeline).context("running tui")? {
+                RunOutcome::Quit | RunOutcome::Retry => {}
+                RunOutcome::ChangeLocation(_) => {}
+            }
+        } else {
+            let mut out = BufWriter::new(stdout().lock());
+            tui::write_frame(&timeline.states[timeline.home], &mut out)
+                .context("writing frame to non-tty stdout")?;
+            out.flush().context("flushing stdout")?;
+        }
+        return Ok(());
+    }
 
-    if stdout().is_terminal() {
-        tui::run(&timeline).context("running tui")
-    } else {
-        let mut out = BufWriter::new(stdout().lock());
-        tui::write_frame(&timeline.states[timeline.home], &mut out)
-            .context("writing frame to non-tty stdout")?;
-        out.flush().context("flushing stdout")
+    // Live weather path: retry loop handles fetch errors and location changes.
+    let mut location_override: Option<String> = None;
+    loop {
+        let timeline = match build_live_timeline(&cli, location_override.as_deref()) {
+            Ok(t) => t,
+            Err(e) => Timeline::single(error_sky(&e.to_string())),
+        };
+
+        if !stdout().is_terminal() {
+            let mut out = BufWriter::new(stdout().lock());
+            tui::write_frame(&timeline.states[timeline.home], &mut out)
+                .context("writing frame to non-tty stdout")?;
+            out.flush().context("flushing stdout")?;
+            return Ok(());
+        }
+
+        match tui::run(&timeline).context("running tui")? {
+            RunOutcome::Quit => return Ok(()),
+            RunOutcome::Retry => location_override = None,
+            RunOutcome::ChangeLocation(name) => location_override = Some(name),
+        }
     }
 }
 
-fn build_live_timeline(cli: &Cli) -> Result<Timeline> {
+fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Timeline> {
     let now_unix = Utc::now().timestamp();
     let at_unix = match cli.at.as_deref() {
         Some(s) => parse_iso8601_utc(s)?,
         None => now_unix,
     };
 
-    let location = resolve_location(cli)?;
+    let location = resolve_location(cli, location_override)?;
     let forecast = forecast::fetch(location.latitude, location.longitude)
         .with_context(|| format!("fetching forecast for {}", location.label()))?;
     let hours = forecast.hourly.len();
@@ -141,15 +171,24 @@ fn build_live_timeline(cli: &Cli) -> Result<Timeline> {
         bail!("forecast returned zero hours for {}", location.label());
     }
 
+    let center_az = cli.facing;
     let states: Vec<_> = (0..hours)
-        .map(|h| compose(&forecast, &location, h, now_unix))
+        .map(|h| compose(&forecast, &location, h, now_unix, center_az))
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
     Ok(Timeline::new(states, home))
 }
 
-fn resolve_location(cli: &Cli) -> Result<location::GeoResult> {
+fn resolve_location(cli: &Cli, override_name: Option<&str>) -> Result<location::GeoResult> {
+    // Location overlay in the TUI takes precedence over everything.
+    if let Some(name) = override_name {
+        let results = location::geocode(name).with_context(|| format!("geocoding '{name}'"))?;
+        return results
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("no places matched '{name}'"));
+    }
     match (cli.lat, cli.lon, cli.location.as_deref()) {
         (Some(lat), Some(lon), name) => Ok(location::GeoResult {
             name: name.unwrap_or("custom").to_string(),
