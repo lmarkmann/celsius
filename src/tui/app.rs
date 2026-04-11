@@ -207,6 +207,87 @@ fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
     }
 }
 
+/// Full-screen location prompt shown on first run (no config, no flags).
+///
+/// Enters alternate screen, draws a centered input box, collects a UTF-8
+/// place name, and returns it on Enter. Esc or Ctrl+C exits the process.
+pub fn prompt_location() -> Result<String> {
+    let mut terminal = enter_terminal().context("entering alternate screen for prompt")?;
+    let _guard = RestoreGuard;
+
+    let mut input = String::new();
+    loop {
+        let display = input.clone();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let buf = frame.buffer_mut();
+                draw_location_prompt(buf, area, &display);
+            })
+            .context("drawing prompt")?;
+
+        if let Event::Key(key) = event::read().context("reading input")? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Enter if !input.trim().is_empty() => return Ok(input.trim().to_string()),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    std::process::exit(0)
+                }
+                KeyCode::Esc => std::process::exit(0),
+                KeyCode::Char(ch) => input.push(ch),
+                KeyCode::Backspace => {
+                    input.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn draw_location_prompt(buf: &mut Buffer, area: Rect, input: &str) {
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_bg(Color::Rgb(10, 10, 14));
+        }
+    }
+    let label = "enter a location:";
+    let cursor = format!("{input}_");
+    let box_w = (label.len().max(cursor.len()) + 8) as u16;
+    let box_h = 5u16;
+    let bx = area.x + area.width.saturating_sub(box_w) / 2;
+    let by = area.y + area.height.saturating_sub(box_h) / 2;
+
+    // fill box
+    for y in by..by + box_h {
+        for x in bx..bx + box_w {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_bg(Color::Rgb(24, 24, 32));
+            cell.set_fg(Color::Rgb(200, 200, 200));
+        }
+    }
+    // label row
+    for (i, ch) in label.chars().enumerate() {
+        let x = bx + 4 + i as u16;
+        if x < bx + box_w {
+            buf[(x, by + 1)].set_char(ch);
+        }
+    }
+    // input row
+    for (i, ch) in cursor.chars().enumerate() {
+        let x = bx + 4 + i as u16;
+        if x < bx + box_w {
+            let cell = &mut buf[(x, by + 3)];
+            cell.set_char(ch);
+            cell.set_fg(Color::Rgb(255, 255, 255));
+        }
+    }
+}
+
 fn draw_too_small(buf: &mut Buffer, area: Rect) {
     let msg = format!(
         "cramped sky: needs {}x{}, yours is {}x{}",

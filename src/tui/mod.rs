@@ -10,7 +10,7 @@
 mod app;
 mod widget;
 
-pub use app::{Timeline, run};
+pub use app::{Timeline, prompt_location, run};
 
 use std::io::{self, Write};
 
