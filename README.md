@@ -21,13 +21,33 @@
 
 Terminal weather as a first-person sky view. You look up into the sky you would see right now at your location, rendered as a truecolor half-block scene directly in your terminal. Clouds drift, the sun tracks its altitude, stars fade in at twilight, rain slants with the wind.
 
-## Usage
-
-`brew install lmarkmann/tap/celsius` or `cargo install celsius`
+## Install
 
 ```sh
-celsius              # current sky at your location
-celsius --time 18:00 # scrub to a specific hour
+cargo install celsius
 ```
 
-<!-- TODO: add keybindings table with <kbd> tags once TUI is wired up -->
+Homebrew tap coming soon.
+
+## Usage
+
+```sh
+celsius                          # current sky at your saved location
+celsius -l Hamburg               # look up a place by name
+celsius --lat 53.55 --lon 9.99   # coordinates
+celsius --at 2026-06-21T00:00Z   # scrub to a specific time
+celsius --facing 0               # face north (default 180 = south)
+```
+
+## Keys
+
+| Key | Action |
+|---|---|
+| `← →` | scrub one hour |
+| `tab` / `shift+tab` | +24h / -24h |
+| `t` | jump to now |
+| `space` | pause / resume cloud drift |
+| `l` | change location |
+| `r` | retry weather fetch |
+| `?` | keybinding help |
+| `q` / `esc` | quit |
