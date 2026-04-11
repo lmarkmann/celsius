@@ -18,6 +18,7 @@ png = ["dep:image"]
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
+dirs = "5"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }

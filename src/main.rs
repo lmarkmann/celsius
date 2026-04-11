@@ -8,6 +8,7 @@ use clap::Parser;
 use clap::Subcommand;
 use clap::builder::styling::{AnsiColor, Styles};
 
+use celsius::config::{self, LocationPref};
 use celsius::tui::{RunOutcome, Timeline};
 use celsius::weather::{compose, error_sky, forecast, location};
 use celsius::{load_scene, tui};
@@ -209,8 +210,44 @@ fn resolve_location(cli: &Cli, override_name: Option<&str>) -> Result<location::
         (Some(_), None, _) | (None, Some(_), _) => {
             bail!("--lat and --lon must be passed together")
         }
-        (None, None, None) => {
-            bail!("no location given; pass -l NAME, --lat F --lon F, or --scene PATH")
+        (None, None, None) => resolve_from_config_or_prompt(),
+    }
+}
+
+fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
+    let cfg = config::load();
+    match cfg.location {
+        Some(LocationPref::Coords { lat, lon }) => Ok(location::GeoResult {
+            name: "saved".to_string(),
+            latitude: lat,
+            longitude: lon,
+            timezone: "UTC".to_string(),
+            country: None,
+            admin1: None,
+            elevation: None,
+            population: None,
+        }),
+        Some(LocationPref::Name { name }) => {
+            let results =
+                location::geocode(&name).with_context(|| format!("geocoding '{name}'"))?;
+            results
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("no places matched saved location '{name}'"))
+        }
+        None => {
+            // First run: ask the user for a location, save it, then geocode.
+            let name = tui::prompt_location().context("location prompt")?;
+            let results =
+                location::geocode(&name).with_context(|| format!("geocoding '{name}'"))?;
+            let geo = results
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("no places matched '{name}'"))?;
+            let mut cfg = config::load();
+            cfg.location = Some(LocationPref::Name { name: name.clone() });
+            config::save(&cfg).context("saving config")?;
+            Ok(geo)
         }
     }
 }

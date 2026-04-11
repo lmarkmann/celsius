@@ -6,6 +6,7 @@
 
 pub mod astro;
 pub mod colorspace;
+pub mod config;
 pub mod gradient;
 pub mod haze;
 pub mod moon;
