@@ -61,14 +61,16 @@ pub fn run(timeline: &Timeline) -> Result<()> {
     let _guard = RestoreGuard;
 
     let mut index = timeline.home;
+    let mut display = timeline.states[index].clone();
+    let mut drift_paused = false;
     let mut last_tick = Instant::now();
+
     loop {
-        let state = &timeline.states[index];
         terminal
             .draw(|frame| {
                 let area = frame.area();
                 let buf = frame.buffer_mut();
-                draw(buf, area, state);
+                draw(buf, area, &display);
             })
             .context("drawing frame")?;
 
@@ -76,13 +78,29 @@ pub fn run(timeline: &Timeline) -> Result<()> {
         if event::poll(timeout).context("polling input")? {
             match event::read().context("reading input")? {
                 Event::Key(key) if is_quit(&key) => break,
-                Event::Key(key) => handle_scrub(&key, &mut index, timeline),
+                Event::Key(key) if is_space(&key) => drift_paused = !drift_paused,
+                Event::Key(key) => {
+                    let new = scrub_index(&key, index, timeline);
+                    if new != index {
+                        index = new;
+                        display = timeline.states[index].clone();
+                    }
+                }
                 Event::Resize(_, _) => {}
                 _ => {}
             }
         }
+
         if last_tick.elapsed() >= TICK {
+            let dt = last_tick.elapsed().as_secs_f64();
             last_tick = Instant::now();
+            if !drift_paused {
+                // 10 km/h wind moves clouds ~0.001 noise units/s; visible over ~15 s
+                let delta = display.wind_speed_kmh * dt * 0.0001;
+                for layer in &mut display.clouds {
+                    layer.offset_x += delta;
+                }
+            }
         }
     }
 
@@ -118,20 +136,24 @@ fn is_quit(key: &KeyEvent) -> bool {
     }
 }
 
-fn handle_scrub(key: &KeyEvent, index: &mut usize, timeline: &Timeline) {
+fn scrub_index(key: &KeyEvent, index: usize, timeline: &Timeline) -> usize {
     if key.kind != KeyEventKind::Press {
-        return;
+        return index;
     }
-    let cur = *index as isize;
+    let cur = index as isize;
     let new = match key.code {
         KeyCode::Left => cur - 1,
         KeyCode::Right => cur + 1,
         KeyCode::Tab => cur + 24,
         KeyCode::BackTab => cur - 24,
         KeyCode::Char('t') => timeline.home as isize,
-        _ => return,
+        _ => return index,
     };
-    *index = timeline.clamp(new);
+    timeline.clamp(new)
+}
+
+fn is_space(key: &KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::Char(' ')
 }
 
 const CHROME_BG: Color = Color::Rgb(14, 14, 14);

@@ -114,6 +114,8 @@ pub struct SkyState {
     pub stars: Option<Stars>,
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
+    /// Wind speed in km/h; drives cloud drift in the TUI. Zero for scene TOMLs.
+    pub wind_speed_kmh: f64,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +185,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         stars: raw.stars,
         moon: raw.moon,
         precipitation: raw.precipitation,
+        wind_speed_kmh: 0.0,
     })
 }
 

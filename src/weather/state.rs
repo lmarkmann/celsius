@@ -88,6 +88,7 @@ pub fn compose(
         stars,
         moon,
         precipitation,
+        wind_speed_kmh: forecast.hourly.wind_speed_10m[h].unwrap_or(0.0),
     })
 }
 
