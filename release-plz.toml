@@ -1,0 +1,30 @@
+[workspace]
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+pr_labels = ["release"]
+semver_check = false
+
+[changelog]
+header = """# Changelog
+
+All notable changes to celsius are recorded here. Format roughly follows
+Keep a Changelog and versions follow SemVer.
+"""
+body = """
+## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}{% endfor %}
+{% endfor %}
+"""
+commit_parsers = [
+  { message = "^feat", group = "added" },
+  { message = "^fix", group = "fixed" },
+  { message = "^perf", group = "performance" },
+  { message = "^refactor", group = "changed" },
+  { message = "^doc", group = "docs" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", group = "other" },
+]
