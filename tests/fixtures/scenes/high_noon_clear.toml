@@ -1,0 +1,27 @@
+# High noon, Hamburg, summer. Sun near zenith, turbidity ~2.8, no clouds.
+# Validates that the same pipeline handles a radically different palette
+# from golden hour. Success criterion: deep saturated zenith blue, honest
+# luminance falloff toward a pale horizon, and a small tight sun disc.
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [22, 58, 132] },
+  { t = 0.18, rgb = [34, 82, 162] },
+  { t = 0.38, rgb = [62, 118, 192] },
+  { t = 0.58, rgb = [114, 166, 216] },
+  { t = 0.78, rgb = [176, 204, 228] },
+  { t = 0.90, rgb = [212, 224, 232] },
+  { t = 1.00, rgb = [224, 230, 232] },
+]
+
+[sun]
+x_frac = 0.58
+y_frac = 0.12
+radius = 3.0
+visible = true
+
+[chrome]
+header_left = "skyterm"
+header_right = "hamburg   wed 17 jun   13:04"
+footer = "24°  clear   wind 8 sw   sunset 21:48   next rain none"
+keys = "m map    space pause    ← → scrub    q quit"

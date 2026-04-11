@@ -41,12 +41,15 @@ fn lab_scenes_match_locked_goldens() -> Result<()> {
     let manifest: BTreeMap<String, Entry> = toml::from_str(&manifest_text)?;
 
     for (name, entry) in &manifest {
-        let scene_path = root
+        let lab_path = root
             .join("../skyterm-lab/scenes")
             .join(format!("{name}.toml"));
+        let vendor_path = root
+            .join("tests/fixtures/scenes")
+            .join(format!("{name}.toml"));
+        let scene_path = if lab_path.exists() { lab_path } else { vendor_path };
         if !scene_path.exists() {
-            eprintln!("skipping {name}: {} not present", scene_path.display());
-            continue;
+            bail!("{name}: scene not found at lab path or vendored fixture");
         }
         let scene_bytes = fs::read(&scene_path)?;
         let scene_sha = sha256_hex(&scene_bytes);
