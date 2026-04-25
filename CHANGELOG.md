@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.2.1] - 2026-04-25
+
+### Added
+
+- Lightning flashes for thunderstorm scenes ([#23](https://github.com/lmarkmann/celsius/pull/23))
+
 ## [0.2.0] - 2026-04-25
 
 ### Added
