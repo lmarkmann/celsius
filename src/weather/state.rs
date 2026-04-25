@@ -7,6 +7,7 @@ use crate::astro::{self, AltAz};
 use crate::scene::{Chrome, CloudLayer, Haze, Moon, Precipitation, SkyState, Stars, Sun};
 
 use super::WeatherError;
+use super::bortle;
 use super::forecast::Forecast;
 use super::gradients::{Palette, gradient_for, select_palette};
 use super::location::GeoResult;
@@ -19,6 +20,7 @@ pub fn compose(
     hour_index: usize,
     now_unix: i64,
     center_az: f64,
+    bortle: Option<u8>,
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
     let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
@@ -34,12 +36,13 @@ pub fn compose(
     let total_cover = ((cover_low + cover_mid + cover_high) / 3.0).clamp(0.0, 1.0);
 
     let palette = select_palette(sun_altaz.altitude, total_cover);
-    let gradient = gradient_for(palette);
+    let mut gradient = gradient_for(palette);
+    bortle::apply_glow(&mut gradient, bortle, sun_altaz.altitude);
 
     let day_ordinal = unix_utc.div_euclid(86_400);
     let sun = build_sun(&sun_altaz, center_az);
     let moon = build_moon(&moon_state, center_az);
-    let stars = build_stars(sun_altaz.altitude, lat, lon, day_ordinal);
+    let stars = build_stars(sun_altaz.altitude, lat, lon, day_ordinal, bortle);
     let clouds = build_clouds(cover_low, cover_mid, cover_high, lat, lon, day_ordinal);
     let haze = if palette == Palette::CloudyDay {
         // Cloudy-day palette needs its own horizon haze regardless of visibility.
@@ -122,13 +125,20 @@ fn lateral_offset_deg(azimuth: f64, center_az: f64) -> f64 {
     ((azimuth - center_az + 540.0) % 360.0) - 180.0
 }
 
-fn build_stars(sun_alt: f64, lat: f64, lon: f64, day_ordinal: i64) -> Option<Stars> {
+fn build_stars(
+    sun_alt: f64,
+    lat: f64,
+    lon: f64,
+    day_ordinal: i64,
+    bortle_class: Option<u8>,
+) -> Option<Stars> {
     if sun_alt >= -3.0 {
         return None;
     }
     let darkness = ((-sun_alt - 3.0) / 15.0).clamp(0.0, 1.0);
     let brightness = 0.55 + 0.45 * darkness;
-    let count = (180.0 + 200.0 * darkness) as u32;
+    let base_count = (180.0 + 200.0 * darkness) as u32;
+    let count = bortle::scale_count(base_count, bortle_class);
     let sky_threshold = 0.30 + 0.08 * darkness;
     Some(Stars {
         count,

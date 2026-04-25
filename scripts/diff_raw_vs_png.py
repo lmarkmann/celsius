@@ -2,8 +2,8 @@
 
 Usage:
     PYTHONPATH=../skyterm-lab/src ../skyterm-lab/.venv/bin/python \
-        tools/diff_raw_vs_png.py \
-        out/lab_golden_hour_cumulus.raw goldens/golden_hour_cumulus.png 104 50
+        scripts/diff_raw_vs_png.py \
+        out/lab_golden_hour_cumulus.raw tests/goldens/golden_hour_cumulus.png 104 50
 """
 
 import sys

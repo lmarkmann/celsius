@@ -12,6 +12,8 @@ Terminal weather as a first-person sky view. You look up into the sky you would 
 
 ```sh
 cargo install celsius
+# or, prebuilt binary (no Rust toolchain), v0.2.0+
+cargo binstall celsius
 # or
 brew install lmarkmann/tap/celsius
 ```
@@ -27,6 +29,7 @@ celsius --at +3h                 # three hours from now
 celsius --at 2026-06-21          # date alone, noon UTC
 celsius --at 2026-06-21T17:00Z   # full ISO 8601
 celsius --facing 0               # face north (default 180 = south)
+celsius --bortle 7               # adjust visible stars + horizon glow for your sky
 ```
 
 ## Keys

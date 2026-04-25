@@ -1,3 +1,4 @@
+pub mod bortle;
 pub mod forecast;
 mod gradients;
 pub mod location;

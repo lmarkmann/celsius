@@ -78,6 +78,12 @@ struct Cli {
     #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
     facing: f64,
 
+    /// Bortle dark-sky class for your location: 1 (pristine) to 9 (inner city).
+    /// Scales visible star count and tints the horizon with light-pollution glow.
+    /// Default: unset (treat as Bortle 1, today's behavior). Falls back to config.
+    #[arg(long, value_name = "1..9", global = true, value_parser = clap::value_parser!(u8).range(1..=9))]
+    bortle: Option<u8>,
+
     #[cfg(feature = "png")]
     #[command(subcommand)]
     command: Option<Command>,
@@ -179,8 +185,9 @@ fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Tim
     }
 
     let center_az = cli.facing;
+    let bortle = cli.bortle.or_else(|| config::load().bortle);
     let states: Vec<_> = (0..hours)
-        .map(|h| compose(&forecast, &location, h, now_unix, center_az))
+        .map(|h| compose(&forecast, &location, h, now_unix, center_az, bortle))
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);

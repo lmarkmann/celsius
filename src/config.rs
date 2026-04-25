@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
     pub location: Option<LocationPref>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bortle: Option<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
