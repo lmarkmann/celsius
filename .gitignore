@@ -11,7 +11,3 @@ flamegraph.svg
 # editor scratch
 .idea/
 *.swp
-
-# local-only dev artifacts
-scripts/
-tests/goldens/
