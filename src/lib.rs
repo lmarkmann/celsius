@@ -3,6 +3,7 @@ pub mod colorspace;
 pub mod config;
 pub mod gradient;
 pub mod haze;
+pub mod lightning;
 pub mod moon;
 pub mod noise;
 pub mod precipitation;
