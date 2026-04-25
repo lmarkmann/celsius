@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use chrono::{Datelike, Local, NaiveDateTime, TimeZone, Utc};
 
 use crate::astro::{self, AltAz};
+use crate::lightning::Lightning;
 use crate::scene::{Chrome, CloudLayer, Haze, Moon, Precipitation, SkyState, Stars, Sun};
 
 use super::WeatherError;
@@ -64,6 +65,13 @@ pub fn compose(
         day_ordinal,
         center_az,
     );
+    let lightning = build_lightning(
+        forecast.hourly.weather_code[h],
+        forecast.hourly.precipitation[h],
+        lat,
+        lon,
+        unix_utc,
+    );
 
     let chrome = build_chrome(
         location,
@@ -85,8 +93,34 @@ pub fn compose(
         stars,
         moon,
         precipitation,
+        lightning,
         wind_speed_kmh: forecast.hourly.wind_speed_10m[h].unwrap_or(0.0),
     })
+}
+
+const SKY_W: u32 = 104;
+const SKY_H: u32 = 50;
+
+fn build_lightning(
+    weather_code: Option<u32>,
+    precip_mm: Option<f64>,
+    lat: f64,
+    lon: f64,
+    unix_utc: i64,
+) -> Option<Lightning> {
+    let code = weather_code?;
+    if !(95..=99).contains(&code) {
+        return None;
+    }
+    let with_bolts = matches!(code, 95 | 96 | 99);
+    let mm = precip_mm.unwrap_or(0.4);
+    let intensity = (mm / 5.0).clamp(0.20, 0.85);
+    let hour = unix_utc.div_euclid(3_600) as u64;
+    let day_ordinal = unix_utc.div_euclid(86_400) as u64;
+    let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, hour, 0x1167_8175]) as u32;
+    Some(Lightning::new(
+        seed, intensity, 3_600.0, with_bolts, SKY_W, SKY_H,
+    ))
 }
 
 fn parse_hour_to_unix(time_str: &str) -> Result<i64, WeatherError> {
@@ -371,6 +405,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         stars: None,
         moon: None,
         precipitation: None,
+        lightning: None,
         wind_speed_kmh: 0.0,
     }
 }

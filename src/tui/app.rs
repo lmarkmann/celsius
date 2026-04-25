@@ -14,6 +14,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Color;
 use ratatui::widgets::Widget;
 
+use crate::lightning;
 use crate::render::render;
 use crate::scene::SkyState;
 use crate::tui::widget::SkyWidget;
@@ -70,13 +71,15 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
     let mut drift_paused = false;
     let mut overlay = Overlay::None;
     let mut last_tick = Instant::now();
+    let mut lightning_elapsed = Duration::ZERO;
 
     loop {
+        let lightning_t = lightning_elapsed.as_secs_f64();
         terminal
             .draw(|frame| {
                 let area = frame.area();
                 let buf = frame.buffer_mut();
-                draw_sky(buf, area, &display);
+                draw_sky(buf, area, &display, lightning_t);
                 match &overlay {
                     Overlay::Help => draw_help_overlay(buf, area),
                     Overlay::Location { input } => draw_location_overlay(buf, area, input),
@@ -132,13 +135,15 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
         }
 
         if last_tick.elapsed() >= TICK {
-            let dt = last_tick.elapsed().as_secs_f64();
+            let elapsed = last_tick.elapsed();
+            let dt = elapsed.as_secs_f64();
             last_tick = Instant::now();
             if !drift_paused {
                 let delta = display.wind_speed_kmh * dt * 0.0001;
                 for layer in &mut display.clouds {
                     layer.offset_x += delta;
                 }
+                lightning_elapsed += elapsed;
             }
         }
     }
@@ -223,7 +228,7 @@ const OVERLAY_BG: Color = Color::Rgb(18, 18, 26);
 const OVERLAY_FG: Color = Color::Rgb(210, 210, 210);
 const OVERLAY_DIM: Color = Color::Rgb(120, 120, 140);
 
-fn draw_sky(buf: &mut Buffer, area: Rect, state: &SkyState) {
+fn draw_sky(buf: &mut Buffer, area: Rect, state: &SkyState, lightning_t: f64) {
     if area.width < MIN_COLS || area.height < MIN_ROWS {
         draw_too_small(buf, area);
         return;
@@ -245,7 +250,10 @@ fn draw_sky(buf: &mut Buffer, area: Rect, state: &SkyState) {
 
     let px_width = sky_area.width as u32;
     let px_height = (sky_area.height as u32) * 2;
-    let pixels = render(state, px_width, px_height);
+    let mut pixels = render(state, px_width, px_height);
+    if let Some(lt) = &state.lightning {
+        lightning::overlay(&mut pixels, lt, lightning_t);
+    }
     SkyWidget { pixels: &pixels }.render(sky_area, buf);
 }
 

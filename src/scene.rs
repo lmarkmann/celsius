@@ -5,6 +5,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::gradient::Gradient;
+use crate::lightning::Lightning;
 
 #[derive(Debug, Error)]
 pub enum SceneError {
@@ -108,6 +109,7 @@ pub struct SkyState {
     pub stars: Option<Stars>,
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
+    pub lightning: Option<Lightning>,
     pub wind_speed_kmh: f64,
 }
 
@@ -178,6 +180,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         stars: raw.stars,
         moon: raw.moon,
         precipitation: raw.precipitation,
+        lightning: None,
         wind_speed_kmh: 0.0,
     })
 }
