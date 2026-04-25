@@ -47,4 +47,15 @@ impl Gradient {
         }
         stops.last().copied().unwrap().color
     }
+
+    pub fn tint_toward_horizon(&mut self, target: Oklab, strength: f64) {
+        let strength = strength.clamp(0.0, 1.0);
+        if strength == 0.0 {
+            return;
+        }
+        for stop in &mut self.stops {
+            let weight = stop.t * strength;
+            stop.color = lerp_oklab(stop.color, target, weight);
+        }
+    }
 }
