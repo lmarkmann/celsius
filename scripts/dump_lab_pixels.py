@@ -2,7 +2,7 @@
 
 Run from the celsius repo root:
     PYTHONPATH=../skyterm-lab/src ../skyterm-lab/.venv/bin/python \
-        tools/dump_lab_pixels.py \
+        scripts/dump_lab_pixels.py \
         ../skyterm-lab/scenes/golden_hour_cumulus.toml \
         out/lab_golden_hour_cumulus.raw
 

@@ -7,7 +7,7 @@ use celsius::{load_scene, render};
 
 fn scene_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/scenes")
+        .join("scenes")
         .join(format!("{name}.toml"))
 }
 

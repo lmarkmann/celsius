@@ -33,9 +33,9 @@ render-all:
 # Run this only after a deliberate pipeline change you want to bless.
 lock:
     cargo build --release --features png
-    mkdir -p goldens
-    for s in {{scenes}}; do ./target/release/celsius render --scene {{lab_scenes}}/$s.toml --out goldens/$s.png; done
-    python3 tools/write_manifest.py
+    mkdir -p tests/goldens
+    for s in {{scenes}}; do ./target/release/celsius render --scene {{lab_scenes}}/$s.toml --out tests/goldens/$s.png; done
+    python3 scripts/write_manifest.py
 
 verify:
     cargo test --release --features png -- --nocapture

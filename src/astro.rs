@@ -53,13 +53,24 @@ fn gast(jd_val: f64) -> f64 {
     norm(gmst + eq_equinoxes)
 }
 
+// Saemundsson's formula: lifts geometric altitude to apparent altitude.
+// At the horizon the sun/moon disc appears ~29 arcmin above its true position;
+// shifts sunrise/sunset timing by a few minutes at mid latitudes, more near the poles.
+fn refraction_deg(h_deg: f64) -> f64 {
+    if h_deg < -1.0 {
+        return 0.0;
+    }
+    1.02 / rad(h_deg + 10.3 / (h_deg + 5.11)).tan() / 60.0
+}
+
 fn to_horizontal(ra: f64, dec: f64, lat: f64, lon: f64, jd_val: f64) -> AltAz {
     let ha = rad(norm(gast(jd_val) + lon - ra));
     let dec_r = rad(dec);
     let lat_r = rad(lat);
 
     let sin_alt = lat_r.sin() * dec_r.sin() + lat_r.cos() * dec_r.cos() * ha.cos();
-    let altitude = deg(sin_alt.clamp(-1.0, 1.0).asin());
+    let geometric_alt = deg(sin_alt.clamp(-1.0, 1.0).asin());
+    let altitude = geometric_alt + refraction_deg(geometric_alt);
 
     // atan2 form from Meeus eq. 13.5; add 180 so 0=north
     let az = deg(f64::atan2(
@@ -315,6 +326,28 @@ mod tests {
             state.illumination < 0.08,
             "illumination {} should be near 0 at new moon",
             state.illumination
+        );
+    }
+
+    // Atmospheric refraction at the horizon: a body at geometric altitude 0
+    // should appear lifted by ~29 arcmin (Saemundsson). At zenith, refraction
+    // is zero. Above ~10 deg, it drops below 6 arcmin.
+    #[test]
+    fn refraction_horizon_and_zenith() {
+        assert!(
+            (refraction_deg(0.0) - 0.483).abs() < 0.01,
+            "refraction at horizon should be ~0.48 deg, got {}",
+            refraction_deg(0.0)
+        );
+        assert!(
+            refraction_deg(90.0).abs() < 0.001,
+            "refraction at zenith should be ~0, got {}",
+            refraction_deg(90.0)
+        );
+        assert_eq!(
+            refraction_deg(-5.0),
+            0.0,
+            "no refraction well below horizon"
         );
     }
 

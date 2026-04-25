@@ -8,9 +8,9 @@ struct GeoResponse {
     results: Vec<GeoResult>,
 }
 
-const GEOCODING_HAMBURG: &str = include_str!("fixtures/open-meteo-geocoding-hamburg.json");
-const FORECAST_HAMBURG: &str = include_str!("fixtures/open-meteo-forecast-hamburg.json");
-const FORECAST_NULLS: &str = include_str!("fixtures/open-meteo-forecast-with-nulls.json");
+const GEOCODING_HAMBURG: &str = include_str!("open-meteo-geocoding-hamburg.json");
+const FORECAST_HAMBURG: &str = include_str!("open-meteo-forecast-hamburg.json");
+const FORECAST_NULLS: &str = include_str!("open-meteo-forecast-with-nulls.json");
 
 #[test]
 fn geocoding_response_parses_hamburg() {

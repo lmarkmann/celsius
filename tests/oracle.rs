@@ -29,7 +29,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[test]
 fn lab_scenes_match_locked_goldens() -> Result<()> {
     let root = repo_root();
-    let manifest_path = root.join("goldens/manifest.toml");
+    let manifest_path = root.join("tests/goldens/manifest.toml");
     let manifest_text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("reading {}", manifest_path.display()))?;
     let manifest: BTreeMap<String, Entry> = toml::from_str(&manifest_text)?;
@@ -38,9 +38,7 @@ fn lab_scenes_match_locked_goldens() -> Result<()> {
         let lab_path = root
             .join("../skyterm-lab/scenes")
             .join(format!("{name}.toml"));
-        let vendor_path = root
-            .join("tests/fixtures/scenes")
-            .join(format!("{name}.toml"));
+        let vendor_path = root.join("scenes").join(format!("{name}.toml"));
         let scene_path = if lab_path.exists() {
             lab_path
         } else {

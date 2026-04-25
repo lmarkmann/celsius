@@ -9,12 +9,19 @@ keywords = ["weather", "tui", "terminal", "sky", "cli"]
 categories = ["command-line-utilities", "visualization"]
 exclude = [
   "demos/",
-  "goldens/",
-  "tools/",
+  "scenes/",
+  "scripts/",
   ".github/",
   "benches/",
   "tests/",
 ]
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.{ archive-suffix }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [features]
 default = []
@@ -30,7 +37,7 @@ dirs = "5"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-ratatui = "0.29"
+ratatui = { version = "0.30", features = ["crossterm_0_28"] }
 rayon = "1.10"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
