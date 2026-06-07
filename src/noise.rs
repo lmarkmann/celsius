@@ -211,6 +211,53 @@ mod tests {
         }
     }
 
+    // Python reference: import random; rng = random.Random(101);
+    // vals = [rng.getrandbits(32) for _ in range(1280)]
+    // 1280 draws cross the 624-word refill boundary twice, so generate()
+    // runs on twisted state and every state word is observed; the 5-value
+    // tests above only ever read mt[0..10] of the first twist.
+    #[test]
+    fn mt19937_generate_refill_matches_python() {
+        let mut rng = Mt19937::init_by_array(&[101]);
+        let vals: Vec<u32> = (0..1280).map(|_| rng.next_u32()).collect();
+        // First refill boundary: tail of twist 1 (including the wrap-around
+        // word at 623) into the head of twist 2.
+        let expected_618 = [
+            3720980164u32,
+            3245653950,
+            3663418607,
+            4294872249,
+            3067599802,
+            2314046024,
+            2189986376,
+            3290219555,
+            4114103146,
+            1792017223,
+            3177713995,
+            1797633989,
+        ];
+        assert_eq!(&vals[618..630], &expected_618);
+        // Second refill boundary.
+        let expected_1244 = [
+            2944732989u32,
+            1455023257,
+            3999568197,
+            77141538,
+            4071493273,
+            2253603204,
+            774423505,
+            1371819118,
+        ];
+        assert_eq!(&vals[1244..1252], &expected_1244);
+        // FNV-style fold over the full sequence: a wrong word at any index
+        // fails, which is what kills mutants in the middle of the twist loops.
+        let mut h: u64 = 14_695_981_039_346_656_037;
+        for &v in &vals {
+            h = h.wrapping_mul(1_099_511_628_211) ^ u64::from(v);
+        }
+        assert_eq!(h, 7_826_571_744_396_643_321);
+    }
+
     // Python reference: import random; rng = random.Random(4096); [rng.random() for _ in range(5)]
     #[test]
     fn mt19937_matches_python_seed_4096() {
