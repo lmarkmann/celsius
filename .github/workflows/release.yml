@@ -46,7 +46,9 @@ jobs:
           formula-path: Formula/celsius.rb
           homebrew-tap: lmarkmann/homebrew-tap
           base-branch: main
-          download-url: https://github.com/lmarkmann/celsius/archive/refs/tags/${{ github.ref_name }}.tar.gz
+          # codeload serves the tarball directly; the github.com archive URL
+          # redirects with 303, which the action rejects (mislav/bump-homebrew-formula-action#340)
+          download-url: https://codeload.github.com/lmarkmann/celsius/tar.gz/refs/tags/${{ github.ref_name }}
           commit-message: |
             celsius ${{ github.ref_name }}
 
