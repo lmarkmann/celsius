@@ -206,7 +206,6 @@ dependencies = [
  "dirs",
  "image",
  "ratatui",
- "rayon",
  "serde",
  "serde_json",
  "sha2",
