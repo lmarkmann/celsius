@@ -17,7 +17,7 @@ fn bench_render(c: &mut Criterion) {
     let mut g = c.benchmark_group("render");
     g.sample_size(20);
 
-    // Lab authoring size -- what the oracle test uses
+    // Lab authoring size; what the oracle test uses
     g.bench_function("104x50_stormy", |b| {
         b.iter(|| render(black_box(&state), 104, 50))
     });

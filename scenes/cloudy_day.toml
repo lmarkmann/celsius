@@ -1,6 +1,6 @@
 # cloudy_day
 # Hamburg, typical autumn overcast. Sun hidden at ~25 deg altitude, full cloud
-# cover but no precipitation, no haze. The sky is bright and diffuse -- more
+# cover but no precipitation, no haze. The sky is bright and diffuse; more
 # light comes from above than from the horizon, so zenith is lighter than the
 # murky bottom edge. Distinct from stormy_afternoon: no rain, no greenish cast,
 # no drama. Just a flat uniform gray that covers half of Hamburg's calendar.
@@ -17,7 +17,7 @@ stops = [
 [sun]
 # mid-morning autumn angle, hidden behind cloud sheet. Keeping it in the
 # upper frame lets the renderer create a natural diffuse bright patch where
-# the sun is -- the way an overcast sky actually looks.
+# the sun is; the way an overcast sky actually looks.
 x_frac  = 0.48
 y_frac  = 0.28
 radius  = 3.0
@@ -31,7 +31,7 @@ strength = 0.48
 exponent = 1.4
 
 [[clouds.layers]]
-# high altostratus sheet -- moderate density so gradient shows through
+# high altostratus sheet; moderate density so gradient shows through
 cover          = 1.35
 altitude_t     = 0.22
 altitude_sigma = 0.12
