@@ -3,6 +3,21 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.2.2] - 2026-06-07
+
+### Fixed
+
+- Binstall pkg-url had a stray dot before archive-suffix, add bin-dir for flat archives
+
+### Other
+
+- Drop rayon, nothing uses it
+- Dirs 6 (dedups windows-sys), toml 0.5 (drops toml_edit), add cargo-deny config
+
+### Test
+
+- Draw past the mt19937 refill boundary
+
 ## [0.2.1] - 2026-04-25
 
 ### Added
