@@ -11,7 +11,7 @@ use crate::scene::{
 
 use super::WeatherError;
 use super::bortle;
-use super::forecast::Forecast;
+use super::forecast::{DailyArrays, Forecast};
 use super::gradients::{Palette, gradient_for, sky_gradient};
 use super::location::GeoResult;
 
@@ -85,7 +85,13 @@ pub fn compose(
     let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
     let sample = HourSample::at(forecast, h);
     Ok(build_sky(
-        &sample, location, unix_utc, now_unix, center_az, bortle,
+        &sample,
+        location,
+        unix_utc,
+        now_unix,
+        center_az,
+        bortle,
+        forecast.daily.as_ref(),
     ))
 }
 
@@ -110,6 +116,7 @@ pub fn compose_at(
         now_unix,
         center_az,
         bortle,
+        forecast.daily.as_ref(),
     ))
 }
 
@@ -146,6 +153,7 @@ fn build_sky(
     now_unix: i64,
     center_az: f64,
     bortle: Option<u8>,
+    daily: Option<&DailyArrays>,
 ) -> SkyState {
     let lat = location.latitude;
     let lon = location.longitude;
@@ -198,15 +206,10 @@ fn build_sky(
         center_az,
     );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
-    let chrome = build_chrome(
-        location,
-        unix_utc,
-        now_unix,
-        sample.temperature_c,
-        sample.weather_code,
-        sample.wind_speed,
-        sample.wind_dir,
-    );
+
+    let sun_day = daily.and_then(|d| sun_day_for(d, &utc_date_iso(unix_utc)));
+
+    let chrome = build_chrome(location, unix_utc, now_unix, sample, sun_day);
 
     SkyState {
         name: format!(
@@ -280,6 +283,73 @@ fn parse_hour_to_unix(time_str: &str) -> Result<i64, WeatherError> {
     let naive = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M")
         .map_err(|e| WeatherError::Decode(format!("hour timestamp '{time_str}': {e}")))?;
     Ok(naive.and_utc().timestamp())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SunDay {
+    Times { rise_unix: i64, set_unix: i64 },
+    PolarDay,
+    PolarNight,
+}
+
+fn utc_date_iso(unix_utc: i64) -> String {
+    Utc.timestamp_opt(unix_utc, 0)
+        .single()
+        .map(|dt| dt.date_naive().to_string())
+        .unwrap_or_default()
+}
+
+// Open-Meteo encodes polar day/night as sentinel values, not nulls:
+// polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00.
+// polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00.
+// Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
+fn sun_day_for(daily: &DailyArrays, date_iso: &str) -> Option<SunDay> {
+    let i = daily.time.iter().position(|d| d == date_iso)?;
+    let dur = daily.daylight_duration.get(i).copied()?;
+    if dur >= 86_399.0 {
+        return Some(SunDay::PolarDay);
+    }
+    if dur <= 1.0 {
+        return Some(SunDay::PolarNight);
+    }
+    let rise = parse_hour_to_unix(daily.sunrise.get(i)?).ok()?;
+    let set = parse_hour_to_unix(daily.sunset.get(i)?).ok()?;
+    Some(SunDay::Times {
+        rise_unix: rise,
+        set_unix: set,
+    })
+}
+
+fn local_hhmm(unix_utc: i64) -> String {
+    Local
+        .timestamp_opt(unix_utc, 0)
+        .single()
+        .map(|dt| dt.format("%H:%M").to_string())
+        .unwrap_or_else(|| {
+            Utc.timestamp_opt(unix_utc, 0)
+                .unwrap()
+                .format("%H:%M")
+                .to_string()
+        })
+}
+
+// Arrows ↑ U+2191 / ↓ U+2193 are East-Asian-Width Ambiguous: width 1 in western
+// terminals (default), width 2 in CJK locales or when ambiguous-as-wide is set.
+// Column math elsewhere assumes width 1; revisit if that changes.
+fn format_sun_segment(sun_day: Option<&SunDay>) -> String {
+    match sun_day {
+        Some(SunDay::Times {
+            rise_unix,
+            set_unix,
+        }) => format!(
+            "   ↑ {}  ↓ {}",
+            local_hhmm(*rise_unix),
+            local_hhmm(*set_unix)
+        ),
+        Some(SunDay::PolarDay) => "   polar day".to_string(),
+        Some(SunDay::PolarNight) => "   polar night".to_string(),
+        None => String::new(),
+    }
 }
 
 fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
@@ -508,29 +578,30 @@ fn build_chrome(
     location: &GeoResult,
     unix_utc: i64,
     now_unix: i64,
-    temperature_c: Option<f64>,
-    weather_code: Option<u32>,
-    wind_speed: Option<f64>,
-    wind_dir: Option<f64>,
+    sample: &HourSample,
+    sun_day: Option<SunDay>,
 ) -> Chrome {
     let header_left = "celsius".to_string();
     let header_right = format!(
-        "{}   {}",
+        "{}   {}{}",
         location.label().to_lowercase(),
-        format_label(unix_utc, now_unix)
+        format_label(unix_utc, now_unix),
+        format_sun_segment(sun_day.as_ref()),
     );
 
-    let temp = temperature_c
+    let temp = sample
+        .temperature_c
         .map(|t| format!("{:.0}°", t))
         .unwrap_or_else(|| "--°".to_string());
-    let word = wmo_word(weather_code.unwrap_or(0));
-    let speed = wind_speed.unwrap_or(0.0).round() as i64;
-    let compass = compass_from_deg(wind_dir.unwrap_or(0.0));
+    let word = wmo_word(sample.weather_code.unwrap_or(0));
+    let speed = sample.wind_speed.unwrap_or(0.0).round() as i64;
+    let compass = compass_from_deg(sample.wind_dir.unwrap_or(0.0));
     let footer = format!("{temp}  {word}   wind {compass} {speed}");
 
     // ASCII one-liner for --plain: proper-case place, no degree sign, uppercase
     // compass. Grep- and pipe-friendly, distinct from the decorative footer.
-    let temp_ascii = temperature_c
+    let temp_ascii = sample
+        .temperature_c
         .map(|t| format!("{t:.0}C"))
         .unwrap_or_else(|| "--C".to_string());
     let status = format!(
@@ -714,5 +785,87 @@ mod tests {
         assert_eq!(wmo_word(63), "rain");
         assert_eq!(wmo_word(75), "heavy snow");
         assert_eq!(wmo_word(95), "thunderstorms");
+    }
+
+    fn daily_one_day(
+        date: &str,
+        sunrise: &str,
+        sunset: &str,
+        daylight_duration: f64,
+    ) -> DailyArrays {
+        DailyArrays {
+            time: vec![date.to_string()],
+            sunrise: vec![sunrise.to_string()],
+            sunset: vec![sunset.to_string()],
+            daylight_duration: vec![daylight_duration],
+        }
+    }
+
+    #[test]
+    fn sun_day_normal_returns_times() {
+        let daily = daily_one_day(
+            "2026-04-11",
+            "2026-04-11T04:38",
+            "2026-04-11T18:14",
+            48_960.0,
+        );
+        match sun_day_for(&daily, "2026-04-11") {
+            Some(SunDay::Times {
+                rise_unix,
+                set_unix,
+            }) => {
+                // 2026-04-11T00:00Z = 1_775_865_600 (per parse_hour_round_trip);
+                // +4h38m = +16_680, +18h14m = +65_640.
+                assert_eq!(rise_unix, 1_775_882_280);
+                assert_eq!(set_unix, 1_775_931_240);
+            }
+            other => panic!("expected Times, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sun_day_polar_day_from_full_daylight() {
+        let daily = daily_one_day(
+            "2026-05-09",
+            "2026-05-09T00:00",
+            "2026-05-10T00:00",
+            86_400.0,
+        );
+        assert_eq!(sun_day_for(&daily, "2026-05-09"), Some(SunDay::PolarDay));
+    }
+
+    #[test]
+    fn sun_day_polar_night_from_zero_daylight() {
+        let daily = daily_one_day("2025-12-22", "2025-12-22T00:00", "2025-12-22T00:00", 0.0);
+        assert_eq!(sun_day_for(&daily, "2025-12-22"), Some(SunDay::PolarNight));
+    }
+
+    #[test]
+    fn sun_day_unknown_date_returns_none() {
+        let daily = daily_one_day(
+            "2026-04-11",
+            "2026-04-11T04:38",
+            "2026-04-11T18:14",
+            48_960.0,
+        );
+        assert_eq!(sun_day_for(&daily, "2026-04-12"), None);
+    }
+
+    #[test]
+    fn utc_date_iso_round_trip() {
+        // 2026-04-11T00:00Z
+        assert_eq!(utc_date_iso(1_775_865_600), "2026-04-11");
+        // 2026-04-11T23:59Z still resolves to the same UTC date
+        assert_eq!(utc_date_iso(1_775_865_600 + 86_399), "2026-04-11");
+    }
+
+    #[test]
+    fn format_sun_segment_branches() {
+        assert_eq!(format_sun_segment(None), "");
+        assert_eq!(format_sun_segment(Some(&SunDay::PolarDay)), "   polar day");
+        assert_eq!(
+            format_sun_segment(Some(&SunDay::PolarNight)),
+            "   polar night"
+        );
     }
 }
