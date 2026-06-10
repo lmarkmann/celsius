@@ -13,15 +13,17 @@ SCENES = [
     "high_noon_clear",
     "moonlit_clear_winter",
     "stormy_afternoon_advancing",
+    "overcast_night",
+    "moonless_darksky",
 ]
 
 HEADER = """\
 # celsius goldens: raw 104x50 renders (no chrome).
-# scene_sha256 is the SHA-256 of the lab scene TOML the PNG was rendered from;
+# scene_sha256 is the SHA-256 of the scene TOML the PNG was rendered from;
 # png_sha256 is the SHA-256 of the locked PNG. The oracle test recomputes both
 # and refuses to pass if either drifts. Regenerate with:
 #   just lock
-# Lab scene TOMLs live in ../skyterm-lab/scenes/ (sibling of celsius in ~/Documents).
+# Scene TOMLs are vendored in scenes/; the oracle reads them there.
 """
 
 
@@ -33,7 +35,7 @@ def main() -> None:
     root = Path(__file__).resolve().parent.parent
     lines = [HEADER]
     for name in SCENES:
-        scene = root.parent / "skyterm-lab" / "scenes" / f"{name}.toml"
+        scene = root / "scenes" / f"{name}.toml"
         png = root / "tests" / "goldens" / f"{name}.png"
         lines.append("")
         lines.append(f"[{name}]")
