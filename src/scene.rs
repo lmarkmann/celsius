@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::analytic_sky::AnalyticSky;
 use crate::gradient::Gradient;
 use crate::lightning::Lightning;
 
@@ -199,6 +200,10 @@ pub struct SkyState {
     pub precipitation: Option<Precipitation>,
     pub lightning: Option<Lightning>,
     pub horizon_glow: Option<HorizonGlow>,
+    /// Prototype: when present, render computes the sky background from the
+    /// Preetham analytic model instead of sampling `gradient`. Set only for the
+    /// live-weather daytime path; scenes leave it None.
+    pub analytic: Option<AnalyticSky>,
     pub wind_speed_kmh: f64,
 }
 
@@ -271,6 +276,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         precipitation: raw.precipitation,
         lightning: None,
         horizon_glow: None,
+        analytic: None,
         wind_speed_kmh: 0.0,
     })
 }

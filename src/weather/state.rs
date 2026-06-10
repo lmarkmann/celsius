@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use chrono::{Datelike, Local, NaiveDateTime, TimeZone, Utc};
 
+use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
 use crate::lightning::Lightning;
 use crate::scene::{
@@ -80,6 +81,7 @@ pub fn compose(
     now_unix: i64,
     center_az: f64,
     bortle: Option<u8>,
+    analytic: bool,
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
     let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
@@ -92,6 +94,7 @@ pub fn compose(
         center_az,
         bortle,
         forecast.daily.as_ref(),
+        analytic,
     ))
 }
 
@@ -106,6 +109,7 @@ pub fn compose_at(
     now_unix: i64,
     center_az: f64,
     bortle: Option<u8>,
+    analytic: bool,
 ) -> Result<SkyState, WeatherError> {
     let (h0, h1, frac) = bracket_hours(forecast, target_unix)?;
     let sample = HourSample::interpolated(forecast, h0, h1, frac);
@@ -117,6 +121,7 @@ pub fn compose_at(
         center_az,
         bortle,
         forecast.daily.as_ref(),
+        analytic,
     ))
 }
 
@@ -146,6 +151,16 @@ fn bracket_hours(
     Ok((h0, h0 + 1, frac))
 }
 
+// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km
+// in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
+fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
+    let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
+    (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
+}
+
+// Prototype's `analytic` flag pushes this to 8 args; if the analytic sky
+// graduates, bundle (center_az, bortle, analytic) into a render-opts struct.
+#[expect(clippy::too_many_arguments)]
 fn build_sky(
     sample: &HourSample,
     location: &GeoResult,
@@ -154,6 +169,7 @@ fn build_sky(
     center_az: f64,
     bortle: Option<u8>,
     daily: Option<&DailyArrays>,
+    analytic: bool,
 ) -> SkyState {
     let lat = location.latitude;
     let lon = location.longitude;
@@ -211,6 +227,19 @@ fn build_sky(
 
     let chrome = build_chrome(location, unix_utc, now_unix, sample, sun_day);
 
+    // Prototype: the analytic sky is daytime-only (Preetham's zenith formula
+    // breaks once the sun is below the horizon); twilight and night keep the
+    // palette gradient.
+    let analytic_sky = (analytic && sun_altaz.altitude > 0.0).then(|| AnalyticSky {
+        sun_alt: sun_altaz.altitude,
+        sun_az: sun_altaz.azimuth,
+        center_az,
+        turbidity: turbidity_from_visibility(sample.visibility_m),
+        // Ramp in over the first 8 degrees of solar elevation so the model
+        // crossfades out of the palette through twilight, no seam at sunrise.
+        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0),
+    });
+
     SkyState {
         name: format!(
             "{}-{}",
@@ -227,6 +256,7 @@ fn build_sky(
         precipitation,
         lightning,
         horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
+        analytic: analytic_sky,
         wind_speed_kmh: sample.wind_speed.unwrap_or(0.0),
     }
 }
@@ -716,6 +746,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         precipitation: None,
         lightning: None,
         horizon_glow: None,
+        analytic: None,
         wind_speed_kmh: 0.0,
     }
 }
