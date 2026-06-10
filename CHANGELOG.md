@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.3.2] - 2026-06-10
+
+### Added
+
+- Show sunrise and sunset times in the header ([#33](https://github.com/lmarkmann/celsius/pull/33))
+
 ## [0.3.1] - 2026-06-10
 
 ### Added
