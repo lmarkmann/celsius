@@ -3,6 +3,16 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.3.1] - 2026-06-10
+
+### Added
+
+- Higher-fidelity sky synthesis (cover, palette, clouds, projection, sub-hour now) ([#32](https://github.com/lmarkmann/celsius/pull/32))
+
+### Test
+
+- Add overcast_night and moonless_darksky oracle goldens ([#30](https://github.com/lmarkmann/celsius/pull/30))
+
 ## [0.3.0] - 2026-06-10
 
 ### Added
