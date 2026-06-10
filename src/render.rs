@@ -8,14 +8,19 @@ use crate::stars::build_star_map;
 
 const ALTITUDE_CUTOFF: f64 = 0.04;
 
-fn cloud_warm() -> Oklab {
-    rgb_u8_to_oklab(252, 215, 172)
-}
-fn cloud_cool() -> Oklab {
-    rgb_u8_to_oklab(78, 74, 108)
-}
 fn sun_disc_color() -> Oklab {
     rgb_u8_to_oklab(255, 242, 205)
+}
+
+// Per-layer render parameters resolved once from the layer's cloud kind, so the
+// per-pixel loop never reconstructs morphology or re-converts colors.
+struct LayerRender {
+    noise: Noise,
+    octaves: u32,
+    edge: f64,
+    flatten: f64,
+    shadow: Oklab,
+    lit: Oklab,
 }
 
 pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
@@ -23,11 +28,32 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let h = height as usize;
     let mut pixels = PixelBuffer::filled(w, h, Rgb::BLACK);
 
-    let cloud_noise: Vec<Noise> = state.clouds.iter().map(|l| Noise::new(l.seed)).collect();
+    let cloud_layers: Vec<LayerRender> = state
+        .clouds
+        .iter()
+        .map(|l| {
+            let m = l.kind.morphology();
+            LayerRender {
+                noise: Noise::new(l.seed),
+                octaves: m.octaves,
+                edge: m.edge,
+                flatten: l.flatten,
+                shadow: rgb_u8_to_oklab(m.shadow_rgb[0], m.shadow_rgb[1], m.shadow_rgb[2]),
+                lit: rgb_u8_to_oklab(m.lit_rgb[0], m.lit_rgb[1], m.lit_rgb[2]),
+            }
+        })
+        .collect();
     let haze_lab = state
         .haze
         .as_ref()
         .map(|h| rgb_u8_to_oklab(h.rgb[0], h.rgb[1], h.rgb[2]));
+    let horizon_glow = state.horizon_glow.as_ref().map(|g| {
+        (
+            g.x_frac,
+            rgb_u8_to_oklab(g.rgb[0], g.rgb[1], g.rgb[2]),
+            g.strength,
+        )
+    });
     let star_map = state
         .stars
         .as_ref()
@@ -38,8 +64,6 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let sun_px = sun.x_frac * width as f64;
     let sun_py = sun.y_frac * height as f64;
     let sun_r = sun.radius;
-    let cloud_warm = cloud_warm();
-    let cloud_cool = cloud_cool();
     let sun_disc = sun_disc_color();
 
     for py in 0..height {
@@ -73,7 +97,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                 b += db;
             }
 
-            for (layer, noise) in state.clouds.iter().zip(cloud_noise.iter()) {
+            for (layer, lr) in state.clouds.iter().zip(cloud_layers.iter()) {
                 let diff = tv - layer.altitude_t;
                 let sigma = layer.altitude_sigma;
                 let alt = (-(diff * diff) / (2.0 * sigma * sigma)).exp();
@@ -82,8 +106,12 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                 }
                 let nx = px as f64 / width as f64 * layer.scale_x + layer.offset_x;
                 let ny = py as f64 / height as f64 * layer.scale_y + layer.offset_y;
-                let n = noise.warped_fbm(nx, ny);
-                let mut density = ((n - layer.threshold).max(0.0) * 3.6) * alt * layer.cover;
+                let n = lr.noise.warped_fbm_oct(nx, ny, lr.octaves);
+                let noise_density = ((n - layer.threshold).max(0.0) * lr.edge) * alt * layer.cover;
+                // A flat deck ignores the noise gate and fills the altitude band
+                // solidly; flatten blends between the two.
+                let flat_density = (alt * layer.cover).min(1.0);
+                let mut density = noise_density * (1.0 - lr.flatten) + flat_density * lr.flatten;
                 if density <= 0.0 {
                     continue;
                 }
@@ -93,7 +121,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                 let sdy = (sun_py - py as f64) / height as f64;
                 let sun_dist = (sdx * sdx + sdy * sdy).sqrt();
                 let lit = (1.0 - sun_dist * 1.6).clamp(0.0, 1.0);
-                let cl = lerp_oklab(cloud_cool, cloud_warm, lit);
+                let cl = lerp_oklab(lr.shadow, lr.lit, lit);
                 let inv = 1.0 - density;
                 l = l * inv + cl.l * density;
                 a = a * inv + cl.a * density;
@@ -106,6 +134,18 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                     l += (hz_lab.l - l) * k;
                     a += (hz_lab.a - a) * k;
                     b += (hz_lab.b - b) * k;
+                }
+            }
+
+            if let Some((gx_frac, glow, strength)) = horizon_glow {
+                let dx = px as f64 / width as f64 - gx_frac;
+                let horiz = (1.0 - dx.abs() / 0.6).max(0.0);
+                let band = ((tv - 0.45) / 0.55).clamp(0.0, 1.0);
+                let k = strength * horiz * horiz * band * band * 0.6;
+                if k > 0.0 {
+                    l += (glow.l - l) * k;
+                    a += (glow.a - a) * k;
+                    b += (glow.b - b) * k;
                 }
             }
 

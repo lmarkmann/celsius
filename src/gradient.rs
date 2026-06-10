@@ -48,6 +48,32 @@ impl Gradient {
         stops.last().copied().unwrap().color
     }
 
+    /// Cross-fade toward another gradient in Oklab. Samples both at the union
+    /// of their stop positions so neither gradient's keyframes are lost, which
+    /// keeps a continuous sky transition smooth as `k` sweeps 0 -> 1.
+    pub fn blend(&self, other: &Gradient, k: f64) -> Gradient {
+        let k = k.clamp(0.0, 1.0);
+        if k == 0.0 {
+            return self.clone();
+        }
+        if k == 1.0 {
+            return other.clone();
+        }
+        let mut ts: Vec<f64> = self
+            .stops
+            .iter()
+            .chain(other.stops.iter())
+            .map(|s| s.t)
+            .collect();
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        let stops = ts
+            .into_iter()
+            .map(|t| (t, lerp_oklab(self.sample(t), other.sample(t), k)))
+            .collect();
+        Gradient::from_oklab_stops(stops)
+    }
+
     pub fn tint_toward_horizon(&mut self, target: Oklab, strength: f64) {
         let strength = strength.clamp(0.0, 1.0);
         if strength == 0.0 {

@@ -60,9 +60,16 @@ impl Noise {
     }
 
     pub fn warped_fbm(&self, x: f64, y: f64) -> f64 {
+        self.warped_fbm_oct(x, y, 4)
+    }
+
+    // Same domain warp as warped_fbm, with the final fbm octave count exposed so
+    // cloud kinds can dial detail (cirrus wispy = more octaves, stratus smooth =
+    // fewer). octaves == 4 is bit-identical to warped_fbm.
+    pub fn warped_fbm_oct(&self, x: f64, y: f64, octaves: u32) -> f64 {
         let wx = self.fbm(x + 1.7, y + 3.2, 3);
         let wy = self.fbm(x + 5.8, y + 0.9, 3);
-        self.fbm(x + wx * 1.8, y + wy * 1.8, 4)
+        self.fbm(x + wx * 1.8, y + wy * 1.8, octaves)
     }
 }
 

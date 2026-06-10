@@ -34,6 +34,73 @@ pub struct Sun {
     pub visible: bool,
 }
 
+/// Cloud morphology class. Drives noise detail, edge sharpness, and the
+/// lit/shadow colors so a thin cirrus veil, a flat stratus deck, and a dark
+/// storm tower no longer share one texture. `Generic` reproduces the
+/// pre-morphology render exactly, which keeps vendored scenes and the oracle
+/// goldens unchanged.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudKind {
+    #[default]
+    Generic,
+    Cirrus,
+    Altocumulus,
+    Stratus,
+    Cumulus,
+    Cumulonimbus,
+}
+
+pub struct CloudMorphology {
+    pub octaves: u32,
+    pub edge: f64,
+    pub shadow_rgb: [u8; 3],
+    pub lit_rgb: [u8; 3],
+}
+
+impl CloudKind {
+    pub fn morphology(self) -> CloudMorphology {
+        match self {
+            CloudKind::Generic => CloudMorphology {
+                octaves: 4,
+                edge: 3.6,
+                shadow_rgb: [78, 74, 108],
+                lit_rgb: [252, 215, 172],
+            },
+            CloudKind::Cirrus => CloudMorphology {
+                octaves: 5,
+                edge: 2.0,
+                shadow_rgb: [150, 152, 168],
+                lit_rgb: [244, 240, 235],
+            },
+            CloudKind::Altocumulus => CloudMorphology {
+                octaves: 4,
+                edge: 4.5,
+                shadow_rgb: [120, 120, 138],
+                lit_rgb: [240, 232, 222],
+            },
+            CloudKind::Stratus => CloudMorphology {
+                octaves: 2,
+                edge: 2.6,
+                shadow_rgb: [128, 128, 134],
+                lit_rgb: [196, 196, 198],
+            },
+            CloudKind::Cumulus => CloudMorphology {
+                octaves: 4,
+                edge: 6.0,
+                shadow_rgb: [120, 118, 132],
+                lit_rgb: [252, 220, 178],
+            },
+            CloudKind::Cumulonimbus => CloudMorphology {
+                octaves: 4,
+                edge: 5.0,
+                shadow_rgb: [40, 40, 50],
+                lit_rgb: [150, 150, 162],
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct CloudLayer {
     pub cover: f64,
@@ -43,6 +110,12 @@ pub struct CloudLayer {
     pub scale_y: f64,
     pub threshold: f64,
     pub seed: u64,
+    #[serde(default)]
+    pub kind: CloudKind,
+    /// 0 = full noise texture, 1 = featureless flat deck. Lets a high-cover
+    /// stratus layer render as a solid lid instead of separate blobs.
+    #[serde(default)]
+    pub flatten: f64,
     #[serde(default = "default_offset_x")]
     pub offset_x: f64,
     #[serde(default = "default_offset_y")]
@@ -103,6 +176,16 @@ pub struct Precipitation {
     pub opacity: f64,
 }
 
+/// Warm light concentrated on the horizon at the sun's bearing. The vertical
+/// gradient is azimuth-blind, so this is what puts sunrise/sunset color on the
+/// side the sun actually is rather than symmetrically across the frame.
+#[derive(Clone, Debug)]
+pub struct HorizonGlow {
+    pub x_frac: f64,
+    pub rgb: [u8; 3],
+    pub strength: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct SkyState {
     pub name: String,
@@ -115,6 +198,7 @@ pub struct SkyState {
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
     pub lightning: Option<Lightning>,
+    pub horizon_glow: Option<HorizonGlow>,
     pub wind_speed_kmh: f64,
 }
 
@@ -186,6 +270,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         moon: raw.moon,
         precipitation: raw.precipitation,
         lightning: None,
+        horizon_glow: None,
         wind_speed_kmh: 0.0,
     })
 }
