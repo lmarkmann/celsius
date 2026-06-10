@@ -1,18 +1,13 @@
-use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::DefaultTerminal;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthStr;
 
 use crate::lightning;
 use crate::render::render;
@@ -23,6 +18,7 @@ const TICK: Duration = Duration::from_millis(33);
 const MIN_COLS: u16 = 40;
 const MIN_ROWS: u16 = 20;
 
+#[derive(Debug, PartialEq)]
 pub enum RunOutcome {
     Quit,
     Retry,
@@ -62,25 +58,129 @@ enum Overlay {
     Location { input: String },
 }
 
+/// The interactive state. Render reads it; key/tick handlers are the only
+/// places it mutates. Keeping it terminal-free is what makes the handlers
+/// testable without a real terminal (see the tests at the bottom of this file).
+pub struct App<'a> {
+    timeline: &'a Timeline,
+    index: usize,
+    display: SkyState,
+    drift_paused: bool,
+    overlay: Overlay,
+    lightning_elapsed: Duration,
+    outcome: Option<RunOutcome>,
+}
+
+impl<'a> App<'a> {
+    pub fn new(timeline: &'a Timeline) -> Self {
+        let index = timeline.home;
+        let display = timeline.states[index].clone();
+        Self {
+            timeline,
+            index,
+            display,
+            drift_paused: false,
+            overlay: Overlay::None,
+            lightning_elapsed: Duration::ZERO,
+            outcome: None,
+        }
+    }
+
+    /// Advance the animation by `elapsed`. Cloud drift and the lightning clock
+    /// both freeze while paused, so a paused sky is fully still.
+    pub fn tick(&mut self, elapsed: Duration) {
+        if self.drift_paused {
+            return;
+        }
+        let delta = self.display.wind_speed_kmh * elapsed.as_secs_f64() * 0.0001;
+        for layer in &mut self.display.clouds {
+            layer.offset_x += delta;
+        }
+        self.lightning_elapsed += elapsed;
+    }
+
+    pub fn lightning_t(&self) -> f64 {
+        self.lightning_elapsed.as_secs_f64()
+    }
+
+    /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome`
+    /// for the event loop to drain; everything else mutates in place. Assumes
+    /// the caller already filtered to `KeyEventKind::Press`.
+    pub fn handle_key(&mut self, key: KeyEvent) {
+        match self.overlay {
+            Overlay::Help => self.overlay = Overlay::None,
+            Overlay::Location { .. } => self.handle_location_key(key),
+            Overlay::None => self.handle_main_key(key),
+        }
+    }
+
+    fn handle_main_key(&mut self, key: KeyEvent) {
+        if is_quit_key(&key) {
+            self.outcome = Some(RunOutcome::Quit);
+            return;
+        }
+        match key.code {
+            KeyCode::Char(' ') => self.drift_paused = !self.drift_paused,
+            KeyCode::Char('?') => self.overlay = Overlay::Help,
+            KeyCode::Char('l') => {
+                self.overlay = Overlay::Location {
+                    input: String::new(),
+                }
+            }
+            KeyCode::Char('r') => self.outcome = Some(RunOutcome::Retry),
+            _ => {
+                let new = scrub_index(&key, self.index, self.timeline);
+                if new != self.index {
+                    self.index = new;
+                    self.display = self.timeline.states[new].clone();
+                }
+            }
+        }
+    }
+
+    fn handle_location_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.overlay = Overlay::None,
+            KeyCode::Enter => {
+                if let Overlay::Location { input } = &self.overlay {
+                    let name = input.trim();
+                    if !name.is_empty() {
+                        self.outcome = Some(RunOutcome::ChangeLocation(name.to_string()));
+                    }
+                }
+            }
+            KeyCode::Char(ch) => {
+                if let Overlay::Location { input } = &mut self.overlay {
+                    input.push(ch);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Overlay::Location { input } = &mut self.overlay {
+                    input.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
-    let mut terminal = enter_terminal().context("entering alternate screen")?;
-    let _guard = RestoreGuard;
+    let mut terminal = ratatui::init();
+    let result = event_loop(&mut terminal, &mut App::new(timeline));
+    ratatui::restore();
+    result
+}
 
-    let mut index = timeline.home;
-    let mut display = timeline.states[index].clone();
-    let mut drift_paused = false;
-    let mut overlay = Overlay::None;
+fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome> {
     let mut last_tick = Instant::now();
-    let mut lightning_elapsed = Duration::ZERO;
-
     loop {
-        let lightning_t = lightning_elapsed.as_secs_f64();
+        let lightning_t = app.lightning_t();
         terminal
             .draw(|frame| {
                 let area = frame.area();
                 let buf = frame.buffer_mut();
-                draw_sky(buf, area, &display, lightning_t);
-                match &overlay {
+                draw_sky(buf, area, &app.display, lightning_t);
+                match &app.overlay {
                     Overlay::Help => draw_help_overlay(buf, area),
                     Overlay::Location { input } => draw_location_overlay(buf, area, input),
                     Overlay::None => {}
@@ -89,70 +189,38 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
             .context("drawing frame")?;
 
         let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("polling input")? {
-            match event::read().context("reading input")? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    match &mut overlay {
-                        Overlay::Help => {
-                            // any key closes help
-                            overlay = Overlay::None;
-                        }
-                        Overlay::Location { input } => match key.code {
-                            KeyCode::Esc => overlay = Overlay::None,
-                            KeyCode::Enter if !input.trim().is_empty() => {
-                                let name = input.trim().to_string();
-                                return Ok(RunOutcome::ChangeLocation(name));
-                            }
-                            KeyCode::Char(ch) => input.push(ch),
-                            KeyCode::Backspace => {
-                                input.pop();
-                            }
-                            _ => {}
-                        },
-                        Overlay::None => match key.code {
-                            _ if is_quit_key(&key) => return Ok(RunOutcome::Quit),
-                            KeyCode::Char(' ') => drift_paused = !drift_paused,
-                            KeyCode::Char('?') => overlay = Overlay::Help,
-                            KeyCode::Char('l') => {
-                                overlay = Overlay::Location {
-                                    input: String::new(),
-                                }
-                            }
-                            KeyCode::Char('r') => return Ok(RunOutcome::Retry),
-                            _ => {
-                                let new = scrub_index(&key, index, timeline);
-                                if new != index {
-                                    index = new;
-                                    display = timeline.states[index].clone();
-                                }
-                            }
-                        },
-                    }
-                }
-                Event::Resize(_, _) | Event::Key(_) => {}
-                _ => {}
+        if event::poll(timeout).context("polling input")?
+            && let Event::Key(key) = event::read().context("reading input")?
+            && key.kind == KeyEventKind::Press
+        {
+            app.handle_key(key);
+            if let Some(outcome) = app.outcome.take() {
+                return Ok(outcome);
             }
         }
 
         if last_tick.elapsed() >= TICK {
             let elapsed = last_tick.elapsed();
-            let dt = elapsed.as_secs_f64();
             last_tick = Instant::now();
-            if !drift_paused {
-                let delta = display.wind_speed_kmh * dt * 0.0001;
-                for layer in &mut display.clouds {
-                    layer.offset_x += delta;
-                }
-                lightning_elapsed += elapsed;
-            }
+            app.tick(elapsed);
         }
     }
 }
 
 pub fn prompt_location() -> Result<String> {
-    let mut terminal = enter_terminal().context("entering alternate screen for prompt")?;
-    let _guard = RestoreGuard;
+    let mut terminal = ratatui::init();
+    let result = prompt_loop(&mut terminal);
+    ratatui::restore();
+    match result? {
+        Some(name) => Ok(name),
+        // Cancelled. The terminal is already restored above, so exiting here is
+        // clean; doing it inside the loop would skip restore and corrupt the
+        // terminal (the bug this rewrite fixes).
+        None => std::process::exit(0),
+    }
+}
 
+fn prompt_loop(terminal: &mut DefaultTerminal) -> Result<Option<String>> {
     let mut input = String::new();
     loop {
         let display = input.clone();
@@ -168,11 +236,13 @@ pub fn prompt_location() -> Result<String> {
                 continue;
             }
             match key.code {
-                KeyCode::Enter if !input.trim().is_empty() => return Ok(input.trim().to_string()),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    std::process::exit(0)
+                KeyCode::Enter if !input.trim().is_empty() => {
+                    return Ok(Some(input.trim().to_string()));
                 }
-                KeyCode::Esc => std::process::exit(0),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(None);
+                }
+                KeyCode::Esc => return Ok(None),
                 KeyCode::Char(ch) => input.push(ch),
                 KeyCode::Backspace => {
                     input.pop();
@@ -180,24 +250,6 @@ pub fn prompt_location() -> Result<String> {
                 _ => {}
             }
         }
-    }
-}
-
-fn enter_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    Terminal::new(CrosstermBackend::new(stdout))
-}
-
-struct RestoreGuard;
-
-impl Drop for RestoreGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
-        let _ = stdout.flush();
     }
 }
 
@@ -264,19 +316,15 @@ fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
         cell.set_bg(CHROME_BG);
         cell.set_fg(CHROME_FG);
     }
-    let right_chars: Vec<char> = right.chars().collect();
-    let right_len = right_chars.len() as u16;
-    let right_start = (area.x + area.width).saturating_sub(right_len);
-    let max_left = right_start.saturating_sub(area.x + 1) as usize;
-    for (i, ch) in left.chars().enumerate().take(max_left) {
-        buf[(area.x + i as u16, area.y)].set_char(ch);
-    }
-    for (i, ch) in right_chars.into_iter().enumerate() {
-        let x = right_start + i as u16;
-        if x < area.x + area.width {
-            buf[(x, area.y)].set_char(ch);
-        }
-    }
+    let style = Style::default().fg(CHROME_FG).bg(CHROME_BG);
+    // Measure by display width, not char count, so wide glyphs (CJK place
+    // names) right-justify correctly. set_stringn clips to the column budget
+    // and handles wide-cell placement, which a per-char set_char loop cannot.
+    let right_w = right.width() as u16;
+    let right_start = (area.x + area.width).saturating_sub(right_w);
+    let max_left = right_start.saturating_sub(area.x + 1);
+    buf.set_stringn(area.x, area.y, left, max_left as usize, style);
+    buf.set_stringn(right_start, area.y, right, right_w as usize, style);
 }
 
 fn draw_overlay_box(buf: &mut Buffer, area: Rect, w: u16, h: u16) -> Rect {
@@ -301,12 +349,8 @@ fn draw_overlay_box(buf: &mut Buffer, area: Rect, w: u16, h: u16) -> Rect {
 }
 
 fn put_str(buf: &mut Buffer, x: u16, y: u16, max_w: u16, s: &str, fg: Color) {
-    for (i, ch) in s.chars().enumerate().take(max_w as usize) {
-        let cell = &mut buf[(x + i as u16, y)];
-        cell.set_char(ch);
-        cell.set_fg(fg);
-        cell.set_bg(OVERLAY_BG);
-    }
+    let style = Style::default().fg(fg).bg(OVERLAY_BG);
+    buf.set_stringn(x, y, s, max_w as usize, style);
 }
 
 const HELP_LINES: &[(&str, &str)] = &[
@@ -389,17 +433,250 @@ fn draw_too_small(buf: &mut Buffer, area: Rect) {
         "cramped sky: needs {}x{}, yours is {}x{}",
         MIN_COLS, MIN_ROWS, area.width, area.height
     );
-    let msg_len = msg.chars().count() as u16;
+    let msg_w = msg.width() as u16;
     let row = area.y + area.height / 2;
-    let start_x = area.x + area.width.saturating_sub(msg_len) / 2;
-    for (i, ch) in msg.chars().enumerate() {
-        let x = start_x + i as u16;
-        if x >= area.x + area.width {
-            break;
+    let start_x = area.x + area.width.saturating_sub(msg_w) / 2;
+    let style = Style::default().fg(Color::Gray).bg(Color::Black);
+    buf.set_stringn(start_x, row, &msg, area.width as usize, style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gradient::Gradient;
+    use crate::scene::{Chrome, CloudLayer, Sun};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn sky(name: &str) -> SkyState {
+        SkyState {
+            name: name.to_string(),
+            gradient: Gradient::from_rgb_stops(&[(0.0, [10, 10, 30]), (1.0, [200, 180, 160])]),
+            sun: Sun {
+                x_frac: 0.5,
+                y_frac: 0.5,
+                radius: 2.0,
+                visible: true,
+            },
+            clouds: vec![CloudLayer {
+                cover: 1.0,
+                altitude_t: 0.4,
+                altitude_sigma: 0.1,
+                scale_x: 3.0,
+                scale_y: 2.0,
+                threshold: 0.5,
+                seed: 101,
+                offset_x: 0.0,
+                offset_y: 1.3,
+            }],
+            chrome: Chrome {
+                header_left: "celsius".into(),
+                header_right: "testville   today 12:00".into(),
+                footer: "10°  clear   wind n 5".into(),
+                keys: "q quit".into(),
+                status: "Testville 10C clear wind N 5".into(),
+            },
+            haze: None,
+            stars: None,
+            moon: None,
+            precipitation: None,
+            lightning: None,
+            wind_speed_kmh: 20.0,
         }
-        let cell = &mut buf[(x, row)];
-        cell.set_char(ch);
-        cell.set_fg(Color::Gray);
-        cell.set_bg(Color::Black);
+    }
+
+    fn timeline() -> Timeline {
+        Timeline::new((0..50).map(|i| sky(&format!("s{i}"))).collect(), 10)
+    }
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn buffer_text(buf: &Buffer) -> String {
+        let area = buf.area;
+        let mut s = String::new();
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                s.push_str(buf[(x, y)].symbol());
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    #[test]
+    fn tab_advances_a_day_and_reclones_display() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        assert_eq!(app.index, 10);
+        app.handle_key(press(KeyCode::Tab));
+        assert_eq!(app.index, 34);
+        assert_eq!(app.display.name, "s34");
+    }
+
+    #[test]
+    fn tab_clamps_at_the_end() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Tab));
+        app.handle_key(press(KeyCode::Tab));
+        assert_eq!(app.index, 49);
+    }
+
+    #[test]
+    fn arrows_scrub_one_hour_each() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Right));
+        assert_eq!(app.index, 11);
+        app.handle_key(press(KeyCode::Left));
+        app.handle_key(press(KeyCode::Left));
+        assert_eq!(app.index, 9);
+    }
+
+    #[test]
+    fn t_jumps_back_to_home() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Tab));
+        app.handle_key(press(KeyCode::Char('t')));
+        assert_eq!(app.index, 10);
+    }
+
+    #[test]
+    fn space_toggles_drift_pause() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        assert!(!app.drift_paused);
+        app.handle_key(press(KeyCode::Char(' ')));
+        assert!(app.drift_paused);
+        app.handle_key(press(KeyCode::Char(' ')));
+        assert!(!app.drift_paused);
+    }
+
+    #[test]
+    fn quit_keys_set_quit() {
+        for code in [KeyCode::Char('q'), KeyCode::Esc] {
+            let tl = timeline();
+            let mut app = App::new(&tl);
+            app.handle_key(press(code));
+            assert_eq!(app.outcome, Some(RunOutcome::Quit));
+        }
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(app.outcome, Some(RunOutcome::Quit));
+    }
+
+    #[test]
+    fn r_sets_retry() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Char('r')));
+        assert_eq!(app.outcome, Some(RunOutcome::Retry));
+    }
+
+    #[test]
+    fn help_opens_and_any_key_closes() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Char('?')));
+        assert!(matches!(app.overlay, Overlay::Help));
+        app.handle_key(press(KeyCode::Char('x')));
+        assert!(matches!(app.overlay, Overlay::None));
+        assert_eq!(app.outcome, None);
+    }
+
+    #[test]
+    fn location_overlay_accumulates_edits_and_confirms() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Char('l')));
+        assert!(matches!(app.overlay, Overlay::Location { .. }));
+        for ch in "osloo".chars() {
+            app.handle_key(press(KeyCode::Char(ch)));
+        }
+        app.handle_key(press(KeyCode::Backspace));
+        app.handle_key(press(KeyCode::Enter));
+        assert_eq!(
+            app.outcome,
+            Some(RunOutcome::ChangeLocation("oslo".to_string()))
+        );
+    }
+
+    #[test]
+    fn location_overlay_esc_cancels_without_outcome() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Char('l')));
+        app.handle_key(press(KeyCode::Char('x')));
+        app.handle_key(press(KeyCode::Esc));
+        assert!(matches!(app.overlay, Overlay::None));
+        assert_eq!(app.outcome, None);
+    }
+
+    #[test]
+    fn tick_drifts_clouds_running_and_freezes_when_paused() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        let before = app.display.clouds[0].offset_x;
+        app.tick(Duration::from_millis(100));
+        assert!(
+            app.display.clouds[0].offset_x > before,
+            "clouds should drift while running"
+        );
+
+        app.drift_paused = true;
+        let held = app.display.clouds[0].offset_x;
+        app.tick(Duration::from_millis(100));
+        assert_eq!(
+            app.display.clouds[0].offset_x, held,
+            "a paused sky is fully still"
+        );
+    }
+
+    #[test]
+    fn help_overlay_renders_keybindings() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Char('?')));
+        let mut term = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            let buf = f.buffer_mut();
+            draw_sky(buf, area, &app.display, 0.0);
+            draw_help_overlay(buf, area);
+        })
+        .unwrap();
+        assert!(buffer_text(term.backend().buffer()).contains("keybindings"));
+    }
+
+    #[test]
+    fn cramped_area_shows_the_warning() {
+        let tl = timeline();
+        let app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(20, 10)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &app.display, 0.0);
+        })
+        .unwrap();
+        assert!(buffer_text(term.backend().buffer()).contains("cramped sky"));
+    }
+
+    #[test]
+    fn chrome_shows_location() {
+        let tl = timeline();
+        let app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &app.display, 0.0);
+        })
+        .unwrap();
+        let content = buffer_text(term.backend().buffer());
+        assert!(content.contains("celsius"));
+        assert!(content.contains("testville"));
     }
 }
