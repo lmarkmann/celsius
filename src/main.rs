@@ -10,7 +10,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 
 use celsius::config::{self, LocationPref};
 use celsius::tui::{RunOutcome, Timeline};
-use celsius::weather::{compose, error_sky, forecast, location};
+use celsius::weather::{compose, compose_at, error_sky, forecast, location};
 use celsius::{SkyState, load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
@@ -223,11 +223,15 @@ fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Tim
 
     let center_az = cli.facing;
     let bortle = cli.bortle.or_else(|| config::load().bortle);
-    let states: Vec<_> = (0..hours)
+    let mut states: Vec<_> = (0..hours)
         .map(|h| compose(&forecast, &location, h, now_unix, center_az, bortle))
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
+    // Render the home slot at the exact requested instant, interpolating between
+    // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
+    states[home] = compose_at(&forecast, &location, at_unix, now_unix, center_az, bortle)
+        .context("composing sky for requested time")?;
     Ok(Timeline::new(states, home))
 }
 

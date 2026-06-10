@@ -82,6 +82,32 @@ fn forecast_nulls_become_option_none() {
     assert_eq!(parsed.hourly.cloud_cover_low[2], None);
 }
 
+#[test]
+fn compose_at_interpolates_between_hours() {
+    let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let geo = GeoResult {
+        name: "Hamburg".to_string(),
+        latitude: 53.55,
+        longitude: 9.99,
+        timezone: "UTC".to_string(),
+        country: None,
+        admin1: None,
+        elevation: None,
+        population: None,
+    };
+    // Halfway between 01:00 and 02:00 UTC. wind_speed_10m is 4.0 then 4.1, so the
+    // interpolated sky must read 4.05, proving it didn't snap to the top of hour.
+    let t01 = 1_775_869_200; // 2026-04-11T01:00Z
+    let mid = t01 + 1_800; // 01:30Z
+    let sky = celsius::weather::compose_at(&forecast, &geo, mid, t01, 180.0, None)
+        .expect("compose_at on fixture");
+    assert!(
+        (sky.wind_speed_kmh - 4.05).abs() < 1e-6,
+        "expected interpolated wind 4.05, got {}",
+        sky.wind_speed_kmh
+    );
+}
+
 // Live network smoke tests. Opt-in via `cargo test -- --ignored` so they
 // only run when a developer wants to verify the real Open-Meteo response
 // still matches our types. Never in CI.

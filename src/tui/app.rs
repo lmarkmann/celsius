@@ -444,7 +444,7 @@ fn draw_too_small(buf: &mut Buffer, area: Rect) {
 mod tests {
     use super::*;
     use crate::gradient::Gradient;
-    use crate::scene::{Chrome, CloudLayer, Sun};
+    use crate::scene::{Chrome, CloudKind, CloudLayer, Sun};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -466,6 +466,8 @@ mod tests {
                 scale_y: 2.0,
                 threshold: 0.5,
                 seed: 101,
+                kind: CloudKind::Generic,
+                flatten: 0.0,
                 offset_x: 0.0,
                 offset_y: 1.3,
             }],
@@ -481,6 +483,7 @@ mod tests {
             moon: None,
             precipitation: None,
             lightning: None,
+            horizon_glow: None,
             wind_speed_kmh: 20.0,
         }
     }

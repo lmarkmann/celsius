@@ -6,6 +6,7 @@ const ENDPOINT: &str = "https://api.open-meteo.com/v1/forecast";
 
 const HOURLY_FIELDS: &str = concat!(
     "temperature_2m,",
+    "cloud_cover,",
     "cloud_cover_low,",
     "cloud_cover_mid,",
     "cloud_cover_high,",
@@ -30,6 +31,8 @@ pub struct Forecast {
 pub struct HourlyArrays {
     pub time: Vec<String>,
     pub temperature_2m: Vec<Option<f64>>,
+    #[serde(default)]
+    pub cloud_cover: Vec<Option<f64>>,
     pub cloud_cover_low: Vec<Option<f64>>,
     pub cloud_cover_mid: Vec<Option<f64>>,
     pub cloud_cover_high: Vec<Option<f64>>,

@@ -5,6 +5,7 @@ pub mod location;
 pub mod state;
 
 pub use state::compose;
+pub use state::compose_at;
 pub use state::error_sky;
 
 use thiserror::Error;

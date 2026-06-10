@@ -5,16 +5,74 @@ use chrono::{Datelike, Local, NaiveDateTime, TimeZone, Utc};
 
 use crate::astro::{self, AltAz};
 use crate::lightning::Lightning;
-use crate::scene::{Chrome, CloudLayer, Haze, Moon, Precipitation, SkyState, Stars, Sun};
+use crate::scene::{
+    Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, Precipitation, SkyState, Stars, Sun,
+};
 
 use super::WeatherError;
 use super::bortle;
 use super::forecast::Forecast;
-use super::gradients::{Palette, gradient_for, select_palette};
+use super::gradients::{Palette, gradient_for, sky_gradient};
 use super::location::GeoResult;
 
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
 
+// The weather fields the sky is built from, already resolved (and possibly
+// interpolated between two hours) so the builder never indexes the forecast.
+struct HourSample {
+    temperature_c: Option<f64>,
+    reported_cover: Option<f64>,
+    cover_low: f64,
+    cover_mid: f64,
+    cover_high: f64,
+    precip_mm: Option<f64>,
+    wind_speed: Option<f64>,
+    wind_dir: Option<f64>,
+    visibility_m: Option<f64>,
+    weather_code: Option<u32>,
+}
+
+impl HourSample {
+    fn at(forecast: &Forecast, h: usize) -> Self {
+        let hr = &forecast.hourly;
+        HourSample {
+            temperature_c: hr.temperature_2m[h],
+            reported_cover: hr.cloud_cover.get(h).copied().flatten(),
+            cover_low: hr.cloud_cover_low[h].unwrap_or(0.0) / 100.0,
+            cover_mid: hr.cloud_cover_mid[h].unwrap_or(0.0) / 100.0,
+            cover_high: hr.cloud_cover_high[h].unwrap_or(0.0) / 100.0,
+            precip_mm: hr.precipitation[h],
+            wind_speed: hr.wind_speed_10m[h],
+            wind_dir: hr.wind_direction_10m[h],
+            visibility_m: hr.visibility[h],
+            weather_code: hr.weather_code[h],
+        }
+    }
+
+    fn interpolated(forecast: &Forecast, h0: usize, h1: usize, frac: f64) -> Self {
+        let a = Self::at(forecast, h0);
+        let b = Self::at(forecast, h1);
+        HourSample {
+            temperature_c: lerp_opt(a.temperature_c, b.temperature_c, frac),
+            reported_cover: lerp_opt(a.reported_cover, b.reported_cover, frac),
+            cover_low: lerp(a.cover_low, b.cover_low, frac),
+            cover_mid: lerp(a.cover_mid, b.cover_mid, frac),
+            cover_high: lerp(a.cover_high, b.cover_high, frac),
+            precip_mm: lerp_opt(a.precip_mm, b.precip_mm, frac),
+            wind_speed: lerp_opt(a.wind_speed, b.wind_speed, frac),
+            wind_dir: lerp_angle_opt(a.wind_dir, b.wind_dir, frac),
+            visibility_m: lerp_opt(a.visibility_m, b.visibility_m, frac),
+            // Weather codes are categorical; snap to the nearer hour.
+            weather_code: if frac < 0.5 {
+                a.weather_code
+            } else {
+                b.weather_code
+            },
+        }
+    }
+}
+
+/// Build a sky for the forecast hour at `hour_index`.
 pub fn compose(
     forecast: &Forecast,
     location: &GeoResult,
@@ -25,28 +83,102 @@ pub fn compose(
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
     let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
+    let sample = HourSample::at(forecast, h);
+    Ok(build_sky(
+        &sample, location, unix_utc, now_unix, center_az, bortle,
+    ))
+}
 
+/// Build a sky for an exact instant, interpolating the weather fields and the
+/// sun/moon position between the bracketing forecast hours instead of snapping
+/// to the top of the hour. This is what makes the live "now" view show the sky
+/// for 14:23 rather than 14:00.
+pub fn compose_at(
+    forecast: &Forecast,
+    location: &GeoResult,
+    target_unix: i64,
+    now_unix: i64,
+    center_az: f64,
+    bortle: Option<u8>,
+) -> Result<SkyState, WeatherError> {
+    let (h0, h1, frac) = bracket_hours(forecast, target_unix)?;
+    let sample = HourSample::interpolated(forecast, h0, h1, frac);
+    Ok(build_sky(
+        &sample,
+        location,
+        target_unix,
+        now_unix,
+        center_az,
+        bortle,
+    ))
+}
+
+// Locate the two forecast hours straddling target_unix and the 0..1 fraction
+// between them. Clamps to the ends when the target falls outside the range.
+fn bracket_hours(
+    forecast: &Forecast,
+    target_unix: i64,
+) -> Result<(usize, usize, f64), WeatherError> {
+    let times = &forecast.hourly.time;
+    let last = times.len().saturating_sub(1);
+    let mut h0 = 0usize;
+    for (i, t) in times.iter().enumerate() {
+        if parse_hour_to_unix(t)? <= target_unix {
+            h0 = i;
+        } else {
+            break;
+        }
+    }
+    if h0 >= last {
+        return Ok((last, last, 0.0));
+    }
+    let t0 = parse_hour_to_unix(&times[h0])?;
+    let t1 = parse_hour_to_unix(&times[h0 + 1])?;
+    let span = (t1 - t0).max(1) as f64;
+    let frac = ((target_unix - t0) as f64 / span).clamp(0.0, 1.0);
+    Ok((h0, h0 + 1, frac))
+}
+
+fn build_sky(
+    sample: &HourSample,
+    location: &GeoResult,
+    unix_utc: i64,
+    now_unix: i64,
+    center_az: f64,
+    bortle: Option<u8>,
+) -> SkyState {
     let lat = location.latitude;
     let lon = location.longitude;
     let sun_altaz = astro::sun_position(lat, lon, unix_utc);
     let moon_state = astro::moon_state(lat, lon, unix_utc);
 
-    let cover_low = forecast.hourly.cloud_cover_low[h].unwrap_or(0.0) / 100.0;
-    let cover_mid = forecast.hourly.cloud_cover_mid[h].unwrap_or(0.0) / 100.0;
-    let cover_high = forecast.hourly.cloud_cover_high[h].unwrap_or(0.0) / 100.0;
-    let total_cover = ((cover_low + cover_mid + cover_high) / 3.0).clamp(0.0, 1.0);
+    let total_cover = total_cover(
+        sample.reported_cover,
+        sample.cover_low,
+        sample.cover_mid,
+        sample.cover_high,
+    );
 
-    let palette = select_palette(sun_altaz.altitude, total_cover);
-    let mut gradient = gradient_for(palette);
+    let mut gradient = sky_gradient(sun_altaz.altitude, total_cover);
     bortle::apply_glow(&mut gradient, bortle, sun_altaz.altitude);
 
     let day_ordinal = unix_utc.div_euclid(86_400);
     let sun = build_sun(&sun_altaz, center_az);
     let moon = build_moon(&moon_state, center_az);
     let stars = build_stars(sun_altaz.altitude, lat, lon, day_ordinal, bortle);
-    let clouds = build_clouds(cover_low, cover_mid, cover_high, lat, lon, day_ordinal);
-    let haze = if palette == Palette::CloudyDay {
-        // Cloudy-day palette needs its own horizon haze regardless of visibility.
+    let clouds = build_clouds(
+        sample.cover_low,
+        sample.cover_mid,
+        sample.cover_high,
+        sample.weather_code,
+        lat,
+        lon,
+        day_ordinal,
+    );
+    // A bright-but-clouded daytime sky needs its own horizon haze regardless of
+    // reported visibility; this matches the old CloudyDay palette regime.
+    let cloudy_day = sun_altaz.altitude > 3.0 && (0.50..0.80).contains(&total_cover);
+    let haze = if cloudy_day {
         Some(Haze {
             rgb: [178, 174, 165],
             onset_t: 0.55,
@@ -54,37 +186,34 @@ pub fn compose(
             exponent: 1.4,
         })
     } else {
-        build_haze(forecast.hourly.visibility[h])
+        build_haze(sample.visibility_m)
     };
     let precipitation = build_precipitation(
-        forecast.hourly.weather_code[h],
-        forecast.hourly.precipitation[h],
-        forecast.hourly.wind_direction_10m[h],
+        sample.weather_code,
+        sample.precip_mm,
+        sample.wind_dir,
         lat,
         lon,
         day_ordinal,
         center_az,
     );
-    let lightning = build_lightning(
-        forecast.hourly.weather_code[h],
-        forecast.hourly.precipitation[h],
-        lat,
-        lon,
-        unix_utc,
-    );
-
+    let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
     let chrome = build_chrome(
         location,
         unix_utc,
         now_unix,
-        forecast.hourly.temperature_2m[h],
-        forecast.hourly.weather_code[h],
-        forecast.hourly.wind_speed_10m[h],
-        forecast.hourly.wind_direction_10m[h],
+        sample.temperature_c,
+        sample.weather_code,
+        sample.wind_speed,
+        sample.wind_dir,
     );
 
-    Ok(SkyState {
-        name: format!("{}-{}", location.name.to_lowercase(), h),
+    SkyState {
+        name: format!(
+            "{}-{}",
+            location.name.to_lowercase(),
+            unix_utc.div_euclid(3_600)
+        ),
         gradient,
         sun,
         clouds,
@@ -94,8 +223,32 @@ pub fn compose(
         moon,
         precipitation,
         lightning,
-        wind_speed_kmh: forecast.hourly.wind_speed_10m[h].unwrap_or(0.0),
-    })
+        horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
+        wind_speed_kmh: sample.wind_speed.unwrap_or(0.0),
+    }
+}
+
+fn lerp(a: f64, b: f64, f: f64) -> f64 {
+    a + (b - a) * f
+}
+
+fn lerp_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(lerp(x, y, f)),
+        (some, None) | (None, some) => some,
+    }
+}
+
+// Interpolate along the shortest arc so 350 -> 10 crosses through 0, not back
+// through 180.
+fn lerp_angle_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
+    match (a, b) {
+        (Some(x), Some(y)) => {
+            let diff = ((y - x + 540.0) % 360.0) - 180.0;
+            Some((x + diff * f).rem_euclid(360.0))
+        }
+        (some, None) | (None, some) => some,
+    }
 }
 
 const SKY_W: u32 = 104;
@@ -155,6 +308,32 @@ fn build_moon(state: &astro::MoonState, center_az: f64) -> Option<Moon> {
     })
 }
 
+// Warm horizon light on the sun's side, strongest at sunrise/sunset and gone by
+// full day or deep night. Cover damps it, since an overcast horizon has no glow.
+fn build_horizon_glow(altaz: &AltAz, center_az: f64, total_cover: f64) -> Option<HorizonGlow> {
+    if lateral_offset_deg(altaz.azimuth, center_az).abs() >= 90.0 {
+        return None;
+    }
+    let alt = altaz.altitude;
+    let altitude_falloff = if !(-8.0..=12.0).contains(&alt) {
+        0.0
+    } else if alt >= 0.0 {
+        1.0 - alt / 12.0
+    } else {
+        1.0 - (-alt) / 8.0
+    };
+    let strength = altitude_falloff * (1.0 - 0.6 * total_cover.clamp(0.0, 1.0));
+    if strength < 0.02 {
+        return None;
+    }
+    let (x_frac, _) = astro::to_sky_fracs(altaz, center_az);
+    Some(HorizonGlow {
+        x_frac,
+        rgb: [255, 138, 72],
+        strength,
+    })
+}
+
 fn lateral_offset_deg(azimuth: f64, center_az: f64) -> f64 {
     ((azimuth - center_az + 540.0) % 360.0) - 180.0
 }
@@ -182,28 +361,62 @@ fn build_stars(
     })
 }
 
+// Total sky cover. Prefer Open-Meteo's own `cloud_cover` (computed across all
+// levels); when it's missing, combine the three bands as independent occluders
+// (1 - product of clear fractions) rather than averaging them, so a single
+// fully-covered layer still reads as a fully-covered sky.
+fn total_cover(reported: Option<f64>, low: f64, mid: f64, high: f64) -> f64 {
+    let cover = match reported {
+        Some(pct) => pct / 100.0,
+        None => 1.0 - (1.0 - low) * (1.0 - mid) * (1.0 - high),
+    };
+    cover.clamp(0.0, 1.0)
+}
+
 fn build_clouds(
     cover_low: f64,
     cover_mid: f64,
     cover_high: f64,
+    weather_code: Option<u32>,
     lat: f64,
     lon: f64,
     day_ordinal: i64,
 ) -> Vec<CloudLayer> {
     let pos_hash = hash_lat_lon(lat, lon);
+    let code = weather_code.unwrap_or(0);
     let mut layers = Vec::new();
     let bands = [
-        (cover_high, 0.20, 4.5, 2.4, 0u32),
-        (cover_mid, 0.40, 3.6, 2.4, 1),
-        (cover_low, 0.60, 3.0, 2.2, 2),
+        (cover_high, 0.20, 4.5, 2.4, 0u32, CloudKind::Cirrus),
+        (cover_mid, 0.40, 3.6, 2.4, 1, CloudKind::Altocumulus),
+        (
+            cover_low,
+            0.60,
+            3.0,
+            2.2,
+            2,
+            low_cloud_kind(code, cover_low),
+        ),
     ];
-    for (cover, altitude_t, scale_x, scale_y, idx) in bands {
+    for (cover, altitude_t, scale_x, scale_y, idx, kind) in bands {
         let seed = mix_seed(&[pos_hash, day_ordinal as u64, 0xC10D_5EED ^ idx as u64]);
-        if let Some(layer) = cloud_layer(cover, altitude_t, scale_x, scale_y, seed) {
+        if let Some(layer) = cloud_layer(cover, altitude_t, scale_x, scale_y, seed, kind) {
             layers.push(layer);
         }
     }
     layers
+}
+
+// The low band carries the weather: showers and thunderstorms are convective
+// towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather
+// cumulus, and anything else is a flat stratus deck.
+fn low_cloud_kind(weather_code: u32, cover_low: f64) -> CloudKind {
+    if (80..=82).contains(&weather_code) || (95..=99).contains(&weather_code) {
+        CloudKind::Cumulonimbus
+    } else if matches!(weather_code, 1 | 2) && cover_low < 0.6 {
+        CloudKind::Cumulus
+    } else {
+        CloudKind::Stratus
+    }
 }
 
 fn cloud_layer(
@@ -212,20 +425,32 @@ fn cloud_layer(
     scale_x: f64,
     scale_y: f64,
     seed: u64,
+    kind: CloudKind,
 ) -> Option<CloudLayer> {
     if cover < 0.05 {
         return None;
     }
     let threshold = 0.55 - 0.40 * cover;
     let cover_strength = 0.90 + 1.00 * (1.0 - cover);
+    // A stratus deck flattens into a solid lid as it approaches full cover, and
+    // widens vertically so the overcast fills the sky rather than a thin band.
+    let flatten = if kind == CloudKind::Stratus {
+        let f = ((cover - 0.70) / 0.25).clamp(0.0, 1.0);
+        f * f * (3.0 - 2.0 * f)
+    } else {
+        0.0
+    };
+    let altitude_sigma = 0.10 + 0.15 * flatten;
     Some(CloudLayer {
         cover: cover_strength,
         altitude_t,
-        altitude_sigma: 0.10,
+        altitude_sigma,
         scale_x,
         scale_y,
         threshold,
         seed,
+        kind,
+        flatten,
         offset_x: ((seed >> 16) as f64 / u32::MAX as f64) * 4.0,
         offset_y: ((seed >> 32) as f64 / u32::MAX as f64) * 4.0,
     })
@@ -419,6 +644,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         moon: None,
         precipitation: None,
         lightning: None,
+        horizon_glow: None,
         wind_speed_kmh: 0.0,
     }
 }
@@ -433,7 +659,6 @@ fn mix_seed(parts: &[u64]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::gradients::Palette;
     use super::*;
 
     #[test]
@@ -444,12 +669,33 @@ mod tests {
     }
 
     #[test]
-    fn select_palette_buckets() {
-        assert_eq!(select_palette(70.0, 0.1), Palette::Day);
-        assert_eq!(select_palette(5.0, 0.1), Palette::GoldenHour);
-        assert_eq!(select_palette(-6.0, 0.0), Palette::BlueHour);
-        assert_eq!(select_palette(-20.0, 0.0), Palette::Night);
-        assert_eq!(select_palette(20.0, 0.95), Palette::Overcast);
+    fn scalar_lerp_opt_handles_missing_sides() {
+        assert_eq!(lerp_opt(Some(0.0), Some(10.0), 0.25), Some(2.5));
+        assert_eq!(lerp_opt(Some(4.0), None, 0.9), Some(4.0));
+        assert_eq!(lerp_opt(None, Some(7.0), 0.1), Some(7.0));
+        assert_eq!(lerp_opt(None, None, 0.5), None);
+    }
+
+    #[test]
+    fn angle_lerp_takes_short_arc() {
+        // 350 -> 10 must cross through 0, so the midpoint is ~0/360, not ~180.
+        let mid = lerp_angle_opt(Some(350.0), Some(10.0), 0.5).unwrap();
+        assert!(
+            mid < 1e-6 || (360.0 - mid) < 1e-6,
+            "midpoint {mid} took the long arc"
+        );
+        assert_eq!(lerp_angle_opt(None, Some(37.0), 0.5), Some(37.0));
+    }
+
+    #[test]
+    fn total_cover_overcast_stratus_is_total() {
+        // 100% low stratus, nothing above: the union must read as fully covered,
+        // not the (1.0+0+0)/3 = 0.33 the old averaging produced.
+        assert!((total_cover(None, 1.0, 0.0, 0.0) - 1.0).abs() < 1e-9);
+        // Two half-covered independent layers: 1 - 0.5*0.5 = 0.75.
+        assert!((total_cover(None, 0.5, 0.5, 0.0) - 0.75).abs() < 1e-9);
+        // A reported total wins over the bands and is rescaled from percent.
+        assert!((total_cover(Some(40.0), 1.0, 1.0, 1.0) - 0.40).abs() < 1e-9);
     }
 
     #[test]

@@ -208,14 +208,20 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     }
 }
 
+// Orthographic projection of the sky dome onto the view plane facing
+// `center_az`. The object's unit direction has an eastward and an upward
+// component (the depth component, toward the look direction, is dropped). This
+// foreshortens azimuth as altitude rises, so a star near the zenith barely
+// shifts sideways while one near the horizon swings the full width, and it bows
+// the solar arc the way the real sky does instead of the old anamorphic linear
+// map. Horizon stays at the frame bottom (y=1), zenith at the top (y=0).
 pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> (f64, f64) {
-    // y_frac: altitude 90 (zenith) -> 0, altitude 0 (horizon) -> 1, clamp below
-    let y_frac = 1.0 - altaz.altitude / 90.0;
-
-    // x_frac: azimuth delta from center mapped to 0..1 over a 180-deg window
-    let delta_az = norm(altaz.azimuth - center_az + 180.0) - 180.0; // -180..180
-    let x_frac = 0.5 + delta_az / 180.0;
-
+    let alt = altaz.altitude.to_radians();
+    let az_delta = (norm(altaz.azimuth - center_az + 180.0) - 180.0).to_radians();
+    let east = alt.cos() * az_delta.sin();
+    let up = alt.sin();
+    let x_frac = 0.5 + east * 0.5;
+    let y_frac = 1.0 - up;
     (x_frac.clamp(0.0, 1.0), y_frac.clamp(0.0, 1.0))
 }
 
@@ -371,5 +377,22 @@ mod tests {
         let (x, y) = to_sky_fracs(&altaz, 180.0);
         assert!((x - 0.5).abs() < 1e-9);
         assert!((y - 0.0).abs() < 1e-9, "y_frac should be 0.0 at zenith");
+    }
+
+    #[test]
+    fn sky_fracs_foreshortens_high_objects() {
+        // 60deg up, 60deg east of the south-facing center. Orthographic projection
+        // pulls it toward the middle (x ~ 0.72), well short of the old linear
+        // map's 0.83, and seats it high (y from sin(60)).
+        let altaz = AltAz {
+            altitude: 60.0,
+            azimuth: 240.0,
+        };
+        let (x, y) = to_sky_fracs(&altaz, 180.0);
+        assert!((y - (1.0 - 60f64.to_radians().sin())).abs() < 1e-9);
+        assert!(
+            x > 0.5 && x < 0.75,
+            "high eastward object should foreshorten toward center, got {x}"
+        );
     }
 }
