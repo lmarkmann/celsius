@@ -1,0 +1,65 @@
+# overcast_night
+# Hamburg, late evening. A broken-to-overcast deck after dark: the sky stays
+# dark, cloud masses catch a faint lift, a few stars survive in the gaps, and
+# the horizon carries a dim warm glow from city light bouncing off the cloud
+# base. Deliberately not a full deck -- total cover would wash pale-purple and
+# read as dusk, so the clouds are broken enough to keep the night dark.
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [10, 12, 22] },   # near-black zenith
+  { t = 0.35, rgb = [16, 17, 28] },
+  { t = 0.62, rgb = [26, 24, 34] },
+  { t = 0.82, rgb = [40, 32, 36] },
+  { t = 1.00, rgb = [56, 42, 40] },   # dim warm city glow at the horizon
+]
+
+[sun]
+x_frac  = 0.50
+y_frac  = 1.20
+radius  = 2.0
+visible = false
+
+[[clouds.layers]]
+# mid deck: broken masses lit faintly from below
+cover          = 0.95
+altitude_t     = 0.34
+altitude_sigma = 0.16
+scale_x        = 4.2
+scale_y        = 2.6
+threshold      = 0.34
+seed           = 5021
+offset_x       = 0.8
+offset_y       = 1.2
+
+[[clouds.layers]]
+# low ragged scud drifting across the horizon glow
+cover          = 0.85
+altitude_t     = 0.60
+altitude_sigma = 0.12
+scale_x        = 3.4
+scale_y        = 2.2
+threshold      = 0.40
+seed           = 7919
+offset_x       = 2.0
+offset_y       = 1.8
+
+[haze]
+# light-pollution lift on the cloud base near the horizon
+rgb      = [62, 47, 42]
+onset_t  = 0.58
+strength = 0.38
+exponent = 1.6
+
+[stars]
+# only a few, and only where the deck breaks (clouds composite over them)
+count         = 70
+seed          = 3911
+brightness    = 0.55
+sky_threshold = 0.30
+
+[chrome]
+header_left  = "skyterm"
+header_right = "hamburg   fri 07 nov   22:10"
+footer       = "8°  cloudy   wind sw 11   moonset 20:42"
+keys         = "m map    space pause    <- -> scrub    q quit"

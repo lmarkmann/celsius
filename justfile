@@ -1,6 +1,6 @@
-lab_scenes := "../skyterm-lab/scenes"
+scene_dir := "scenes"
 
-scenes := "golden_hour_cumulus blue_hour_calm high_noon_clear moonlit_clear_winter stormy_afternoon_advancing"
+scenes := "golden_hour_cumulus blue_hour_calm high_noon_clear moonlit_clear_winter stormy_afternoon_advancing overcast_night moonless_darksky"
 
 default: check
 
@@ -24,7 +24,7 @@ test:
 
 render name:
     mkdir -p out
-    cargo run --release --features png -- render --scene {{lab_scenes}}/{{name}}.toml --out out/{{name}}.png
+    cargo run --release --features png -- render --scene {{scene_dir}}/{{name}}.toml --out out/{{name}}.png
 
 render-all:
     for s in {{scenes}}; do just render $s; done
@@ -34,7 +34,7 @@ render-all:
 lock:
     cargo build --release --features png
     mkdir -p tests/goldens
-    for s in {{scenes}}; do ./target/release/celsius render --scene {{lab_scenes}}/$s.toml --out tests/goldens/$s.png; done
+    for s in {{scenes}}; do ./target/release/celsius render --scene {{scene_dir}}/$s.toml --out tests/goldens/$s.png; done
     python3 scripts/write_manifest.py
 
 verify:

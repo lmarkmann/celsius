@@ -1,0 +1,41 @@
+# moonless_darksky
+# A dark-sky site on a moonless astronomical night (sun well below, no moon).
+# Nothing washes the field out, so the stars carry the whole frame: a dense
+# bright scatter on near-black, with a whisper of green airglow low down.
+# The counterpart to moonlit_clear_winter, where the moon flattens the stars.
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [3,  4,  10] },   # near-black zenith
+  { t = 0.40, rgb = [4,  5,  12] },
+  { t = 0.70, rgb = [6,  7,  15] },
+  { t = 0.90, rgb = [8,  9,  17] },
+  { t = 1.00, rgb = [10, 11, 18] },
+]
+
+[sun]
+x_frac  = 0.50
+y_frac  = 1.30
+radius  = 2.0
+visible = false
+
+[stars]
+# maximum field: dense and bright, threshold high enough that even the faintly
+# lifted horizon keeps its stars.
+count         = 460
+seed          = 131071
+brightness    = 1.0
+sky_threshold = 0.45
+
+[haze]
+# faint green-grey airglow band hugging the horizon
+rgb      = [11, 17, 16]
+onset_t  = 0.68
+strength = 0.16
+exponent = 1.9
+
+[chrome]
+header_left  = "skyterm"
+header_right = "la palma   sat 02 aug   01:55"
+footer       = "11°  clear   wind calm   seeing excellent   bortle 2"
+keys         = "m map    space pause    <- -> scrub    q quit"
