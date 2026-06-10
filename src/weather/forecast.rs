@@ -17,6 +17,8 @@ const HOURLY_FIELDS: &str = concat!(
     "weather_code"
 );
 
+const DAILY_FIELDS: &str = "sunrise,sunset,daylight_duration";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Forecast {
     pub latitude: f64,
@@ -25,6 +27,8 @@ pub struct Forecast {
     pub elevation: Option<f64>,
     pub timezone: String,
     pub hourly: HourlyArrays,
+    #[serde(default)]
+    pub daily: Option<DailyArrays>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,11 +57,20 @@ impl HourlyArrays {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DailyArrays {
+    pub time: Vec<String>,
+    pub sunrise: Vec<String>,
+    pub sunset: Vec<String>,
+    pub daylight_duration: Vec<f64>,
+}
+
 pub fn fetch(lat: f64, lon: f64) -> Result<Forecast, WeatherError> {
     let response = ureq::get(ENDPOINT)
         .query("latitude", &lat.to_string())
         .query("longitude", &lon.to_string())
         .query("hourly", HOURLY_FIELDS)
+        .query("daily", DAILY_FIELDS)
         .query("timezone", "UTC")
         .query("forecast_days", "7")
         .call()?;

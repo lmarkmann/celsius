@@ -99,5 +99,25 @@
       0,
       0
     ]
+  },
+  "daily_units": {
+    "time": "iso8601",
+    "sunrise": "iso8601",
+    "sunset": "iso8601",
+    "daylight_duration": "s"
+  },
+  "daily": {
+    "time": [
+      "2026-04-11"
+    ],
+    "sunrise": [
+      "2026-04-11T04:38"
+    ],
+    "sunset": [
+      "2026-04-11T18:14"
+    ],
+    "daylight_duration": [
+      48960.0
+    ]
   }
 }
