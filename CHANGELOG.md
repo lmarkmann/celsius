@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.3.0] - 2026-06-10
+
+### Added
+
+- Add --plain/--frame surfaces and a testable TUI App ([#28](https://github.com/lmarkmann/celsius/pull/28))
+
 ## [0.2.2] - 2026-06-07
 
 ### Fixed
