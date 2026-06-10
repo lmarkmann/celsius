@@ -66,10 +66,23 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let sun_r = sun.radius;
     let sun_disc = sun_disc_color();
 
+    // Prototype: when an analytic sky is attached, its Preetham radiance field
+    // replaces the vertical gradient as the background. Prepared once here; the
+    // per-pixel cost is one Perez ratio plus a color conversion.
+    let analytic = state.analytic.as_ref().map(crate::analytic_sky::prepare);
+
     for py in 0..height {
         let tv = py as f64 / (height - 1) as f64;
         for px in 0..width {
-            let base = state.gradient.sample(tv);
+            let base = match &analytic {
+                Some(prep) if prep.blend >= 1.0 => prep.sample(px as f64 / (width - 1) as f64, tv),
+                Some(prep) => lerp_oklab(
+                    state.gradient.sample(tv),
+                    prep.sample(px as f64 / (width - 1) as f64, tv),
+                    prep.blend,
+                ),
+                None => state.gradient.sample(tv),
+            };
             let mut l = base.l;
             let mut a = base.a;
             let mut b = base.b;

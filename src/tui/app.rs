@@ -484,6 +484,7 @@ mod tests {
             precipitation: None,
             lightning: None,
             horizon_glow: None,
+            analytic: None,
             wind_speed_kmh: 20.0,
         }
     }

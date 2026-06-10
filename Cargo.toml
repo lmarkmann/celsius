@@ -56,6 +56,10 @@ serde_json = "1"
 name = "oracle"
 required-features = ["png"]
 
+[[example]]
+name = "analytic_demo"
+required-features = ["png"]
+
 [[bench]]
 name = "render"
 harness = false

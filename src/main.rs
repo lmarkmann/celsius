@@ -95,9 +95,21 @@ struct Cli {
     #[arg(long, global = true, conflicts_with = "plain")]
     frame: bool,
 
+    /// Sky model for the live-weather background. `analytic` (default) is the
+    /// Preetham physical sky, crossfading to the `palette` gradient through
+    /// twilight and night. Pass `--sky palette` to force the hand-tuned gradient.
+    #[arg(long, value_enum, default_value_t = SkyModel::Analytic, global = true)]
+    sky: SkyModel,
+
     #[cfg(feature = "png")]
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+#[derive(Clone, Copy, PartialEq, clap::ValueEnum)]
+enum SkyModel {
+    Palette,
+    Analytic,
 }
 
 #[cfg(feature = "png")]
@@ -223,15 +235,22 @@ fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Tim
 
     let center_az = cli.facing;
     let bortle = cli.bortle.or_else(|| config::load().bortle);
+    let analytic = cli.sky == SkyModel::Analytic;
     let mut states: Vec<_> = (0..hours)
-        .map(|h| compose(&forecast, &location, h, now_unix, center_az, bortle))
+        .map(|h| {
+            compose(
+                &forecast, &location, h, now_unix, center_az, bortle, analytic,
+            )
+        })
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
     // Render the home slot at the exact requested instant, interpolating between
     // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
-    states[home] = compose_at(&forecast, &location, at_unix, now_unix, center_az, bortle)
-        .context("composing sky for requested time")?;
+    states[home] = compose_at(
+        &forecast, &location, at_unix, now_unix, center_az, bortle, analytic,
+    )
+    .context("composing sky for requested time")?;
     Ok(Timeline::new(states, home))
 }
 

@@ -1,3 +1,4 @@
+pub mod analytic_sky;
 pub mod astro;
 pub mod colorspace;
 pub mod config;
