@@ -1,4 +1,4 @@
-use std::io::{BufWriter, IsTerminal, Write, stdout};
+use std::io::{BufWriter, ErrorKind, IsTerminal, Write, stdout};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -11,7 +11,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use celsius::config::{self, LocationPref};
 use celsius::tui::{RunOutcome, Timeline};
 use celsius::weather::{compose, error_sky, forecast, location};
-use celsius::{load_scene, tui};
+use celsius::{SkyState, load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
 
@@ -45,6 +45,7 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
 #[derive(Parser)]
 #[command(
     name = "celsius",
+    version,
     about = "a sky in your terminal",
     styles = STYLES,
     after_help = AFTER_HELP,
@@ -84,6 +85,16 @@ struct Cli {
     #[arg(long, value_name = "1..9", global = true, value_parser = clap::value_parser!(u8).range(1..=9))]
     bortle: Option<u8>,
 
+    /// Print a one-line ASCII weather summary and exit, no full-screen UI.
+    /// Also the default when stdout is not a terminal or NO_COLOR is set.
+    #[arg(long, visible_alias = "no-tui", global = true)]
+    plain: bool,
+
+    /// Print one ANSI half-block frame (104x50) and exit: the visual capture
+    /// surface, for piping into a file or `less -R`.
+    #[arg(long, global = true, conflicts_with = "plain")]
+    frame: bool,
+
     #[cfg(feature = "png")]
     #[command(subcommand)]
     command: Option<Command>,
@@ -105,6 +116,40 @@ enum Command {
         #[arg(long, default_value_t = 50)]
         height: u32,
     },
+}
+
+enum OutputMode {
+    Tui,
+    Plain,
+    Frame,
+}
+
+/// Decide how to render. First match wins: an explicit `--frame` beats
+/// everything; otherwise anything that means "not an interactive color
+/// terminal" (--plain, NO_COLOR, a pipe) falls back to the flat text surface.
+fn output_mode(cli: &Cli) -> OutputMode {
+    if cli.frame {
+        OutputMode::Frame
+    } else if cli.plain || std::env::var_os("NO_COLOR").is_some() || !stdout().is_terminal() {
+        OutputMode::Plain
+    } else {
+        OutputMode::Tui
+    }
+}
+
+/// Write one state non-interactively and exit. A broken pipe (`celsius | head`)
+/// is a normal way to stop reading, not an error, so it maps to success.
+fn write_oneshot(state: &SkyState, mode: &OutputMode) -> Result<()> {
+    let mut out = BufWriter::new(stdout().lock());
+    let written = match mode {
+        OutputMode::Frame => tui::write_frame(state, &mut out),
+        _ => tui::write_plain(state, &mut out),
+    };
+    match written.and_then(|()| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(e).context("writing output"),
+    }
 }
 
 fn main() -> Result<()> {
@@ -130,37 +175,29 @@ fn main() -> Result<()> {
     if let Some(scene_path) = cli.scene.as_ref() {
         let state = load_scene(scene_path)
             .with_context(|| format!("loading scene {}", scene_path.display()))?;
-        let timeline = Timeline::single(state);
-        if stdout().is_terminal() {
-            match tui::run(&timeline).context("running tui")? {
-                RunOutcome::Quit | RunOutcome::Retry => {}
-                RunOutcome::ChangeLocation(_) => {}
-            }
-        } else {
-            let mut out = BufWriter::new(stdout().lock());
-            tui::write_frame(&timeline.states[timeline.home], &mut out)
-                .context("writing frame to non-tty stdout")?;
-            out.flush().context("flushing stdout")?;
+        let mode = output_mode(&cli);
+        if !matches!(mode, OutputMode::Tui) {
+            return write_oneshot(&state, &mode);
         }
+        tui::run(&Timeline::single(state)).context("running tui")?;
         return Ok(());
     }
 
-    // Live weather path: retry loop handles fetch errors and location changes.
+    // Non-interactive (pipe, --plain, --frame, NO_COLOR): build once, no retry.
+    // A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
+    let mode = output_mode(&cli);
+    if !matches!(mode, OutputMode::Tui) {
+        let timeline = build_live_timeline(&cli, None).context("building forecast")?;
+        return write_oneshot(&timeline.states[timeline.home], &mode);
+    }
+
+    // Live TUI: the retry loop handles fetch errors and location changes.
     let mut location_override: Option<String> = None;
     loop {
         let timeline = match build_live_timeline(&cli, location_override.as_deref()) {
             Ok(t) => t,
             Err(e) => Timeline::single(error_sky(&e.to_string())),
         };
-
-        if !stdout().is_terminal() {
-            let mut out = BufWriter::new(stdout().lock());
-            tui::write_frame(&timeline.states[timeline.home], &mut out)
-                .context("writing frame to non-tty stdout")?;
-            out.flush().context("flushing stdout")?;
-            return Ok(());
-        }
-
         match tui::run(&timeline).context("running tui")? {
             RunOutcome::Quit => return Ok(()),
             RunOutcome::Retry => location_override = None,

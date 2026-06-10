@@ -84,6 +84,11 @@ pub struct Chrome {
     pub header_right: String,
     pub footer: String,
     pub keys: String,
+    /// One-line ASCII summary for the `--plain` surface, built from structured
+    /// weather data. Empty for scene files, which have no structured weather;
+    /// `write_plain` falls back to the decorative chrome there.
+    #[serde(default)]
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

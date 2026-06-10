@@ -303,11 +303,23 @@ fn build_chrome(
     let compass = compass_from_deg(wind_dir.unwrap_or(0.0));
     let footer = format!("{temp}  {word}   wind {compass} {speed}");
 
+    // ASCII one-liner for --plain: proper-case place, no degree sign, uppercase
+    // compass. Grep- and pipe-friendly, distinct from the decorative footer.
+    let temp_ascii = temperature_c
+        .map(|t| format!("{t:.0}C"))
+        .unwrap_or_else(|| "--C".to_string());
+    let status = format!(
+        "{} {temp_ascii} {word} wind {} {speed}",
+        location.name,
+        compass.to_uppercase(),
+    );
+
     Chrome {
         header_left,
         header_right,
         footer,
         keys: KEYS_HINT.to_string(),
+        status,
     }
 }
 
@@ -398,8 +410,9 @@ pub fn error_sky(msg: &str) -> SkyState {
         chrome: Chrome {
             header_left: "celsius".to_string(),
             header_right: String::new(),
-            footer,
+            footer: footer.clone(),
             keys: "r retry   q quit".to_string(),
+            status: footer,
         },
         haze: None,
         stars: None,
