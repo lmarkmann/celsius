@@ -99,7 +99,12 @@ fn compose_at_interpolates_between_hours() {
     // interpolated sky must read 4.05, proving it didn't snap to the top of hour.
     let t01 = 1_775_869_200; // 2026-04-11T01:00Z
     let mid = t01 + 1_800; // 01:30Z
-    let sky = celsius::weather::compose_at(&forecast, &geo, mid, t01, 180.0, None, false)
+    let opts = celsius::weather::ComposeOpts {
+        center_az: 180.0,
+        bortle: None,
+        analytic: false,
+    };
+    let sky = celsius::weather::compose_at(&forecast, &geo, mid, t01, opts)
         .expect("compose_at on fixture");
     assert!(
         (sky.wind_speed_kmh - 4.05).abs() < 1e-6,
