@@ -38,6 +38,18 @@ fn bench_render(c: &mut Criterion) {
         b.iter(|| render(black_box(&clear), 104, 50))
     });
 
+    // Starfield: exercises the star lookup on every pixel
+    let night = load_scene(scene_path("moonless_darksky")).unwrap();
+    g.bench_function("104x50_night", |b| {
+        b.iter(|| render(black_box(&night), 104, 50))
+    });
+
+    // Moon disc + glow paths
+    let moonlit = load_scene(scene_path("moonlit_clear_winter")).unwrap();
+    g.bench_function("104x50_moonlit", |b| {
+        b.iter(|| render(black_box(&moonlit), 104, 50))
+    });
+
     g.finish();
 }
 
