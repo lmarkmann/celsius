@@ -1,15 +1,16 @@
-use std::collections::HashMap;
-
 use crate::colorspace::Oklab;
 use crate::gradient::Gradient;
 use crate::noise::Mt19937;
 use crate::scene::Stars;
 
-pub type StarMap = HashMap<(u32, u32), Oklab>;
+/// Star contributions on a flat row-major grid, None where nothing painted.
+/// Render looks this up for every pixel of every frame, so it must be an
+/// array load, not a hash.
+pub type StarField = Vec<Option<Oklab>>;
 
-pub fn build_star_map(cfg: &Stars, width: u32, height: u32, gradient: &Gradient) -> StarMap {
+pub fn build_star_field(cfg: &Stars, width: u32, height: u32, gradient: &Gradient) -> StarField {
     let mut rng = Mt19937::init_by_array(&[cfg.seed as u32]);
-    let mut acc: HashMap<(u32, u32), [f64; 3]> = HashMap::new();
+    let mut field: StarField = vec![None; (width * height) as usize];
 
     for _ in 0..cfg.count {
         let xf = rng.next_f64();
@@ -29,22 +30,20 @@ pub fn build_star_map(cfg: &Stars, width: u32, height: u32, gradient: &Gradient)
 
         let contrib = [effective * 0.52, hue * 0.45, -hue * 0.72];
 
-        paint(&mut acc, px, py, width, height, contrib);
+        paint(&mut field, px, py, width, height, contrib);
         if mag > 0.72 {
             let halo = [contrib[0] * 0.18, contrib[1], contrib[2]];
             for (dpx, dpy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                paint(&mut acc, px + dpx, py + dpy, width, height, halo);
+                paint(&mut field, px + dpx, py + dpy, width, height, halo);
             }
         }
     }
 
-    acc.into_iter()
-        .map(|(k, v)| (k, Oklab::new(v[0], v[1], v[2])))
-        .collect()
+    field
 }
 
 fn paint(
-    acc: &mut HashMap<(u32, u32), [f64; 3]>,
+    field: &mut [Option<Oklab>],
     px: i32,
     py: i32,
     width: u32,
@@ -54,9 +53,9 @@ fn paint(
     if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 {
         return;
     }
-    let key = (px as u32, py as u32);
-    let entry = acc.entry(key).or_insert([0.0, 0.0, 0.0]);
-    entry[0] += contrib[0];
-    entry[1] += contrib[1];
-    entry[2] += contrib[2];
+    let idx = (py as u32 * width + px as u32) as usize;
+    let star = field[idx].get_or_insert(Oklab::new(0.0, 0.0, 0.0));
+    star.l += contrib[0];
+    star.a += contrib[1];
+    star.b += contrib[2];
 }

@@ -1,15 +1,11 @@
 use std::f64::consts::TAU;
+use std::sync::LazyLock;
 
 use crate::colorspace::{Oklab, lerp_oklab, rgb_u8_to_oklab};
 use crate::scene::Moon;
 
-fn lit_color() -> Oklab {
-    rgb_u8_to_oklab(242, 238, 222)
-}
-
-fn shadow_color() -> Oklab {
-    rgb_u8_to_oklab(36, 30, 50)
-}
+static LIT: LazyLock<Oklab> = LazyLock::new(|| rgb_u8_to_oklab(242, 238, 222));
+static SHADOW: LazyLock<Oklab> = LazyLock::new(|| rgb_u8_to_oklab(36, 30, 50));
 
 pub fn glow_contribution(
     moon: &Moon,
@@ -23,7 +19,13 @@ pub fn glow_contribution(
     let dx = (px as f64 - mx) / width as f64;
     let dy = (py as f64 - my) / height as f64;
     let d = (dx * dx + dy * dy * 3.0).sqrt();
-    let glow = (1.0 - d / 0.40).max(0.0).powf(2.2);
+    let falloff = (1.0 - d / 0.40).max(0.0);
+    if falloff == 0.0 {
+        // Same signs the powf path yields for a zero base, so the caller's
+        // additive blend stays bit-identical while most pixels skip the powf.
+        return (0.0, -0.0, -0.0);
+    }
+    let glow = falloff.powf(2.2);
     (glow * 0.055, glow * -0.004, glow * -0.008)
 }
 
@@ -52,7 +54,7 @@ pub fn disc_sample(moon: &Moon, px: u32, py: u32, width: u32, height: u32) -> Op
     let yn = dy / r;
 
     let lit_frac = phase_lit(xn, yn, moon.phase);
-    let color = lerp_oklab(shadow_color(), lit_color(), lit_frac);
+    let color = lerp_oklab(*SHADOW, *LIT, lit_frac);
 
     Some((color, edge_alpha))
 }

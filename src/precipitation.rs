@@ -20,6 +20,7 @@ pub fn overlay(pixels: &mut PixelBuffer, precip: &Precipitation) {
     let is_rain = precip.kind == "rain";
     let angle_rad = precip.angle_deg.to_radians();
     let dx = angle_rad.tan();
+    let (top, bot, flake) = (rain_top(), rain_bot(), snow());
 
     for _ in 0..n {
         let px = rng.randint(0, width as i32 - 1);
@@ -37,9 +38,9 @@ pub fn overlay(pixels: &mut PixelBuffer, precip: &Precipitation) {
             let depth_fade = 0.55 + 0.45 * vt;
             let alpha = precip.opacity * depth_fade;
             let color_lab = if is_rain {
-                lerp_oklab(rain_top(), rain_bot(), vt)
+                lerp_oklab(top, bot, vt)
             } else {
-                snow()
+                flake
             };
             let orig = pixels.get(sx as usize, sy as usize);
             let orig_lab = crate::colorspace::rgb_u8_to_oklab(orig.r, orig.g, orig.b);
