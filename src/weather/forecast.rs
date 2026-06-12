@@ -66,14 +66,23 @@ pub struct DailyArrays {
 }
 
 pub fn fetch(lat: f64, lon: f64) -> Result<Forecast, WeatherError> {
-    let response = ureq::get(ENDPOINT)
-        .query("latitude", &lat.to_string())
-        .query("longitude", &lon.to_string())
+    let mut response = super::AGENT
+        .get(ENDPOINT)
+        .query("latitude", lat.to_string())
+        .query("longitude", lon.to_string())
         .query("hourly", HOURLY_FIELDS)
         .query("daily", DAILY_FIELDS)
         .query("timezone", "UTC")
         .query("forecast_days", "7")
         .call()?;
-    let body: Forecast = response.into_json()?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.body_mut().read_to_string().unwrap_or_default();
+        return Err(WeatherError::Http {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    let body: Forecast = response.body_mut().read_json()?;
     Ok(body)
 }

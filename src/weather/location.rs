@@ -42,12 +42,21 @@ pub(crate) struct GeoResponse {
 }
 
 pub fn geocode(query: &str) -> Result<Vec<GeoResult>, WeatherError> {
-    let response = ureq::get(ENDPOINT)
+    let mut response = super::AGENT
+        .get(ENDPOINT)
         .query("name", query)
         .query("count", "5")
         .query("language", "en")
         .query("format", "json")
         .call()?;
-    let body: GeoResponse = response.into_json()?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.body_mut().read_to_string().unwrap_or_default();
+        return Err(WeatherError::Http {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    let body: GeoResponse = response.body_mut().read_json()?;
     Ok(body.results)
 }

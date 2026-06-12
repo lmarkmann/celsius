@@ -718,10 +718,12 @@ fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
 pub fn error_sky(msg: &str) -> SkyState {
     let gradient = gradient_for(Palette::Night);
     let first_line = msg.lines().next().unwrap_or(msg);
-    let footer = if first_line.len() > 72 {
-        format!("{}...", &first_line[..72])
-    } else {
-        first_line.to_string()
+    // Truncate on a char boundary: error text carries user-supplied location
+    // labels, and a byte slice through a multibyte char would panic the one
+    // path that must never panic.
+    let footer = match first_line.char_indices().nth(72) {
+        Some((cut, _)) => format!("{}...", &first_line[..cut]),
+        None => first_line.to_string(),
     };
     SkyState {
         name: "error".to_string(),
@@ -768,6 +770,19 @@ mod tests {
         let unix = parse_hour_to_unix("2026-04-11T00:00").unwrap();
         // 2026-04-11T00:00:00Z, verified against `date -u -d @1775865600`
         assert_eq!(unix, 1_775_865_600);
+    }
+
+    #[test]
+    fn error_sky_truncates_multibyte_text_without_panicking() {
+        // The two-byte ü starts at byte 71, so the old `&first_line[..72]`
+        // sliced through it and panicked the error path itself.
+        let msg = format!("{}ürich weather fetch failed", "Z".repeat(71));
+        let sky = error_sky(&msg);
+        assert!(sky.chrome.footer.ends_with("..."));
+        assert_eq!(sky.chrome.footer.chars().count(), 75);
+
+        let short = error_sky("kaputt");
+        assert_eq!(short.chrome.footer, "kaputt");
     }
 
     #[test]
