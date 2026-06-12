@@ -1,71 +1,35 @@
 Output demo.gif
 
-Set Width 1400
-Set Height 700
-Set FontSize 15
+Set Width 1600
+Set Height 1000
+Set FontSize 14
 Set Padding 0
-Set Theme "Dracula"
+Set Theme "OneHalfDark"
 
-Type "celsius -l Hamburg"
+Type 'celsius -l "New York"'
 Enter
 Sleep 4s
 
-# Scrub to pre-dawn (midnight → 06:00 Hamburg, 6 hours)
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-
-# Golden hour (07:00 Hamburg), sun cresting the horizon
-Right
-Sleep 3s
-
-# Scrub through morning into midday
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 1s
-
-# Full day (noon Hamburg)
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-Right
-Sleep 120ms
-
-# Evening golden hour (20:00 Hamburg), sun back at the horizon
-Right
-Sleep 3s
-
-# Into night (22:00 Hamburg)
-Right
-Sleep 120ms
-Right
+# Show the keybindings overlay
+Type "?"
 Sleep 2s
+Type "?"
+Sleep 500ms
+
+# Change location to Tokyo
+Type "l"
+Sleep 500ms
+Type "Tokyo"
+Sleep 500ms
+Enter
+Sleep 4s
+
+# Change location to London
+Type "l"
+Sleep 500ms
+Type "London"
+Sleep 500ms
+Enter
+Sleep 4s
 
 Type "q"

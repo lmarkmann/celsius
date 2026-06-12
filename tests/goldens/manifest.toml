@@ -5,7 +5,6 @@
 #   just lock
 # Scene TOMLs are vendored in scenes/; the oracle reads them there.
 
-
 [golden_hour_cumulus]
 scene_sha256 = "c8e5050c01b63f05b7caba61b9f782672e3249dd6adc9ebede67f4ba4d4939f5"
 png_sha256 = "3eb7a62ac5e146135909ed419f7b114f7cd64186dc493b09080329236a209fd5"

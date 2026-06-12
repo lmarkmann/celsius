@@ -20,7 +20,7 @@ pub enum SceneError {
     Parse {
         path: PathBuf,
         #[source]
-        source: toml::de::Error,
+        source: basic_toml::Error,
     },
     #[error("scene {path} has no file stem")]
     NoStem { path: PathBuf },
@@ -254,7 +254,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         path: path.to_path_buf(),
         source: e,
     })?;
-    let raw: SceneToml = toml::from_str(&text).map_err(|e| SceneError::Parse {
+    let raw: SceneToml = basic_toml::from_str(&text).map_err(|e| SceneError::Parse {
         path: path.to_path_buf(),
         source: e,
     })?;

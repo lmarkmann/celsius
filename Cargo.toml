@@ -41,7 +41,7 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_28", "layout-cache"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-toml = "0.5"
+basic-toml = "0.1"
 unicode-width = "0.2"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
