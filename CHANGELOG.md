@@ -3,6 +3,31 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.0] - 2026-06-12
+
+### Added
+
+- Bundle compose options into ComposeOpts ([#42](https://github.com/lmarkmann/celsius/pull/42))
+- Validate scenes at parse, stabilize seeds, surface config errors ([#41](https://github.com/lmarkmann/celsius/pull/41))
+- Physically-based analytic sky (Preetham) for the live daytime view ([#35](https://github.com/lmarkmann/celsius/pull/35))
+
+### Build
+
+- Move sha2 to dev-dependencies and trim ratatui features ([#37](https://github.com/lmarkmann/celsius/pull/37))
+
+### Fixed
+
+- Timeouts on weather fetches, ureq 3, panic-free error sky ([#40](https://github.com/lmarkmann/celsius/pull/40))
+
+### Other
+
+- Release PR body is just the changelog entry ([#43](https://github.com/lmarkmann/celsius/pull/43))
+
+### Performance
+
+- Hoist loop invariants out of the render hot paths ([#39](https://github.com/lmarkmann/celsius/pull/39))
+- Cache the rendered sky and skip re-rendering idle frames ([#38](https://github.com/lmarkmann/celsius/pull/38))
+
 ## [0.3.2] - 2026-06-10
 
 ### Added
