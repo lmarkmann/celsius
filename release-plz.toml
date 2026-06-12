@@ -4,6 +4,10 @@ git_release_enable = true
 git_tag_enable = true
 pr_labels = ["release"]
 semver_check = false
+pr_name = "chore: release{% if version %} v{{ version }}{% endif %}"
+pr_body = """
+{% for release in releases %}{% if release.changelog %}{{ release.changelog }}{% endif %}{% endfor -%}
+"""
 
 [changelog]
 header = """# Changelog
