@@ -43,7 +43,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 toml = "0.5"
 unicode-width = "0.2"
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
 [dev-dependencies]
 assert_cmd = "2"
