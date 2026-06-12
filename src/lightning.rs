@@ -4,7 +4,9 @@
 //! evaluated each TUI tick by `overlay()`. Bit-parity with celsius-lab's
 //! lightning.py for strike scheduling (verified by tests/lightning.rs).
 
-use crate::colorspace::{Oklab, PixelBuffer, oklab_to_rgb, rgb_u8_to_oklab};
+use std::sync::LazyLock;
+
+use crate::colorspace::{Oklab, PixelBuffer, Rgb, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::noise::Mt19937;
 
 #[derive(Clone, Debug)]
@@ -241,6 +243,9 @@ const BOLT_LAB_B: u8 = 240;
 const HALO_L_BUMP: f64 = 0.18;
 const OCCLUSION_L: f64 = 0.78;
 
+static BOLT_COLOR: LazyLock<Rgb> =
+    LazyLock::new(|| oklab_to_rgb(rgb_u8_to_oklab(BOLT_LAB_R, BOLT_LAB_G, BOLT_LAB_B)));
+
 pub fn overlay(pixels: &mut PixelBuffer, lightning: &Lightning, t_seconds: f64) {
     let bump = l_bump_at(&lightning.strikes, t_seconds, &lightning.params);
     if bump > 0.0001 {
@@ -288,7 +293,7 @@ fn draw_segment(
 ) {
     let w = pixels.width as i32;
     let h = pixels.height as i32;
-    let bolt_color = oklab_to_rgb(rgb_u8_to_oklab(BOLT_LAB_R, BOLT_LAB_G, BOLT_LAB_B));
+    let bolt_color = *BOLT_COLOR;
 
     let (mut x0, mut y0) = a;
     let (x1, y1) = b;
