@@ -10,7 +10,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 
 use celsius::config::{self, LocationPref};
 use celsius::tui::{RunOutcome, Timeline};
-use celsius::weather::{compose, compose_at, error_sky, forecast, location};
+use celsius::weather::{ComposeOpts, compose, compose_at, error_sky, forecast, location};
 use celsius::{SkyState, load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
@@ -142,7 +142,11 @@ enum OutputMode {
 fn output_mode(cli: &Cli) -> OutputMode {
     if cli.frame {
         OutputMode::Frame
-    } else if cli.plain || std::env::var_os("NO_COLOR").is_some() || !stdout().is_terminal() {
+    // Per the NO_COLOR spec, an empty value means unset.
+    } else if cli.plain
+        || std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+        || !stdout().is_terminal()
+    {
         OutputMode::Plain
     } else {
         OutputMode::Tui
@@ -233,24 +237,20 @@ fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Tim
         bail!("forecast returned zero hours for {}", location.label());
     }
 
-    let center_az = cli.facing;
-    let bortle = cli.bortle.or_else(|| config::load().bortle);
-    let analytic = cli.sky == SkyModel::Analytic;
+    let opts = ComposeOpts {
+        center_az: cli.facing,
+        bortle: cli.bortle.or_else(|| config::load().bortle),
+        analytic: cli.sky == SkyModel::Analytic,
+    };
     let mut states: Vec<_> = (0..hours)
-        .map(|h| {
-            compose(
-                &forecast, &location, h, now_unix, center_az, bortle, analytic,
-            )
-        })
+        .map(|h| compose(&forecast, &location, h, now_unix, opts))
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
     // Render the home slot at the exact requested instant, interpolating between
     // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
-    states[home] = compose_at(
-        &forecast, &location, at_unix, now_unix, center_az, bortle, analytic,
-    )
-    .context("composing sky for requested time")?;
+    states[home] = compose_at(&forecast, &location, at_unix, now_unix, opts)
+        .context("composing sky for requested time")?;
     Ok(Timeline::new(states, home))
 }
 

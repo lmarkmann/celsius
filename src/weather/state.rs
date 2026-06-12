@@ -71,15 +71,35 @@ impl HourSample {
     }
 }
 
+/// View options shared by every sky in a timeline: where the camera points,
+/// how dark the site is, and which model paints the daytime background.
+#[derive(Clone, Copy, Debug)]
+pub struct ComposeOpts {
+    /// Azimuth at the horizontal center of the frame, in degrees (180 = south).
+    pub center_az: f64,
+    /// Bortle dark-sky class for the light-pollution glow; None = auto.
+    pub bortle: Option<u8>,
+    /// Preetham analytic daytime background instead of the palette gradient.
+    pub analytic: bool,
+}
+
+impl Default for ComposeOpts {
+    fn default() -> Self {
+        Self {
+            center_az: 180.0,
+            bortle: None,
+            analytic: true,
+        }
+    }
+}
+
 /// Build a sky for the forecast hour at `hour_index`.
 pub fn compose(
     forecast: &Forecast,
     location: &GeoResult,
     hour_index: usize,
     now_unix: i64,
-    center_az: f64,
-    bortle: Option<u8>,
-    analytic: bool,
+    opts: ComposeOpts,
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
     let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
@@ -89,10 +109,8 @@ pub fn compose(
         location,
         unix_utc,
         now_unix,
-        center_az,
-        bortle,
         forecast.daily.as_ref(),
-        analytic,
+        opts,
     ))
 }
 
@@ -105,9 +123,7 @@ pub fn compose_at(
     location: &GeoResult,
     target_unix: i64,
     now_unix: i64,
-    center_az: f64,
-    bortle: Option<u8>,
-    analytic: bool,
+    opts: ComposeOpts,
 ) -> Result<SkyState, WeatherError> {
     let (h0, h1, frac) = bracket_hours(forecast, target_unix)?;
     let sample = HourSample::interpolated(forecast, h0, h1, frac);
@@ -116,10 +132,8 @@ pub fn compose_at(
         location,
         target_unix,
         now_unix,
-        center_az,
-        bortle,
         forecast.daily.as_ref(),
-        analytic,
+        opts,
     ))
 }
 
@@ -156,19 +170,19 @@ fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
     (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
 }
 
-// Prototype's `analytic` flag pushes this to 8 args; if the analytic sky
-// graduates, bundle (center_az, bortle, analytic) into a render-opts struct.
-#[expect(clippy::too_many_arguments)]
 fn build_sky(
     sample: &HourSample,
     location: &GeoResult,
     unix_utc: i64,
     now_unix: i64,
-    center_az: f64,
-    bortle: Option<u8>,
     daily: Option<&DailyArrays>,
-    analytic: bool,
+    opts: ComposeOpts,
 ) -> SkyState {
+    let ComposeOpts {
+        center_az,
+        bortle,
+        analytic,
+    } = opts;
     let lat = location.latitude;
     let lon = location.longitude;
     let sun_altaz = astro::sun_position(lat, lon, unix_utc);
