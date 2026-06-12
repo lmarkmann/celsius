@@ -9,6 +9,7 @@ keywords = ["weather", "tui", "terminal", "sky", "cli"]
 categories = ["command-line-utilities", "visualization"]
 exclude = [
   "demos/",
+  "examples/",
   "scenes/",
   "scripts/",
   ".github/",
@@ -54,10 +55,6 @@ sha2 = "0.10"
 
 [[test]]
 name = "oracle"
-required-features = ["png"]
-
-[[example]]
-name = "analytic_demo"
 required-features = ["png"]
 
 [[bench]]
