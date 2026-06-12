@@ -5,7 +5,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::DefaultTerminal;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
@@ -16,8 +16,8 @@ use crate::scene::SkyState;
 use crate::tui::widget::SkyWidget;
 
 const TICK: Duration = Duration::from_millis(33);
-const MIN_COLS: u16 = 40;
-const MIN_ROWS: u16 = 20;
+const MIN_COLS: u16 = 60;
+const MIN_ROWS: u16 = 25;
 
 #[derive(Debug, PartialEq)]
 pub enum RunOutcome {
@@ -293,6 +293,11 @@ const OVERLAY_BG: Color = Color::Rgb(18, 18, 26);
 const OVERLAY_FG: Color = Color::Rgb(210, 210, 210);
 const OVERLAY_DIM: Color = Color::Rgb(120, 120, 140);
 
+const TOO_SMALL_BG: Color = CHROME_BG;
+const BRAND: Color = Color::Rgb(252, 215, 172);
+const VALUE_OK: Color = Color::Rgb(150, 200, 140);
+const VALUE_SHORT: Color = Color::Rgb(220, 90, 90);
+
 fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
     if area.width < MIN_COLS || area.height < MIN_ROWS {
         draw_too_small(buf, area);
@@ -465,15 +470,188 @@ fn draw_location_overlay(buf: &mut Buffer, area: Rect, input: &str) {
 }
 
 fn draw_too_small(buf: &mut Buffer, area: Rect) {
-    let msg = format!(
-        "cramped sky: needs {}x{}, yours is {}x{}",
-        MIN_COLS, MIN_ROWS, area.width, area.height
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_bg(TOO_SMALL_BG);
+        }
+    }
+
+    if area.width >= 34 && area.height >= 8 {
+        draw_too_small_primary(buf, area);
+    } else if area.width >= 12 && area.height >= 3 {
+        draw_too_small_secondary(buf, area);
+    } else {
+        draw_too_small_minimal(buf, area);
+    }
+}
+
+fn draw_too_small_primary(buf: &mut Buffer, area: Rect) {
+    let width_status = status_for(area.width, MIN_COLS);
+    let height_status = status_for(area.height, MIN_ROWS);
+
+    let block_height = 7u16;
+    let top_y = area.y + (area.height.saturating_sub(block_height)) / 2;
+
+    let brand = [(
+        "celsius",
+        Style::default()
+            .fg(BRAND)
+            .bg(TOO_SMALL_BG)
+            .add_modifier(Modifier::BOLD),
+    )];
+    put_centered(buf, area, top_y, &brand);
+
+    let dim = Style::default().fg(OVERLAY_DIM).bg(TOO_SMALL_BG);
+    put_centered(buf, area, top_y + 2, &[("the sky is too cramped", dim)]);
+
+    let width_label = Style::default().fg(OVERLAY_DIM).bg(TOO_SMALL_BG);
+    let width_value = Style::default()
+        .fg(width_status.color)
+        .bg(TOO_SMALL_BG)
+        .add_modifier(Modifier::BOLD);
+    let width_status_style = Style::default().fg(width_status.color).bg(TOO_SMALL_BG);
+    let width_needs = Style::default().fg(OVERLAY_DIM).bg(TOO_SMALL_BG);
+
+    let mut y = top_y + 4;
+    put_centered(
+        buf,
+        area,
+        y,
+        &[
+            ("width ", width_label),
+            (&format!("{:>3}", area.width), width_value),
+            ("  ", Style::default().bg(TOO_SMALL_BG)),
+            (&format!("{:<5}", width_status.word), width_status_style),
+            (&format!(" needs {}", MIN_COLS), width_needs),
+        ],
     );
-    let msg_w = msg.width() as u16;
-    let row = area.y + area.height / 2;
-    let start_x = area.x + area.width.saturating_sub(msg_w) / 2;
-    let style = Style::default().fg(Color::Gray).bg(Color::Black);
-    buf.set_stringn(start_x, row, &msg, area.width as usize, style);
+
+    y += 1;
+    let height_label = Style::default().fg(OVERLAY_DIM).bg(TOO_SMALL_BG);
+    let height_value = Style::default()
+        .fg(height_status.color)
+        .bg(TOO_SMALL_BG)
+        .add_modifier(Modifier::BOLD);
+    let height_status_style = Style::default().fg(height_status.color).bg(TOO_SMALL_BG);
+    let height_needs = Style::default().fg(OVERLAY_DIM).bg(TOO_SMALL_BG);
+    put_centered(
+        buf,
+        area,
+        y,
+        &[
+            ("height", height_label),
+            (" ", Style::default().bg(TOO_SMALL_BG)),
+            (&format!("{:>3}", area.height), height_value),
+            ("  ", Style::default().bg(TOO_SMALL_BG)),
+            (&format!("{:<5}", height_status.word), height_status_style),
+            (&format!(" needs {}", MIN_ROWS), height_needs),
+        ],
+    );
+
+    put_centered(buf, area, top_y + 6, &[("resize to clear the sky", dim)]);
+}
+
+fn draw_too_small_secondary(buf: &mut Buffer, area: Rect) {
+    let block_height = 3u16;
+    let top_y = area.y + (area.height.saturating_sub(block_height)) / 2;
+
+    let brand = [(
+        "celsius",
+        Style::default()
+            .fg(BRAND)
+            .bg(TOO_SMALL_BG)
+            .add_modifier(Modifier::BOLD),
+    )];
+    put_centered(buf, area, top_y, &brand);
+
+    let width_color = if area.width >= MIN_COLS {
+        VALUE_OK
+    } else {
+        VALUE_SHORT
+    };
+    let height_color = if area.height >= MIN_ROWS {
+        VALUE_OK
+    } else {
+        VALUE_SHORT
+    };
+    let dim = Style::default().fg(OVERLAY_DIM).bg(TOO_SMALL_BG);
+
+    let size_segments: [(&str, Style); 5] = [
+        (
+            &format!("{}", area.width),
+            Style::default()
+                .fg(width_color)
+                .bg(TOO_SMALL_BG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        ("x", dim),
+        (
+            &format!("{}", area.height),
+            Style::default()
+                .fg(height_color)
+                .bg(TOO_SMALL_BG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        (" needs ", dim),
+        (&format!("{}x{}", MIN_COLS, MIN_ROWS), dim),
+    ];
+    put_centered(buf, area, top_y + 1, &size_segments);
+
+    put_centered(buf, area, top_y + 2, &[("resize to clear", dim)]);
+}
+
+fn draw_too_small_minimal(buf: &mut Buffer, area: Rect) {
+    let y = area.y + area.height / 2;
+    put_centered(
+        buf,
+        area,
+        y,
+        &[(
+            "celsius",
+            Style::default()
+                .fg(BRAND)
+                .bg(TOO_SMALL_BG)
+                .add_modifier(Modifier::BOLD),
+        )],
+    );
+}
+
+#[derive(Clone, Copy)]
+struct DimStatus {
+    color: Color,
+    word: &'static str,
+}
+
+fn status_for(current: u16, needed: u16) -> DimStatus {
+    if current >= needed {
+        DimStatus {
+            color: VALUE_OK,
+            word: "ok",
+        }
+    } else {
+        DimStatus {
+            color: VALUE_SHORT,
+            word: "short",
+        }
+    }
+}
+
+fn put_centered(buf: &mut Buffer, area: Rect, y: u16, segments: &[(&str, Style)]) {
+    let total: usize = segments.iter().map(|(s, _)| s.width()).sum();
+    let total = total as u16;
+    let start_x = area.x + (area.width.saturating_sub(total)) / 2;
+    let mut x = start_x;
+    for (text, style) in segments {
+        let w = text.width() as u16;
+        if x >= area.x + area.width {
+            break;
+        }
+        let max_w = (area.x + area.width).saturating_sub(x) as usize;
+        buf.set_stringn(x, y, text, max_w, *style);
+        x += w;
+    }
 }
 
 #[cfg(test)]
@@ -771,7 +949,73 @@ mod tests {
             draw_sky(f.buffer_mut(), area, &mut app);
         })
         .unwrap();
-        assert!(buffer_text(term.backend().buffer()).contains("cramped sky"));
+        let content = buffer_text(term.backend().buffer());
+        assert!(content.contains("celsius"), "secondary form should brand");
+        assert!(
+            content.contains("needs 60x25"),
+            "secondary form should state required size"
+        );
+    }
+
+    #[test]
+    fn primary_too_small_shows_per_dimension_status() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(62, 20)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        let content = buffer_text(term.backend().buffer());
+        assert!(
+            content.contains("the sky is too cramped"),
+            "primary form should show subtitle"
+        );
+        assert!(content.contains("ok"), "width should report ok at 62 cols");
+        assert!(
+            content.contains("short"),
+            "height should report short at 20 rows"
+        );
+        assert!(
+            !content.contains("q quit"),
+            "chrome footer should not render below the gate"
+        );
+    }
+
+    #[test]
+    fn threshold_exactly_releases_to_sky() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(60, 25)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        let content = buffer_text(term.backend().buffer());
+        assert!(
+            !content.contains("the sky is too cramped"),
+            "exactly the threshold should not show too-small screen"
+        );
+        assert!(content.contains("celsius"), "sky chrome should render");
+    }
+
+    #[test]
+    fn minimal_too_small_shows_brand() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(10, 2)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        let content = buffer_text(term.backend().buffer());
+        assert!(
+            content.contains("celsius"),
+            "minimal form should still show brand"
+        );
     }
 
     #[test]
