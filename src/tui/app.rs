@@ -9,6 +9,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
+use crate::colorspace::PixelBuffer;
 use crate::lightning;
 use crate::render::render;
 use crate::scene::SkyState;
@@ -58,6 +59,15 @@ enum Overlay {
     Location { input: String },
 }
 
+/// The last sky render, reused while nothing visual changes. The pixel
+/// pipeline is the expensive part of a frame; ratatui's cell diff already
+/// makes repeat draws free downstream of it.
+struct SkyCache {
+    width: u32,
+    height: u32,
+    pixels: PixelBuffer,
+}
+
 /// The interactive state. Render reads it; key/tick handlers are the only
 /// places it mutates. Keeping it terminal-free is what makes the handlers
 /// testable without a real terminal (see the tests at the bottom of this file).
@@ -69,6 +79,8 @@ pub struct App<'a> {
     overlay: Overlay,
     lightning_elapsed: Duration,
     outcome: Option<RunOutcome>,
+    sky_dirty: bool,
+    sky_cache: Option<SkyCache>,
 }
 
 impl<'a> App<'a> {
@@ -83,6 +95,8 @@ impl<'a> App<'a> {
             overlay: Overlay::None,
             lightning_elapsed: Duration::ZERO,
             outcome: None,
+            sky_dirty: true,
+            sky_cache: None,
         }
     }
 
@@ -93,14 +107,13 @@ impl<'a> App<'a> {
             return;
         }
         let delta = self.display.wind_speed_kmh * elapsed.as_secs_f64() * 0.0001;
-        for layer in &mut self.display.clouds {
-            layer.offset_x += delta;
+        if delta != 0.0 && !self.display.clouds.is_empty() {
+            for layer in &mut self.display.clouds {
+                layer.offset_x += delta;
+            }
+            self.sky_dirty = true;
         }
         self.lightning_elapsed += elapsed;
-    }
-
-    pub fn lightning_t(&self) -> f64 {
-        self.lightning_elapsed.as_secs_f64()
     }
 
     /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome`
@@ -133,6 +146,7 @@ impl<'a> App<'a> {
                 if new != self.index {
                     self.index = new;
                     self.display = self.timeline.states[new].clone();
+                    self.sky_dirty = true;
                 }
             }
         }
@@ -174,12 +188,11 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome> {
     let mut last_tick = Instant::now();
     loop {
-        let lightning_t = app.lightning_t();
         terminal
             .draw(|frame| {
                 let area = frame.area();
                 let buf = frame.buffer_mut();
-                draw_sky(buf, area, &app.display, lightning_t);
+                draw_sky(buf, area, app);
                 match &app.overlay {
                     Overlay::Help => draw_help_overlay(buf, area),
                     Overlay::Location { input } => draw_location_overlay(buf, area, input),
@@ -280,7 +293,7 @@ const OVERLAY_BG: Color = Color::Rgb(18, 18, 26);
 const OVERLAY_FG: Color = Color::Rgb(210, 210, 210);
 const OVERLAY_DIM: Color = Color::Rgb(120, 120, 140);
 
-fn draw_sky(buf: &mut Buffer, area: Rect, state: &SkyState, lightning_t: f64) {
+fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
     if area.width < MIN_COLS || area.height < MIN_ROWS {
         draw_too_small(buf, area);
         return;
@@ -295,18 +308,41 @@ fn draw_sky(buf: &mut Buffer, area: Rect, state: &SkyState, lightning_t: f64) {
     draw_chrome_bar(
         buf,
         header,
-        &state.chrome.header_left,
-        &state.chrome.header_right,
+        &app.display.chrome.header_left,
+        &app.display.chrome.header_right,
     );
-    draw_chrome_bar(buf, footer, &state.chrome.footer, &state.chrome.keys);
+    draw_chrome_bar(
+        buf,
+        footer,
+        &app.display.chrome.footer,
+        &app.display.chrome.keys,
+    );
 
     let px_width = sky_area.width as u32;
     let px_height = (sky_area.height as u32) * 2;
-    let mut pixels = render(state, px_width, px_height);
-    if let Some(lt) = &state.lightning {
-        lightning::overlay(&mut pixels, lt, lightning_t);
+    let cache = match &mut app.sky_cache {
+        Some(c) if !app.sky_dirty && c.width == px_width && c.height == px_height => c,
+        slot => {
+            app.sky_dirty = false;
+            slot.insert(SkyCache {
+                width: px_width,
+                height: px_height,
+                pixels: render(&app.display, px_width, px_height),
+            })
+        }
+    };
+    // Lightning composites onto a copy so the cached base stays reusable;
+    // its flash timing is per-frame state, not part of the sky render.
+    if let Some(lt) = &app.display.lightning {
+        let mut pixels = cache.pixels.clone();
+        lightning::overlay(&mut pixels, lt, app.lightning_elapsed.as_secs_f64());
+        SkyWidget { pixels: &pixels }.render(sky_area, buf);
+    } else {
+        SkyWidget {
+            pixels: &cache.pixels,
+        }
+        .render(sky_area, buf);
     }
-    SkyWidget { pixels: &pixels }.render(sky_area, buf);
 }
 
 fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
@@ -641,6 +677,75 @@ mod tests {
     }
 
     #[test]
+    fn tick_marks_sky_dirty_only_when_clouds_move() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.sky_dirty = false;
+
+        app.tick(Duration::from_millis(100));
+        assert!(app.sky_dirty, "wind drift must invalidate the cached sky");
+
+        app.sky_dirty = false;
+        app.drift_paused = true;
+        app.tick(Duration::from_millis(100));
+        assert!(!app.sky_dirty, "a paused sky must keep its cache");
+
+        app.drift_paused = false;
+        app.display.wind_speed_kmh = 0.0;
+        app.tick(Duration::from_millis(100));
+        assert!(!app.sky_dirty, "windless clouds do not move");
+    }
+
+    #[test]
+    fn scrub_marks_sky_dirty() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.sky_dirty = false;
+        app.handle_key(press(KeyCode::Right));
+        assert!(app.sky_dirty, "a new hour is a new sky");
+    }
+
+    #[test]
+    fn draw_reuses_cache_until_dirty() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(80, 40)).unwrap();
+
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        assert!(!app.sky_dirty, "drawing consumes the dirty flag");
+        let first = term.backend().buffer().clone();
+
+        // Mutate the sky behind the cache's back: a clean draw must not see it.
+        app.display.clouds[0].offset_x += 0.5;
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        assert_eq!(
+            *term.backend().buffer(),
+            first,
+            "clean frames must come from the cache"
+        );
+
+        app.sky_dirty = true;
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        assert_ne!(
+            *term.backend().buffer(),
+            first,
+            "a dirty frame must re-render and pick up the moved clouds"
+        );
+    }
+
+    #[test]
     fn help_overlay_renders_keybindings() {
         let tl = timeline();
         let mut app = App::new(&tl);
@@ -649,7 +754,7 @@ mod tests {
         term.draw(|f| {
             let area = f.area();
             let buf = f.buffer_mut();
-            draw_sky(buf, area, &app.display, 0.0);
+            draw_sky(buf, area, &mut app);
             draw_help_overlay(buf, area);
         })
         .unwrap();
@@ -659,11 +764,11 @@ mod tests {
     #[test]
     fn cramped_area_shows_the_warning() {
         let tl = timeline();
-        let app = App::new(&tl);
+        let mut app = App::new(&tl);
         let mut term = Terminal::new(TestBackend::new(20, 10)).unwrap();
         term.draw(|f| {
             let area = f.area();
-            draw_sky(f.buffer_mut(), area, &app.display, 0.0);
+            draw_sky(f.buffer_mut(), area, &mut app);
         })
         .unwrap();
         assert!(buffer_text(term.backend().buffer()).contains("cramped sky"));
@@ -672,11 +777,11 @@ mod tests {
     #[test]
     fn chrome_shows_location() {
         let tl = timeline();
-        let app = App::new(&tl);
+        let mut app = App::new(&tl);
         let mut term = Terminal::new(TestBackend::new(80, 40)).unwrap();
         term.draw(|f| {
             let area = f.area();
-            draw_sky(f.buffer_mut(), area, &app.display, 0.0);
+            draw_sky(f.buffer_mut(), area, &mut app);
         })
         .unwrap();
         let content = buffer_text(term.backend().buffer());

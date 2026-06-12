@@ -26,6 +26,7 @@ impl Oklab {
     }
 }
 
+#[derive(Clone)]
 pub struct PixelBuffer {
     pub width: usize,
     pub height: usize,
