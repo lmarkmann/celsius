@@ -3,6 +3,16 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.1] - 2026-06-12
+
+### Added
+
+- Responsive minimum terminal size screen ([#44](https://github.com/lmarkmann/celsius/pull/44))
+
+### Build
+
+- Replace toml with basic-toml, generate goldens in Rust ([#46](https://github.com/lmarkmann/celsius/pull/46))
+
 ## [0.4.0] - 2026-06-12
 
 ### Added
