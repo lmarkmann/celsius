@@ -227,7 +227,11 @@ pub fn l_bump_at(strikes: &[Strike], t_now: f64, params: &FlashParams) -> f64 {
 
 fn active_bolt<'a>(strikes: &'a [Strike], t_now: f64, params: &FlashParams) -> Option<&'a Bolt> {
     for s in strikes {
-        let bolt = s.bolt.as_ref()?;
+        // A boltless strike must not end the search; `?` here would return
+        // None for the whole function at the first sheet flash.
+        let Some(bolt) = s.bolt.as_ref() else {
+            continue;
+        };
         let first = &s.sub_flashes[0];
         let dt = t_now - first.t_peak;
         if (-0.005..=params.tau * 3.0).contains(&dt) {

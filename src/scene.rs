@@ -24,6 +24,8 @@ pub enum SceneError {
     },
     #[error("scene {path} has no file stem")]
     NoStem { path: PathBuf },
+    #[error("scene {path} declares an empty gradient (needs at least one stop)")]
+    EmptyGradient { path: PathBuf },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -165,9 +167,18 @@ pub struct Chrome {
     pub status: String,
 }
 
+/// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to
+/// slip through the old stringly field and silently render as snow.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrecipKind {
+    Rain,
+    Snow,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Precipitation {
-    pub kind: String,
+    pub kind: PrecipKind,
     pub intensity: f64,
     pub angle_deg: f64,
     pub seed: u64,
@@ -247,6 +258,14 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         path: path.to_path_buf(),
         source: e,
     })?;
+
+    // Gradient::sample panics on zero stops; reject it here so a bad scene
+    // file fails with a SceneError instead of a render-time panic.
+    if raw.gradient.stops.is_empty() {
+        return Err(SceneError::EmptyGradient {
+            path: path.to_path_buf(),
+        });
+    }
 
     let stops: Vec<(f64, [u8; 3])> = raw
         .gradient

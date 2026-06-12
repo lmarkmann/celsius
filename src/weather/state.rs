@@ -1,13 +1,11 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 use chrono::{Datelike, Local, NaiveDateTime, TimeZone, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
 use crate::lightning::Lightning;
 use crate::scene::{
-    Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, Precipitation, SkyState, Stars, Sun,
+    Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, PrecipKind, Precipitation, SkyState,
+    Stars, Sun,
 };
 
 use super::WeatherError;
@@ -585,9 +583,9 @@ fn build_precipitation(
     }
     let code = weather_code.unwrap_or(0);
     let kind = if (71..=77).contains(&code) || (85..=86).contains(&code) {
-        "snow"
+        PrecipKind::Snow
     } else {
-        "rain"
+        PrecipKind::Rain
     };
     let intensity = (mm / 5.0).clamp(0.10, 0.85);
     let dir = wind_dir.unwrap_or(180.0);
@@ -595,7 +593,7 @@ fn build_precipitation(
     let angle_deg = (delta * 0.30).clamp(-25.0, 25.0);
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal as u64, 0xBA17_DA75]);
     Some(Precipitation {
-        kind: kind.to_string(),
+        kind,
         intensity,
         angle_deg,
         seed,
@@ -709,10 +707,7 @@ fn wmo_word(code: u32) -> &'static str {
 fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
     let lat_bits = (lat * 1000.0).round() as i64;
     let lon_bits = (lon * 1000.0).round() as i64;
-    let mut hasher = DefaultHasher::new();
-    lat_bits.hash(&mut hasher);
-    lon_bits.hash(&mut hasher);
-    hasher.finish()
+    mix_seed(&[lat_bits as u64, lon_bits as u64])
 }
 
 pub fn error_sky(msg: &str) -> SkyState {
@@ -751,17 +746,32 @@ pub fn error_sky(msg: &str) -> SkyState {
     }
 }
 
+/// FNV-1a over the little-endian bytes of each part. Cloud, star and
+/// precipitation seeds must reproduce across toolchains; DefaultHasher's
+/// algorithm is explicitly not guaranteed between Rust releases.
 fn mix_seed(parts: &[u64]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    for p in parts {
-        p.hash(&mut hasher);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in parts {
+        for byte in part.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
     }
-    hasher.finish()
+    hash
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mix_seed_is_stable_across_toolchains() {
+        // FNV-1a reference vectors, computed independently. If these move,
+        // every daily cloud/star/precip seed moves with them.
+        assert_eq!(mix_seed(&[]), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(mix_seed(&[0]), 0xa8c7_f832_281a_39c5);
+        assert_eq!(mix_seed(&[1, 2]), 0x7717_9803_63c8_e066);
+    }
 
     #[test]
     fn parse_hour_round_trip() {

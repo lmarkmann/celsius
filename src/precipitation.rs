@@ -1,6 +1,6 @@
 use crate::colorspace::{Oklab, PixelBuffer, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::noise::Mt19937;
-use crate::scene::Precipitation;
+use crate::scene::{PrecipKind, Precipitation};
 
 fn rain_top() -> Oklab {
     rgb_u8_to_oklab(208, 218, 230)
@@ -17,7 +17,7 @@ pub fn overlay(pixels: &mut PixelBuffer, precip: &Precipitation) {
     let height = pixels.height;
     let mut rng = Mt19937::init_by_array(&[precip.seed as u32]);
     let n = (((width * height) as f64 * precip.intensity * 0.025) as usize).max(1);
-    let is_rain = precip.kind == "rain";
+    let is_rain = precip.kind == PrecipKind::Rain;
     let angle_rad = precip.angle_deg.to_radians();
     let dx = angle_rad.tan();
     let (top, bot, flake) = (rain_top(), rain_bot(), snow());
