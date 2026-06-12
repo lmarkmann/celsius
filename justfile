@@ -29,13 +29,11 @@ render name:
 render-all:
     for s in {{scenes}}; do just render $s; done
 
-# Re-lock celsius goldens from the current renderer, then rewrite manifest.toml.
-# Run this only after a deliberate pipeline change you want to bless.
+# Re-lock celsius goldens (PNGs + manifest.toml) from the current renderer.
+# Run this only after a deliberate pipeline change you want to bless. The bless
+# test renders each scene, writes its PNG, and rewrites manifest.toml.
 lock:
-    cargo build --release --features png
-    mkdir -p tests/goldens
-    for s in {{scenes}}; do ./target/release/celsius render --scene {{scene_dir}}/$s.toml --out tests/goldens/$s.png; done
-    python3 scripts/write_manifest.py
+    CELSIUS_SCENES="{{scenes}}" cargo test --release --features png --test oracle bless_goldens -- --ignored --nocapture
 
 verify:
     cargo test --release --features png -- --nocapture
