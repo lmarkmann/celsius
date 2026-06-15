@@ -165,6 +165,16 @@ pub struct Chrome {
     /// `write_plain` falls back to the decorative chrome there.
     #[serde(default)]
     pub status: String,
+    /// Footer payload (temp, H/L, condition, wind) as width tiers, richest
+    /// first. The TUI picks the widest tier that fits so the live reading
+    /// survives while the window narrows. Empty for scene files, which keep the
+    /// static `footer` string.
+    #[serde(skip)]
+    pub footer_tiers: Vec<String>,
+    /// Key-hint tiers, richest first, collapsing to `? help` before any footer
+    /// payload is dropped. Empty for scene files, which keep the static `keys`.
+    #[serde(skip)]
+    pub keys_tiers: Vec<String>,
 }
 
 /// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to

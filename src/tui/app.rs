@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::colorspace::PixelBuffer;
 use crate::lightning;
 use crate::render::render;
-use crate::scene::SkyState;
+use crate::scene::{Chrome, SkyState};
 use crate::tui::widget::SkyWidget;
 
 const TICK: Duration = Duration::from_millis(33);
@@ -316,12 +316,9 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
         &app.display.chrome.header_left,
         &app.display.chrome.header_right,
     );
-    draw_chrome_bar(
-        buf,
-        footer,
-        &app.display.chrome.footer,
-        &app.display.chrome.keys,
-    );
+    let chrome = &app.display.chrome;
+    let (foot_left, foot_keys) = fit_footer(footer.width, chrome);
+    draw_chrome_bar(buf, footer, foot_left, foot_keys);
 
     let px_width = sky_area.width as u32;
     let px_height = (sky_area.height as u32) * 2;
@@ -366,6 +363,41 @@ fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
     let max_left = right_start.saturating_sub(area.x + 1);
     buf.set_stringn(area.x, area.y, left, max_left as usize, style);
     buf.set_stringn(right_start, area.y, right, right_w as usize, style);
+}
+
+// Minimum blank columns kept between the footer payload and the key hints, so
+// the two never butt against each other when the bar is tight.
+const FOOTER_GAP: usize = 2;
+
+// Widest tier whose display width fits the budget; the last (narrowest) tier is
+// the floor when nothing fits, so this never returns empty for a non-empty list.
+fn pick_tier(tiers: &[String], budget: usize) -> &str {
+    tiers
+        .iter()
+        .map(String::as_str)
+        .find(|s| s.width() <= budget)
+        .unwrap_or_else(|| tiers.last().map_or("", String::as_str))
+}
+
+// Choose the footer payload and key-hint strings for the current width. The
+// payload wins: it is fitted against the width minus the reserved `? help`
+// floor, then the hints take the richest tier the remainder allows. Scenes
+// carry no tiers, so they fall back to the static footer/keys strings.
+fn fit_footer(width: u16, chrome: &Chrome) -> (&str, &str) {
+    if chrome.footer_tiers.is_empty() || chrome.keys_tiers.is_empty() {
+        return (&chrome.footer, &chrome.keys);
+    }
+    let total = width as usize;
+    let keys_floor = chrome.keys_tiers.last().map_or(0, |s| s.width());
+    let left = pick_tier(
+        &chrome.footer_tiers,
+        total.saturating_sub(keys_floor + FOOTER_GAP),
+    );
+    let right = pick_tier(
+        &chrome.keys_tiers,
+        total.saturating_sub(left.width() + FOOTER_GAP),
+    );
+    (left, right)
 }
 
 fn draw_overlay_box(buf: &mut Buffer, area: Rect, w: u16, h: u16) -> Rect {
@@ -691,6 +723,8 @@ mod tests {
                 footer: "10°  clear   wind n 5".into(),
                 keys: "q quit".into(),
                 status: "Testville 10C clear wind N 5".into(),
+                footer_tiers: Vec::new(),
+                keys_tiers: Vec::new(),
             },
             haze: None,
             stars: None,
@@ -1031,5 +1065,70 @@ mod tests {
         let content = buffer_text(term.backend().buffer());
         assert!(content.contains("celsius"));
         assert!(content.contains("testville"));
+    }
+
+    fn footer_chrome() -> Chrome {
+        Chrome {
+            header_left: "celsius".into(),
+            header_right: String::new(),
+            footer: "14°  overcast   wind SW 12".into(),
+            keys: "q quit".into(),
+            status: String::new(),
+            footer_tiers: vec![
+                "14°  H22 L15   overcast   wind SW 12".into(),
+                "14°  H22 L15   overcast   SW 12".into(),
+                "14°  H22 L15   overcast".into(),
+                "14°  overcast".into(),
+                "14°".into(),
+            ],
+            keys_tiers: vec![
+                "<- -> scrub   tab day   t now   l location   ? help   q quit".into(),
+                "tab day   l location   ? help   q quit".into(),
+                "? help   q quit".into(),
+                "? help".into(),
+            ],
+        }
+    }
+
+    #[test]
+    fn fit_footer_wide_shows_everything() {
+        let c = footer_chrome();
+        let (left, right) = fit_footer(104, &c);
+        assert_eq!(left, c.footer_tiers[0], "full payload incl H/L and wind");
+        assert_eq!(right, c.keys_tiers[0], "full hints when there is room");
+    }
+
+    #[test]
+    fn fit_footer_protects_payload_at_gate() {
+        let c = footer_chrome();
+        let (left, right) = fit_footer(MIN_COLS, &c);
+        // The live reading survives untouched; only the hints give way.
+        assert_eq!(left, c.footer_tiers[0]);
+        assert!(left.contains("H22 L15"), "H/L kept (data-first)");
+        assert!(left.contains("SW 12"), "wind kept");
+        assert!(right.contains("? help"), "? help held to the gate");
+        assert!(
+            right.width() < c.keys_tiers[0].width(),
+            "hints collapsed from full"
+        );
+    }
+
+    #[test]
+    fn fit_footer_hints_degrade_monotonically() {
+        let c = footer_chrome();
+        let w104 = fit_footer(104, &c).1.width();
+        let w80 = fit_footer(80, &c).1.width();
+        let w60 = fit_footer(60, &c).1.width();
+        assert!(w104 >= w80 && w80 >= w60, "{w104} {w80} {w60}");
+    }
+
+    #[test]
+    fn fit_footer_empty_tiers_fall_back() {
+        let mut c = footer_chrome();
+        c.footer_tiers.clear();
+        c.keys_tiers.clear();
+        let (left, right) = fit_footer(80, &c);
+        assert_eq!(left, c.footer);
+        assert_eq!(right, c.keys);
     }
 }

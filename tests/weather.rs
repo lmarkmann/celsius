@@ -54,6 +54,9 @@ fn forecast_response_parses_hamburg() {
     assert_eq!(parsed.hourly.time[0], "2026-04-11T00:00");
     assert_eq!(parsed.hourly.temperature_2m[0], Some(4.8));
     assert_eq!(parsed.hourly.weather_code[0], Some(0));
+    let daily = parsed.daily.expect("daily block present");
+    assert_eq!(daily.temperature_2m_max[0], Some(14.2));
+    assert_eq!(daily.temperature_2m_min[0], Some(5.8));
 }
 
 #[test]
@@ -110,6 +113,12 @@ fn compose_at_interpolates_between_hours() {
         (sky.wind_speed_kmh - 4.05).abs() < 1e-6,
         "expected interpolated wind 4.05, got {}",
         sky.wind_speed_kmh
+    );
+    // The fixture's daily high/low (14.2 / 5.8) reach the richest footer tier.
+    assert!(
+        sky.chrome.footer_tiers[0].contains("H14 L6"),
+        "footer should carry the day's H/L, got {:?}",
+        sky.chrome.footer_tiers[0]
     );
 }
 
