@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.2] - 2026-06-15
+
+### Fixed
+
+- Present TUI frames atomically to remove resize flicker ([#49](https://github.com/lmarkmann/celsius/pull/49))
+
 ## [0.4.1] - 2026-06-15
 
 ### Added
