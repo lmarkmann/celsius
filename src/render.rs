@@ -5,12 +5,18 @@ use std::rc::Rc;
 use crate::colorspace::{Oklab, PixelBuffer, Rgb, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::haze;
 use crate::moon;
-use crate::noise::Noise;
+use crate::noise::{Noise, smoothstep};
 use crate::precipitation;
 use crate::scene::SkyState;
 use crate::stars::build_star_field;
 
-const ALTITUDE_CUTOFF: f64 = 0.04;
+// A cloud layer's gaussian altitude mask is feathered to zero across this band
+// instead of switching off in one row. Below the floor the layer contributes
+// nothing and is skipped; from floor to knee its density ramps in via smoothstep
+// so a near-uniform high-cover deck fades at its edge rather than leaving a hard
+// horizontal seam where the mask crossed an abrupt cutoff.
+const ALTITUDE_FLOOR: f64 = 0.02;
+const ALTITUDE_KNEE: f64 = 0.14;
 
 fn sun_disc_color() -> Oklab {
     rgb_u8_to_oklab(255, 242, 205)
@@ -152,16 +158,20 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
             let mut sun_lit: Option<f64> = None;
             for ((layer, lr), &(alt, ny)) in state.clouds.iter().zip(&cloud_layers).zip(&row_clouds)
             {
-                if alt < ALTITUDE_CUTOFF {
+                if alt < ALTITUDE_FLOOR {
                     continue;
                 }
+                let edge_fade = smoothstep(
+                    ((alt - ALTITUDE_FLOOR) / (ALTITUDE_KNEE - ALTITUDE_FLOOR)).min(1.0),
+                );
                 let nx = fx * layer.scale_x + layer.offset_x;
                 let n = lr.noise.warped_fbm_oct(nx, ny, lr.octaves);
                 let noise_density = ((n - layer.threshold).max(0.0) * lr.edge) * alt * layer.cover;
                 // A flat deck ignores the noise gate and fills the altitude band
                 // solidly; flatten blends between the two.
                 let flat_density = (alt * layer.cover).min(1.0);
-                let mut density = noise_density * (1.0 - lr.flatten) + flat_density * lr.flatten;
+                let mut density =
+                    (noise_density * (1.0 - lr.flatten) + flat_density * lr.flatten) * edge_fade;
                 if density <= 0.0 {
                     continue;
                 }

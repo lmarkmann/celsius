@@ -73,7 +73,7 @@ impl Noise {
     }
 }
 
-fn smoothstep(x: f64) -> f64 {
+pub(crate) fn smoothstep(x: f64) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
