@@ -1,6 +1,6 @@
 [package]
 name = "celsius"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 license = "MIT"
 description = "Terminal weather TUI: first-person sky view of the weather at your location, rendered as a truecolor half-block scene"

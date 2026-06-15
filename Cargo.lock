@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "celsius"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
