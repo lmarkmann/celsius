@@ -28,7 +28,7 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
   \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
-  \x1b[1;36mcelsius --scene ../skyterm-lab/scenes/golden_hour_cumulus.toml\x1b[0m
+  \x1b[1;36mcelsius --scene scenes/golden_hour_cumulus.toml\x1b[0m
   \x1b[1;36mcelsius render --scene scene.toml --out scene.png\x1b[0m
 ";
 
@@ -39,7 +39,7 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
   \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
-  \x1b[1;36mcelsius --scene ../skyterm-lab/scenes/golden_hour_cumulus.toml\x1b[0m
+  \x1b[1;36mcelsius --scene scenes/golden_hour_cumulus.toml\x1b[0m
 ";
 
 #[derive(Parser)]
