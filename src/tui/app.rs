@@ -1,12 +1,15 @@
+use std::io::{self, stdout};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::DefaultTerminal;
+use crossterm::execute;
+use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
+use ratatui::{DefaultTerminal, Frame};
 use unicode_width::UnicodeWidthStr;
 
 use crate::colorspace::PixelBuffer;
@@ -100,20 +103,26 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Advance the animation by `elapsed`. Cloud drift and the lightning clock
-    /// both freeze while paused, so a paused sky is fully still.
-    pub fn tick(&mut self, elapsed: Duration) {
+    /// Advance the animation by `elapsed` and report whether the visible frame
+    /// changed, so the event loop can skip redrawing an identical one. Cloud
+    /// drift and the lightning clock both freeze while paused, so a paused sky
+    /// is fully still. Otherwise the frame changes when clouds drift, and on
+    /// every tick of a lightning scene, whose flash is recomputed per frame.
+    pub fn tick(&mut self, elapsed: Duration) -> bool {
         if self.drift_paused {
-            return;
+            return false;
         }
+        let mut changed = false;
         let delta = self.display.wind_speed_kmh * elapsed.as_secs_f64() * 0.0001;
         if delta != 0.0 && !self.display.clouds.is_empty() {
             for layer in &mut self.display.clouds {
                 layer.offset_x += delta;
             }
             self.sky_dirty = true;
+            changed = true;
         }
         self.lightning_elapsed += elapsed;
+        changed || self.display.lightning.is_some()
     }
 
     /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome`
@@ -187,9 +196,13 @@ pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome> {
     let mut last_tick = Instant::now();
+    // Draw only when something changed. A still sky then sits idle instead of
+    // repainting 30 times a second, and a burst of resize events collapses into
+    // one repaint (see the drain loop below).
+    let mut needs_redraw = true;
     loop {
-        terminal
-            .draw(|frame| {
+        if needs_redraw {
+            draw_synchronized(terminal, |frame| {
                 let area = frame.area();
                 let buf = frame.buffer_mut();
                 draw_sky(buf, area, app);
@@ -200,24 +213,56 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
                 }
             })
             .context("drawing frame")?;
+            needs_redraw = false;
+        }
 
         let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("polling input")?
-            && let Event::Key(key) = event::read().context("reading input")?
-            && key.kind == KeyEventKind::Press
-        {
-            app.handle_key(key);
-            if let Some(outcome) = app.outcome.take() {
-                return Ok(outcome);
+        if event::poll(timeout).context("polling input")? {
+            // Drain the whole queue before redrawing. During a window drag the
+            // terminal floods us with Resize events; coalescing them means one
+            // repaint at the final size, not one per intermediate size.
+            loop {
+                match event::read().context("reading input")? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        app.handle_key(key);
+                        if let Some(outcome) = app.outcome.take() {
+                            return Ok(outcome);
+                        }
+                        needs_redraw = true;
+                    }
+                    Event::Resize(..) => needs_redraw = true,
+                    _ => {}
+                }
+                if !event::poll(Duration::ZERO).context("polling input")? {
+                    break;
+                }
             }
         }
 
         if last_tick.elapsed() >= TICK {
             let elapsed = last_tick.elapsed();
             last_tick = Instant::now();
-            app.tick(elapsed);
+            if app.tick(elapsed) {
+                needs_redraw = true;
+            }
         }
     }
+}
+
+/// Draw one frame inside a DEC 2026 synchronized update so the terminal presents
+/// it atomically. ratatui's resize path clears the screen and resets its diff
+/// buffer (a `\e[2J` plus a full repaint); without batching, the gap between the
+/// clear and the repaint shows as a flash while a window is dragged. Emulators
+/// that lack 2026 ignore the toggles, so this is safe everywhere; the markers
+/// are best-effort, and the frame still draws if they fail to write.
+fn draw_synchronized<F>(terminal: &mut DefaultTerminal, render: F) -> io::Result<()>
+where
+    F: FnOnce(&mut Frame),
+{
+    let _ = execute!(stdout(), BeginSynchronizedUpdate);
+    let result = terminal.draw(render);
+    let _ = execute!(stdout(), EndSynchronizedUpdate);
+    result.map(|_| ())
 }
 
 pub fn prompt_location() -> Result<String> {
@@ -237,12 +282,11 @@ fn prompt_loop(terminal: &mut DefaultTerminal) -> Result<Option<String>> {
     let mut input = String::new();
     loop {
         let display = input.clone();
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                draw_location_overlay(frame.buffer_mut(), area, &display);
-            })
-            .context("drawing prompt")?;
+        draw_synchronized(terminal, |frame| {
+            let area = frame.area();
+            draw_location_overlay(frame.buffer_mut(), area, &display);
+        })
+        .context("drawing prompt")?;
 
         if let Event::Key(key) = event::read().context("reading input")? {
             if key.kind != KeyEventKind::Press {
@@ -906,6 +950,31 @@ mod tests {
         app.display.wind_speed_kmh = 0.0;
         app.tick(Duration::from_millis(100));
         assert!(!app.sky_dirty, "windless clouds do not move");
+    }
+
+    #[test]
+    fn tick_reports_visible_change_for_redraw_gating() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+
+        // Drifting clouds change the frame.
+        assert!(app.tick(Duration::from_millis(100)));
+
+        // Paused: nothing moves, so there is nothing to redraw.
+        app.drift_paused = true;
+        assert!(!app.tick(Duration::from_millis(100)));
+
+        // Running but windless and cloudless leaves the frame identical...
+        app.drift_paused = false;
+        app.display.wind_speed_kmh = 0.0;
+        app.display.clouds.clear();
+        assert!(!app.tick(Duration::from_millis(100)));
+
+        // ...until a lightning scene, whose flash is recomputed every tick.
+        app.display.lightning = Some(crate::lightning::Lightning::new(
+            101, 0.5, 1.0, false, 104, 50,
+        ));
+        assert!(app.tick(Duration::from_millis(100)));
     }
 
     #[test]
