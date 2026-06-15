@@ -3,6 +3,21 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.1] - 2026-06-15
+
+### Added
+
+- Responsive footer chrome with daily high/low ([#48](https://github.com/lmarkmann/celsius/pull/48))
+- Responsive minimum terminal size screen ([#44](https://github.com/lmarkmann/celsius/pull/44))
+
+### Build
+
+- Replace toml with basic-toml, generate goldens in Rust ([#46](https://github.com/lmarkmann/celsius/pull/46))
+
+### Fixed
+
+- Remove horizontal cloud seam, plus release-prep cleanup ([#47](https://github.com/lmarkmann/celsius/pull/47))
+
 ## [0.4.0] - 2026-06-12
 
 ### Added
