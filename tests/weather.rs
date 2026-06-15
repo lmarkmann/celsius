@@ -122,6 +122,89 @@ fn compose_at_interpolates_between_hours() {
     );
 }
 
+fn hamburg_geo() -> GeoResult {
+    GeoResult {
+        name: "Hamburg".to_string(),
+        latitude: 53.55,
+        longitude: 9.99,
+        timezone: "UTC".to_string(),
+        country: None,
+        admin1: None,
+        elevation: None,
+        population: None,
+    }
+}
+
+// 2026-04-11 in Hamburg: sunrise 04:38 UTC, sunset 18:14 (the fixture's daily
+// block), and a clear, cloudless, dry hourly block (weather_code 0, all cloud
+// cover 0, no precip). These two tests lock the forecast -> SkyState synthesis
+// at a pre-dawn hour and just after sunrise. The MT19937 determinism behind the
+// oracle makes every derived field reproducible, so exact assertions are safe;
+// chrome is checked case-insensitively so a later capitalization pass does not
+// make them brittle.
+#[test]
+fn compose_at_locks_clear_night_mapping() {
+    let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let opts = celsius::weather::ComposeOpts {
+        center_az: 180.0,
+        bortle: None,
+        analytic: true,
+    };
+    let t00 = 1_775_865_600; // 2026-04-11T00:00Z, ~4.5h before sunrise
+    let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t00, t00, opts)
+        .expect("compose_at on fixture");
+
+    assert!(!sky.sun.visible, "sun is below the horizon pre-dawn");
+    assert!(sky.stars.is_some(), "a clear night renders a star field");
+    assert!(sky.clouds.is_empty(), "cloud cover is 0 at this hour");
+    assert!(sky.precipitation.is_none(), "weather_code 0 is dry");
+    assert!(
+        sky.analytic.is_none(),
+        "the analytic sky is daytime-only, even with analytic enabled"
+    );
+    assert!(
+        (sky.wind_speed_kmh - 4.0).abs() < 1e-9,
+        "hour 0 wind, no interpolation, got {}",
+        sky.wind_speed_kmh
+    );
+    assert!(
+        sky.chrome.footer.contains("clear"),
+        "wmo_word(0) is clear, got {:?}",
+        sky.chrome.footer
+    );
+    assert!(
+        sky.chrome.status.to_lowercase().contains("hamburg"),
+        "the plain status carries the place name, got {:?}",
+        sky.chrome.status
+    );
+}
+
+#[test]
+fn compose_at_post_sunrise_attaches_analytic_sky() {
+    let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let opts = celsius::weather::ComposeOpts {
+        center_az: 180.0,
+        bortle: None,
+        analytic: true,
+    };
+    let t05 = 1_775_865_600 + 5 * 3_600; // 2026-04-11T05:00Z, ~22m after sunrise
+    let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, opts)
+        .expect("compose_at on fixture");
+
+    // The sun is up (analytic attaches, stars gone), but the view faces south
+    // (center_az 180) and the just-risen sun is in the east, so it is out of
+    // frame: sun.visible is false even in daylight.
+    assert!(
+        sky.analytic.is_some(),
+        "daytime with analytic enabled attaches a Preetham sky"
+    );
+    assert!(sky.stars.is_none(), "no star field once the sun is up");
+    assert!(
+        !sky.sun.visible,
+        "the south-facing view hides the eastern morning sun"
+    );
+}
+
 // Live network smoke tests. Opt-in via `cargo test -- --ignored` so they
 // only run when a developer wants to verify the real Open-Meteo response
 // still matches our types. Never in CI.
