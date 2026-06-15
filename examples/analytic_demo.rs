@@ -47,6 +47,8 @@ fn demo_sky(sun_alt: f64, turbidity: f64) -> SkyState {
             footer: String::new(),
             keys: String::new(),
             status: String::new(),
+            footer_tiers: Vec::new(),
+            keys_tiers: Vec::new(),
         },
         haze: None,
         stars: None,

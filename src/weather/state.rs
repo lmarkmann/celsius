@@ -16,6 +16,16 @@ use super::location::GeoResult;
 
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
 
+// Key hints from richest to a single `? help` floor. The TUI drops down this
+// list before sacrificing any footer weather data, then holds `? help` until
+// the too-small gate; `?` opens the overlay that lists every binding.
+const KEYS_TIERS: [&str; 4] = [
+    KEYS_HINT,
+    "tab day   l location   ? help   q quit",
+    "? help   q quit",
+    "? help",
+];
+
 // The weather fields the sky is built from, already resolved (and possibly
 // interpolated between two hours) so the builder never indexes the forecast.
 struct HourSample {
@@ -235,9 +245,11 @@ fn build_sky(
     );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
 
-    let sun_day = daily.and_then(|d| sun_day_for(d, &utc_date_iso(unix_utc)));
+    let date_iso = utc_date_iso(unix_utc);
+    let sun_day = daily.and_then(|d| sun_day_for(d, &date_iso));
+    let high_low = daily.and_then(|d| daily_high_low(d, &date_iso));
 
-    let chrome = build_chrome(location, unix_utc, now_unix, sample, sun_day);
+    let chrome = build_chrome(location, unix_utc, now_unix, sample, sun_day, high_low);
 
     // Prototype: the analytic sky is daytime-only (Preetham's zenith formula
     // breaks once the sun is below the horizon); twilight and night keep the
@@ -360,6 +372,16 @@ fn sun_day_for(daily: &DailyArrays, date_iso: &str) -> Option<SunDay> {
         rise_unix: rise,
         set_unix: set,
     })
+}
+
+// The day's high/low for the date of the displayed hour, so a scrubbed future
+// hour shows that day's envelope, not today's. Both ends must be present or the
+// footer omits the H/L segment entirely (no half pair).
+fn daily_high_low(daily: &DailyArrays, date_iso: &str) -> Option<(f64, f64)> {
+    let i = daily.time.iter().position(|d| d == date_iso)?;
+    let high = daily.temperature_2m_max.get(i).copied().flatten()?;
+    let low = daily.temperature_2m_min.get(i).copied().flatten()?;
+    Some((high, low))
 }
 
 fn local_hhmm(unix_utc: i64) -> String {
@@ -616,12 +638,42 @@ fn build_precipitation(
     })
 }
 
+// Footer payload tiers, richest to poorest, dropping lowest-value first:
+// abbreviate wind (lose the word "wind"), then the wind value, then H/L, with
+// the condition word and temperature held longest. `temp` alone is the floor.
+fn footer_tiers(
+    temp: &str,
+    high_low: Option<&str>,
+    word: &str,
+    compass: &str,
+    speed: i64,
+) -> Vec<String> {
+    let wind_full = format!("wind {compass} {speed}");
+    let wind_short = format!("{compass} {speed}");
+    match high_low {
+        Some(hl) => vec![
+            format!("{temp}  {hl}   {word}   {wind_full}"),
+            format!("{temp}  {hl}   {word}   {wind_short}"),
+            format!("{temp}  {hl}   {word}"),
+            format!("{temp}  {word}"),
+            temp.to_string(),
+        ],
+        None => vec![
+            format!("{temp}  {word}   {wind_full}"),
+            format!("{temp}  {word}   {wind_short}"),
+            format!("{temp}  {word}"),
+            temp.to_string(),
+        ],
+    }
+}
+
 fn build_chrome(
     location: &GeoResult,
     unix_utc: i64,
     now_unix: i64,
     sample: &HourSample,
     sun_day: Option<SunDay>,
+    high_low: Option<(f64, f64)>,
 ) -> Chrome {
     let header_left = "celsius".to_string();
     let header_right = format!(
@@ -638,6 +690,7 @@ fn build_chrome(
     let word = wmo_word(sample.weather_code.unwrap_or(0));
     let speed = sample.wind_speed.unwrap_or(0.0).round() as i64;
     let compass = compass_from_deg(sample.wind_dir.unwrap_or(0.0));
+    let high_low = high_low.map(|(hi, lo)| format!("H{hi:.0} L{lo:.0}"));
     let footer = format!("{temp}  {word}   wind {compass} {speed}");
 
     // ASCII one-liner for --plain: proper-case place, no degree sign, uppercase
@@ -658,6 +711,8 @@ fn build_chrome(
         footer,
         keys: KEYS_HINT.to_string(),
         status,
+        footer_tiers: footer_tiers(&temp, high_low.as_deref(), word, compass, speed),
+        keys_tiers: KEYS_TIERS.iter().map(|s| s.to_string()).collect(),
     }
 }
 
@@ -750,6 +805,8 @@ pub fn error_sky(msg: &str) -> SkyState {
             footer: footer.clone(),
             keys: "r retry   q quit".to_string(),
             status: footer,
+            footer_tiers: Vec::new(),
+            keys_tiers: Vec::new(),
         },
         haze: None,
         stars: None,
@@ -868,6 +925,8 @@ mod tests {
             sunrise: vec![sunrise.to_string()],
             sunset: vec![sunset.to_string()],
             daylight_duration: vec![daylight_duration],
+            temperature_2m_max: vec![],
+            temperature_2m_min: vec![],
         }
     }
 
@@ -919,6 +978,30 @@ mod tests {
             48_960.0,
         );
         assert_eq!(sun_day_for(&daily, "2026-04-12"), None);
+    }
+
+    fn daily_with_high_low(date: &str, high: Option<f64>, low: Option<f64>) -> DailyArrays {
+        DailyArrays {
+            time: vec![date.to_string()],
+            sunrise: vec![format!("{date}T06:00")],
+            sunset: vec![format!("{date}T20:00")],
+            daylight_duration: vec![48_960.0],
+            temperature_2m_max: vec![high],
+            temperature_2m_min: vec![low],
+        }
+    }
+
+    #[test]
+    fn daily_high_low_reads_matching_day() {
+        let daily = daily_with_high_low("2026-06-15", Some(22.4), Some(14.6));
+        assert_eq!(daily_high_low(&daily, "2026-06-15"), Some((22.4, 14.6)));
+    }
+
+    #[test]
+    fn daily_high_low_missing_end_returns_none() {
+        let daily = daily_with_high_low("2026-06-15", Some(22.0), None);
+        assert_eq!(daily_high_low(&daily, "2026-06-15"), None);
+        assert_eq!(daily_high_low(&daily, "2026-06-16"), None);
     }
 
     #[test]

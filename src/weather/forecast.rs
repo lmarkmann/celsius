@@ -17,7 +17,7 @@ const HOURLY_FIELDS: &str = concat!(
     "weather_code"
 );
 
-const DAILY_FIELDS: &str = "sunrise,sunset,daylight_duration";
+const DAILY_FIELDS: &str = "sunrise,sunset,daylight_duration,temperature_2m_max,temperature_2m_min";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Forecast {
@@ -63,6 +63,10 @@ pub struct DailyArrays {
     pub sunrise: Vec<String>,
     pub sunset: Vec<String>,
     pub daylight_duration: Vec<f64>,
+    #[serde(default)]
+    pub temperature_2m_max: Vec<Option<f64>>,
+    #[serde(default)]
+    pub temperature_2m_min: Vec<Option<f64>>,
 }
 
 pub fn fetch(lat: f64, lon: f64) -> Result<Forecast, WeatherError> {

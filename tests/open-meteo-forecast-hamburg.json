@@ -104,7 +104,9 @@
     "time": "iso8601",
     "sunrise": "iso8601",
     "sunset": "iso8601",
-    "daylight_duration": "s"
+    "daylight_duration": "s",
+    "temperature_2m_max": "°C",
+    "temperature_2m_min": "°C"
   },
   "daily": {
     "time": [
@@ -118,6 +120,12 @@
     ],
     "daylight_duration": [
       48960.0
+    ],
+    "temperature_2m_max": [
+      14.2
+    ],
+    "temperature_2m_min": [
+      5.8
     ]
   }
 }
