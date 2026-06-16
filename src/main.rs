@@ -1,5 +1,7 @@
 use std::io::{BufWriter, ErrorKind, IsTerminal, Write, stdout};
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -195,7 +197,10 @@ fn main() -> Result<()> {
         if !matches!(mode, OutputMode::Tui) {
             return write_oneshot(&state, &mode);
         }
-        tui::run(&Timeline::single(state)).context("running tui")?;
+        let mut session = tui::Session::new();
+        session
+            .run(&Timeline::single(state))
+            .context("running tui")?;
         return Ok(());
     }
 
@@ -203,52 +208,108 @@ fn main() -> Result<()> {
     // A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
     let mode = output_mode(&cli);
     if !matches!(mode, OutputMode::Tui) {
-        let location = resolve_location(&cli).context("resolving location")?;
-        let timeline = build_live_timeline(&cli, &location).context("building forecast")?;
+        let location = resolve_location(&cli)
+            .context("resolving location")?
+            .ok_or_else(|| anyhow!("no location set; pass -l NAME or --lat/--lon"))?;
+        let timeline = build_live_timeline(&FetchParams::from(&cli), &location)
+            .context("building forecast")?;
         return write_oneshot(&timeline.states[timeline.home], &mode);
     }
 
-    // Live TUI: the loop rebuilds on retry and on a location change. A fetch
-    // failure becomes an error sky the user can retry from with `r`.
-    let mut screen = Screen::Resolve;
+    // Live TUI: one continuous terminal session. Forecasts fetch on a background
+    // thread behind a loading screen, so the sky never drops to a bare shell
+    // while a city loads. A fetch failure becomes an error sky retryable with `r`.
+    let params = FetchParams::from(&cli);
+    let mut session = tui::Session::new();
+    let result = run_tui(&mut session, &cli, &params);
+    // Drop the session (restoring the terminal) before any error is printed, so
+    // it lands on the normal screen rather than inside the alternate one.
+    drop(session);
+    result
+}
+
+fn run_tui(session: &mut tui::Session, cli: &Cli, params: &FetchParams) -> Result<()> {
+    let geo = match first_location(session, cli)? {
+        Some(geo) => geo,
+        None => return Ok(()),
+    };
+    let mut current = match fetch_timeline(session, params, geo, None)? {
+        Some(timeline) => timeline,
+        None => return Ok(()),
+    };
     loop {
-        let timeline = match &screen {
-            Screen::Resolve => timeline_or_error(&cli, resolve_location(&cli)),
-            Screen::Place(geo) => timeline_or_error(&cli, Ok(geo.clone())),
-        };
-        match tui::run(&timeline).context("running tui")? {
+        match session.run(&current).context("running tui")? {
             RunOutcome::Quit => return Ok(()),
-            RunOutcome::Retry => screen = Screen::Resolve,
+            RunOutcome::Retry => {
+                if let Some(geo) = first_location(session, cli)?
+                    && let Some(timeline) = fetch_timeline(session, params, geo, Some(&current))?
+                {
+                    current = timeline;
+                }
+            }
             RunOutcome::ChangeLocation => {
-                // Cancelling the search keeps the current sky.
-                if let Some(geo) = tui::search_location().context("location search")? {
-                    screen = Screen::Place(geo);
+                // Cancelling either the search or the fetch keeps the current sky.
+                if let Some(geo) = session.search_location().context("location search")?
+                    && let Some(timeline) = fetch_timeline(session, params, geo, Some(&current))?
+                {
+                    current = timeline;
                 }
             }
         }
     }
 }
 
-/// What the live TUI loop should show next.
-enum Screen {
-    /// Resolve from CLI flags or saved config (initial launch and after retry).
-    Resolve,
-    /// A place the user picked in the location search.
-    Place(location::GeoResult),
+/// The compose-relevant CLI fields, owned so a background fetch thread can hold
+/// them while the main thread keeps drawing.
+#[derive(Clone)]
+struct FetchParams {
+    at: Option<String>,
+    facing: f64,
+    bortle: Option<u8>,
+    analytic: bool,
 }
 
-/// Build the timeline for a resolved location, collapsing any failure into an
-/// error sky so the loop always has something to show.
-fn timeline_or_error(cli: &Cli, location: Result<location::GeoResult>) -> Timeline {
-    match location.and_then(|loc| build_live_timeline(cli, &loc)) {
+impl From<&Cli> for FetchParams {
+    fn from(cli: &Cli) -> Self {
+        Self {
+            at: cli.at.clone(),
+            facing: cli.facing,
+            bortle: cli.bortle,
+            analytic: cli.sky == SkyModel::Analytic,
+        }
+    }
+}
+
+/// Fetch and compose the timeline for `geo` on a background thread, drawing the
+/// loading screen over `current` until it lands. `Ok(None)` means the user
+/// cancelled the wait; the caller keeps whatever sky was showing.
+fn fetch_timeline(
+    session: &mut tui::Session,
+    params: &FetchParams,
+    geo: location::GeoResult,
+    current: Option<&Timeline>,
+) -> Result<Option<Timeline>> {
+    let label = geo.name.clone();
+    let (tx, rx) = mpsc::channel();
+    let params = params.clone();
+    thread::spawn(move || {
+        let _ = tx.send(timeline_or_error(&params, geo));
+    });
+    session.await_timeline(current, &label, rx)
+}
+
+/// Build the timeline for a location, collapsing any failure into an error sky
+/// so the loop (and the loading screen) always have something to show.
+fn timeline_or_error(params: &FetchParams, location: location::GeoResult) -> Timeline {
+    match build_live_timeline(params, &location) {
         Ok(t) => t,
         Err(e) => Timeline::single(error_sky(&e.to_string())),
     }
 }
 
-fn build_live_timeline(cli: &Cli, location: &location::GeoResult) -> Result<Timeline> {
+fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> Result<Timeline> {
     let now_unix = Utc::now().timestamp();
-    let at_unix = match cli.at.as_deref() {
+    let at_unix = match params.at.as_deref() {
         Some(s) => parse_at(s, now_unix)?,
         None => now_unix,
     };
@@ -261,9 +322,9 @@ fn build_live_timeline(cli: &Cli, location: &location::GeoResult) -> Result<Time
     }
 
     let opts = ComposeOpts {
-        center_az: cli.facing,
-        bortle: cli.bortle.or_else(|| config::load().bortle),
-        analytic: cli.sky == SkyModel::Analytic,
+        center_az: params.facing,
+        bortle: params.bortle.or_else(|| config::load().bortle),
+        analytic: params.analytic,
     };
     let mut states: Vec<_> = (0..hours)
         .map(|h| compose(&forecast, location, h, now_unix, opts))
@@ -283,9 +344,21 @@ fn build_live_timeline(cli: &Cli, location: &location::GeoResult) -> Result<Time
     ))
 }
 
-fn resolve_location(cli: &Cli) -> Result<location::GeoResult> {
+/// The starting location: CLI flags or saved config, falling back to the
+/// interactive picker (and saving the pick) on a fresh install. `None` only if
+/// the user cancels that first-run picker.
+fn first_location(session: &mut tui::Session, cli: &Cli) -> Result<Option<location::GeoResult>> {
+    match resolve_location(cli)? {
+        Some(geo) => Ok(Some(geo)),
+        None => pick_and_save(session),
+    }
+}
+
+/// Resolve from CLI flags or saved config. `Ok(None)` means nothing is set yet,
+/// so an interactive caller should prompt and a pipe should error.
+fn resolve_location(cli: &Cli) -> Result<Option<location::GeoResult>> {
     match (cli.lat, cli.lon, cli.location.as_deref()) {
-        (Some(lat), Some(lon), name) => Ok(location::GeoResult {
+        (Some(lat), Some(lon), name) => Ok(Some(location::GeoResult {
             name: name.unwrap_or("custom").to_string(),
             latitude: lat,
             longitude: lon,
@@ -294,22 +367,25 @@ fn resolve_location(cli: &Cli) -> Result<location::GeoResult> {
             admin1: None,
             elevation: None,
             population: None,
-        }),
+        })),
         (None, None, Some(name)) => {
             let results = location::geocode(name).with_context(|| format!("geocoding '{name}'"))?;
-            location::best_match(results).ok_or_else(|| anyhow!("no places matched '{name}'"))
+            location::best_match(results)
+                .ok_or_else(|| anyhow!("no places matched '{name}'"))
+                .map(Some)
         }
         (Some(_), None, _) | (None, Some(_), _) => {
             bail!("--lat and --lon must be passed together")
         }
-        (None, None, None) => resolve_from_config_or_prompt(),
+        (None, None, None) => resolve_from_config(),
     }
 }
 
-fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
+/// The saved location, or `None` on a fresh install with no config yet.
+fn resolve_from_config() -> Result<Option<location::GeoResult>> {
     let cfg = config::load();
     match cfg.location {
-        Some(LocationPref::Coords { lat, lon, name }) => Ok(location::GeoResult {
+        Some(LocationPref::Coords { lat, lon, name }) => Ok(Some(location::GeoResult {
             name: name.unwrap_or_else(|| "saved".to_string()),
             latitude: lat,
             longitude: lon,
@@ -318,31 +394,33 @@ fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
             admin1: None,
             elevation: None,
             population: None,
-        }),
+        })),
         Some(LocationPref::Name { name }) => {
             let results =
                 location::geocode(&name).with_context(|| format!("geocoding '{name}'"))?;
             location::best_match(results)
                 .ok_or_else(|| anyhow!("no places matched saved location '{name}'"))
+                .map(Some)
         }
-        None => {
-            // First run: live-search for a location, then remember the exact
-            // place (coords + name) so the choice sticks and a later best_match
-            // can never re-rank it away. Cancelling the search exits cleanly.
-            let geo = match tui::search_location().context("location search")? {
-                Some(geo) => geo,
-                None => std::process::exit(0),
-            };
-            let mut cfg = config::load();
-            cfg.location = Some(LocationPref::Coords {
-                lat: geo.latitude,
-                lon: geo.longitude,
-                name: Some(geo.name.clone()),
-            });
-            config::save(&cfg).context("saving config")?;
-            Ok(geo)
-        }
+        None => Ok(None),
     }
+}
+
+/// First run with no saved location: search interactively, remember the exact
+/// place (coords + name) so a later best_match can never re-rank it away, and
+/// return it. `None` if the user cancels the picker.
+fn pick_and_save(session: &mut tui::Session) -> Result<Option<location::GeoResult>> {
+    let Some(geo) = session.search_location().context("location search")? else {
+        return Ok(None);
+    };
+    let mut cfg = config::load();
+    cfg.location = Some(LocationPref::Coords {
+        lat: geo.latitude,
+        lon: geo.longitude,
+        name: Some(geo.name.clone()),
+    });
+    config::save(&cfg).context("saving config")?;
+    Ok(Some(geo))
 }
 
 fn parse_at(raw: &str, now_unix: i64) -> Result<i64> {
