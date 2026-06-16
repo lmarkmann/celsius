@@ -1,7 +1,7 @@
 mod app;
 mod widget;
 
-pub use app::{RunOutcome, Timeline, prompt_location, run};
+pub use app::{RunOutcome, Timeline, run, search_location};
 
 use std::io::{self, Write};
 

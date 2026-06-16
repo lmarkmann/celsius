@@ -1,4 +1,6 @@
 use std::io::{self, stdout};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -17,6 +19,7 @@ use crate::lightning;
 use crate::render::render;
 use crate::scene::{Chrome, SkyState};
 use crate::tui::widget::SkyWidget;
+use crate::weather::location::{GeoResult, geocode, rank};
 
 const TICK: Duration = Duration::from_millis(33);
 const MIN_COLS: u16 = 60;
@@ -26,7 +29,8 @@ const MIN_ROWS: u16 = 25;
 pub enum RunOutcome {
     Quit,
     Retry,
-    ChangeLocation(String),
+    /// The user pressed `l`; the caller runs the location search modal.
+    ChangeLocation,
 }
 
 pub struct Timeline {
@@ -59,7 +63,6 @@ impl Timeline {
 enum Overlay {
     None,
     Help,
-    Location { input: String },
 }
 
 /// The last sky render, reused while nothing visual changes. The pixel
@@ -131,7 +134,6 @@ impl<'a> App<'a> {
     pub fn handle_key(&mut self, key: KeyEvent) {
         match self.overlay {
             Overlay::Help => self.overlay = Overlay::None,
-            Overlay::Location { .. } => self.handle_location_key(key),
             Overlay::None => self.handle_main_key(key),
         }
     }
@@ -144,11 +146,7 @@ impl<'a> App<'a> {
         match key.code {
             KeyCode::Char(' ') => self.drift_paused = !self.drift_paused,
             KeyCode::Char('?') => self.overlay = Overlay::Help,
-            KeyCode::Char('l') => {
-                self.overlay = Overlay::Location {
-                    input: String::new(),
-                }
-            }
+            KeyCode::Char('l') => self.outcome = Some(RunOutcome::ChangeLocation),
             KeyCode::Char('r') => self.outcome = Some(RunOutcome::Retry),
             _ => {
                 let new = scrub_index(&key, self.index, self.timeline);
@@ -158,31 +156,6 @@ impl<'a> App<'a> {
                     self.sky_dirty = true;
                 }
             }
-        }
-    }
-
-    fn handle_location_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => self.overlay = Overlay::None,
-            KeyCode::Enter => {
-                if let Overlay::Location { input } = &self.overlay {
-                    let name = input.trim();
-                    if !name.is_empty() {
-                        self.outcome = Some(RunOutcome::ChangeLocation(name.to_string()));
-                    }
-                }
-            }
-            KeyCode::Char(ch) => {
-                if let Overlay::Location { input } = &mut self.overlay {
-                    input.push(ch);
-                }
-            }
-            KeyCode::Backspace => {
-                if let Overlay::Location { input } = &mut self.overlay {
-                    input.pop();
-                }
-            }
-            _ => {}
         }
     }
 }
@@ -208,7 +181,6 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
                 draw_sky(buf, area, app);
                 match &app.overlay {
                     Overlay::Help => draw_help_overlay(buf, area),
-                    Overlay::Location { input } => draw_location_overlay(buf, area, input),
                     Overlay::None => {}
                 }
             })
@@ -265,49 +237,234 @@ where
     result.map(|_| ())
 }
 
-pub fn prompt_location() -> Result<String> {
+/// How many candidate rows are visible at once; the rest scroll into view.
+const SEARCH_WINDOW: usize = 5;
+/// Wait this long after the last keystroke before geocoding, so a fast typist
+/// makes one request instead of one per character.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(220);
+/// Shortest query worth a request.
+const MIN_QUERY: usize = 2;
+/// How often the loop wakes to drain results and fire debounced searches.
+const SEARCH_POLL: Duration = Duration::from_millis(40);
+/// Keep retrying a failing query for this long (a slow or just-waking network)
+/// before settling on "no connection". The agent's own 5s connect timeout means
+/// a single slow attempt already eats most of this; fast failures get retried.
+const OFFLINE_AFTER: Duration = Duration::from_millis(2500);
+
+/// Live type-ahead location search: a single view where the candidate list
+/// updates under the input as you type. Returns the chosen place, or `None` if
+/// cancelled. Same `init`/`restore` discipline as the rest of the TUI, so the
+/// caller never touches the terminal.
+pub fn search_location() -> Result<Option<GeoResult>> {
     let mut terminal = ratatui::init();
-    let result = prompt_loop(&mut terminal);
+    let result = search_loop(&mut terminal);
     ratatui::restore();
-    match result? {
-        Some(name) => Ok(name),
-        // Cancelled. The terminal is already restored above, so exiting here is
-        // clean; doing it inside the loop would skip restore and corrupt the
-        // terminal (the bug this rewrite fixes).
-        None => std::process::exit(0),
+    result
+}
+
+/// One geocode reply tagged with the query generation that asked for it, so the
+/// loop can discard answers to queries the user has already typed past.
+type SearchReply = (
+    u64,
+    std::result::Result<Vec<GeoResult>, crate::weather::WeatherError>,
+);
+
+/// What the body of the search view is currently showing. Separating "loading"
+/// from "empty" is what stops a "no matches" flash before the first reply lands.
+#[derive(Clone, Copy, PartialEq)]
+enum SearchStatus {
+    /// Query too short to search yet.
+    Idle,
+    /// A request is pending or in flight (including offline-grace retries).
+    Loading,
+    /// Candidates are present.
+    Ready,
+    /// A search completed with zero matches.
+    Empty,
+    /// The network was unreachable past the grace window.
+    Offline,
+}
+
+struct SearchState {
+    input: String,
+    candidates: Vec<GeoResult>,
+    selected: usize,
+    status: SearchStatus,
+    /// Bumped on every edit; only the latest generation's reply is accepted.
+    generation: u64,
+    /// Set on edit (and on a grace retry), cleared once the search fires.
+    last_edit: Option<Instant>,
+    /// When the current query's first request went out; drives the offline grace.
+    query_started: Option<Instant>,
+}
+
+impl SearchState {
+    fn new() -> Self {
+        Self {
+            input: String::new(),
+            candidates: Vec::new(),
+            selected: 0,
+            status: SearchStatus::Idle,
+            generation: 0,
+            last_edit: None,
+            query_started: None,
+        }
     }
 }
 
-fn prompt_loop(terminal: &mut DefaultTerminal) -> Result<Option<String>> {
-    let mut input = String::new();
+fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
+    let (tx, rx) = mpsc::channel::<SearchReply>();
+    let mut state = SearchState::new();
     loop {
-        let display = input.clone();
         draw_synchronized(terminal, |frame| {
             let area = frame.area();
-            draw_location_overlay(frame.buffer_mut(), area, &display);
+            draw_search(frame.buffer_mut(), area, &state);
         })
-        .context("drawing prompt")?;
+        .context("drawing search")?;
 
-        if let Event::Key(key) = event::read().context("reading input")? {
-            if key.kind != KeyEventKind::Press {
+        // Accept only the newest query's reply; stale generations are dropped.
+        while let Ok((generation, reply)) = rx.try_recv() {
+            if generation != state.generation {
                 continue;
             }
-            match key.code {
-                KeyCode::Enter if !input.trim().is_empty() => {
-                    return Ok(Some(input.trim().to_string()));
+            match reply {
+                Ok(results) if !results.is_empty() => {
+                    state.candidates = rank(results);
+                    state.selected = 0;
+                    state.status = SearchStatus::Ready;
+                    state.query_started = None;
                 }
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    return Ok(None);
+                Ok(_) => {
+                    state.candidates.clear();
+                    state.status = SearchStatus::Empty;
+                    state.query_started = None;
                 }
-                KeyCode::Esc => return Ok(None),
-                KeyCode::Char(ch) => input.push(ch),
-                KeyCode::Backspace => {
-                    input.pop();
+                Err(crate::weather::WeatherError::Network(_)) => {
+                    // A just-waking or flaky network gets retried until the grace
+                    // window closes, then we settle on "no connection".
+                    let within_grace = state
+                        .query_started
+                        .is_some_and(|t| t.elapsed() < OFFLINE_AFTER);
+                    if within_grace {
+                        state.last_edit = Some(Instant::now());
+                        state.status = SearchStatus::Loading;
+                    } else {
+                        state.status = SearchStatus::Offline;
+                        state.query_started = None;
+                    }
                 }
-                _ => {}
+                // Server (HTTP) or decode errors are not connection problems;
+                // there is simply nothing usable to show.
+                Err(_) => {
+                    state.candidates.clear();
+                    state.status = SearchStatus::Empty;
+                    state.query_started = None;
+                }
+            }
+        }
+
+        // Fire a geocode once typing has settled, on a thread so the input never
+        // blocks; stale threads still send but get discarded by generation.
+        if let Some(edited) = state.last_edit
+            && edited.elapsed() >= SEARCH_DEBOUNCE
+        {
+            state.last_edit = None;
+            let query = state.input.trim().to_string();
+            if query.len() >= MIN_QUERY {
+                if state.query_started.is_none() {
+                    state.query_started = Some(Instant::now());
+                }
+                state.status = SearchStatus::Loading;
+                let generation = state.generation;
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let _ = tx.send((generation, geocode(&query)));
+                });
+            }
+        }
+
+        if event::poll(SEARCH_POLL).context("polling input")?
+            && let Event::Key(key) = event::read().context("reading input")?
+            && key.kind == KeyEventKind::Press
+        {
+            match search_step(&key, &mut state) {
+                SearchAction::Choose => {
+                    if let Some(choice) = state.candidates.get(state.selected) {
+                        return Ok(Some(choice.clone()));
+                    }
+                }
+                SearchAction::Cancel => return Ok(None),
+                SearchAction::Edited => {
+                    // A new query: invalidate in-flight replies and reset grace.
+                    state.generation += 1;
+                    state.query_started = None;
+                    if state.input.trim().len() < MIN_QUERY {
+                        state.candidates.clear();
+                        state.status = SearchStatus::Idle;
+                    } else {
+                        state.status = SearchStatus::Loading;
+                    }
+                }
+                SearchAction::Moved | SearchAction::Ignore => {}
             }
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum SearchAction {
+    Edited,
+    Moved,
+    Choose,
+    Cancel,
+    Ignore,
+}
+
+/// Pure key handler for the search view, factored out so editing and navigation
+/// are testable without a terminal or network. Printable keys edit the query, so
+/// navigation is the arrow keys (j/k would type, not move); up/down move the
+/// selection; enter chooses; esc and ctrl-c cancel. Any edit resets the
+/// selection to the top and stamps `last_edit` so the loop can debounce.
+fn search_step(key: &KeyEvent, state: &mut SearchState) -> SearchAction {
+    match key.code {
+        KeyCode::Enter => SearchAction::Choose,
+        KeyCode::Esc => SearchAction::Cancel,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => SearchAction::Cancel,
+        KeyCode::Up => {
+            state.selected = state.selected.saturating_sub(1);
+            SearchAction::Moved
+        }
+        KeyCode::Down => {
+            let last = state.candidates.len().saturating_sub(1);
+            state.selected = (state.selected + 1).min(last);
+            SearchAction::Moved
+        }
+        KeyCode::Backspace => {
+            state.input.pop();
+            state.selected = 0;
+            state.last_edit = Some(Instant::now());
+            SearchAction::Edited
+        }
+        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.input.push(ch);
+            state.selected = 0;
+            state.last_edit = Some(Instant::now());
+            SearchAction::Edited
+        }
+        _ => SearchAction::Ignore,
+    }
+}
+
+/// First visible row so `selected` stays inside a `window`-row viewport. Zero
+/// while the list fits or the selection is in the first window; otherwise it
+/// scrolls just far enough to keep the selection on the bottom row, never past
+/// the end.
+fn scroll_offset(selected: usize, len: usize, window: usize) -> usize {
+    if len <= window {
+        return 0;
+    }
+    let max_offset = len - window;
+    selected.saturating_sub(window - 1).min(max_offset)
 }
 
 fn is_quit_key(key: &KeyEvent) -> bool {
@@ -504,7 +661,7 @@ fn draw_help_overlay(buf: &mut Buffer, area: Rect) {
     }
 }
 
-fn draw_location_overlay(buf: &mut Buffer, area: Rect, input: &str) {
+fn draw_search(buf: &mut Buffer, area: Rect, state: &SearchState) {
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
             let cell = &mut buf[(x, y)];
@@ -512,37 +669,104 @@ fn draw_location_overlay(buf: &mut Buffer, area: Rect, input: &str) {
             cell.set_bg(OVERLAY_BG);
         }
     }
-    let inner = draw_overlay_box(buf, area, 46, 7);
+    let has_list = !state.candidates.is_empty();
+    // title, blank, input, blank, body (list rows or one message line), blank,
+    // footer, plus the box border.
+    let body_rows = if has_list {
+        state.candidates.len().min(SEARCH_WINDOW) as u16
+    } else {
+        1
+    };
+    let w = 54.min(area.width);
+    let box_h = (body_rows + 8).min(area.height);
+    let bx = area.x + area.width.saturating_sub(w) / 2;
+    // Anchor the top above center so the list grows DOWNWARD (Google-style): the
+    // input stays put and only the box's bottom edge moves as results arrive.
+    let by = (area.y + area.height / 3).min(area.y + area.height.saturating_sub(box_h));
+    for y in by..by + box_h {
+        for x in bx..bx + w {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_bg(OVERLAY_BG);
+            cell.set_fg(OVERLAY_FG);
+        }
+    }
+    let inner = Rect {
+        x: bx + 2,
+        y: by + 1,
+        width: w.saturating_sub(4),
+        height: box_h.saturating_sub(2),
+    };
+
     let mut row = inner.y;
     put_str(
         buf,
         inner.x,
         row,
         inner.width,
-        "change location",
+        "search location",
         OVERLAY_FG,
     );
     row += 2;
-    put_str(
-        buf,
-        inner.x,
-        row,
-        inner.width,
-        "enter place name:",
-        OVERLAY_DIM,
-    );
-    row += 1;
-    let cursor = format!("{input}_");
+
+    let cursor = format!("{}_", state.input);
     put_str(buf, inner.x, row, inner.width, &cursor, OVERLAY_FG);
+    if state.status == SearchStatus::Loading {
+        let tag = "...";
+        let tag_x = inner.x + inner.width.saturating_sub(tag.len() as u16);
+        put_str(buf, tag_x, row, tag.len() as u16, tag, OVERLAY_DIM);
+    }
     row += 2;
-    put_str(
-        buf,
-        inner.x,
-        row,
-        inner.width,
-        "enter confirm   esc cancel",
-        OVERLAY_DIM,
-    );
+
+    if has_list {
+        let offset = scroll_offset(state.selected, state.candidates.len(), SEARCH_WINDOW);
+        for (i, cand) in state
+            .candidates
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(SEARCH_WINDOW)
+        {
+            let marker = if i == state.selected { "▸ " } else { "  " };
+            let fg = if i == state.selected {
+                OVERLAY_FG
+            } else {
+                OVERLAY_DIM
+            };
+            let line = format!("{marker}{}", cand.label());
+            put_str(buf, inner.x, row, inner.width, &line, fg);
+            row += 1;
+        }
+    } else {
+        let message = match state.status {
+            SearchStatus::Loading => "searching...",
+            SearchStatus::Empty => "no matches",
+            SearchStatus::Offline => "no connection",
+            // Idle, or the unreachable Ready-without-candidates: a soft prompt.
+            _ => "city or place name",
+        };
+        put_str(buf, inner.x, row, inner.width, message, OVERLAY_DIM);
+        row += 1;
+    }
+    row += 1;
+
+    // The full nav hint only appears while locations are listed; otherwise just
+    // the escape hatch. The position counter is the "more" affordance, shown
+    // only when the list overflows the window.
+    let footer = if has_list {
+        if state.candidates.len() > SEARCH_WINDOW {
+            format!(
+                "{}/{}   up/down move   enter pick   esc cancel",
+                state.selected + 1,
+                state.candidates.len()
+            )
+        } else {
+            "up/down move   enter pick   esc cancel".to_string()
+        }
+    } else {
+        "esc cancel".to_string()
+    };
+    put_str(buf, inner.x, row, inner.width, &footer, OVERLAY_DIM);
 }
 
 fn draw_too_small(buf: &mut Buffer, area: Rect) {
@@ -885,31 +1109,12 @@ mod tests {
     }
 
     #[test]
-    fn location_overlay_accumulates_edits_and_confirms() {
+    fn l_requests_a_location_change() {
+        // The search itself is a standalone modal run by main; App only signals.
         let tl = timeline();
         let mut app = App::new(&tl);
         app.handle_key(press(KeyCode::Char('l')));
-        assert!(matches!(app.overlay, Overlay::Location { .. }));
-        for ch in "osloo".chars() {
-            app.handle_key(press(KeyCode::Char(ch)));
-        }
-        app.handle_key(press(KeyCode::Backspace));
-        app.handle_key(press(KeyCode::Enter));
-        assert_eq!(
-            app.outcome,
-            Some(RunOutcome::ChangeLocation("oslo".to_string()))
-        );
-    }
-
-    #[test]
-    fn location_overlay_esc_cancels_without_outcome() {
-        let tl = timeline();
-        let mut app = App::new(&tl);
-        app.handle_key(press(KeyCode::Char('l')));
-        app.handle_key(press(KeyCode::Char('x')));
-        app.handle_key(press(KeyCode::Esc));
-        assert!(matches!(app.overlay, Overlay::None));
-        assert_eq!(app.outcome, None);
+        assert_eq!(app.outcome, Some(RunOutcome::ChangeLocation));
     }
 
     #[test]
@@ -1199,5 +1404,200 @@ mod tests {
         let (left, right) = fit_footer(80, &c);
         assert_eq!(left, c.footer);
         assert_eq!(right, c.keys);
+    }
+
+    fn place(name: &str, admin1: &str, country: &str, population: Option<u64>) -> GeoResult {
+        GeoResult {
+            name: name.to_string(),
+            latitude: 0.0,
+            longitude: 0.0,
+            timezone: "UTC".to_string(),
+            country: Some(country.to_string()),
+            admin1: Some(admin1.to_string()),
+            elevation: None,
+            population,
+        }
+    }
+
+    fn search_state(input: &str, candidates: Vec<GeoResult>) -> SearchState {
+        let mut state = SearchState::new();
+        state.input = input.to_string();
+        state.status = if candidates.is_empty() {
+            SearchStatus::Idle
+        } else {
+            SearchStatus::Ready
+        };
+        state.candidates = candidates;
+        state
+    }
+
+    #[test]
+    fn search_step_typing_edits_and_resets_selection() {
+        let mut state = search_state(
+            "",
+            vec![place("A", "R", "C", None), place("B", "R", "C", None)],
+        );
+        state.selected = 1;
+        assert_eq!(
+            search_step(&press(KeyCode::Char('h')), &mut state),
+            SearchAction::Edited
+        );
+        assert_eq!(state.input, "h");
+        assert_eq!(state.selected, 0, "a new query resets to the top result");
+        assert!(state.last_edit.is_some(), "editing arms the debounce");
+        assert_eq!(
+            search_step(&press(KeyCode::Backspace), &mut state),
+            SearchAction::Edited
+        );
+        assert_eq!(state.input, "");
+    }
+
+    #[test]
+    fn search_step_arrows_move_selection_letters_type() {
+        let mut state = search_state(
+            "x",
+            vec![
+                place("A", "R", "C", None),
+                place("B", "R", "C", None),
+                place("C", "R", "C", None),
+            ],
+        );
+        assert_eq!(
+            search_step(&press(KeyCode::Down), &mut state),
+            SearchAction::Moved
+        );
+        assert_eq!(state.selected, 1);
+        search_step(&press(KeyCode::Down), &mut state);
+        search_step(&press(KeyCode::Down), &mut state);
+        assert_eq!(state.selected, 2, "down clamps at the last row");
+        assert_eq!(
+            search_step(&press(KeyCode::Up), &mut state),
+            SearchAction::Moved
+        );
+        assert_eq!(state.selected, 1);
+        // j and k are typed into the query, never used to navigate.
+        assert_eq!(
+            search_step(&press(KeyCode::Char('j')), &mut state),
+            SearchAction::Edited
+        );
+        assert_eq!(state.input, "xj");
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn search_step_chooses_and_cancels() {
+        let mut state = search_state("x", vec![place("A", "R", "C", None)]);
+        assert_eq!(
+            search_step(&press(KeyCode::Enter), &mut state),
+            SearchAction::Choose
+        );
+        assert_eq!(
+            search_step(&press(KeyCode::Esc), &mut state),
+            SearchAction::Cancel
+        );
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(search_step(&ctrl_c, &mut state), SearchAction::Cancel);
+    }
+
+    #[test]
+    fn scroll_offset_keeps_selection_visible() {
+        // Fits the window: never scrolls.
+        assert_eq!(scroll_offset(0, 3, 5), 0);
+        assert_eq!(scroll_offset(2, 3, 5), 0);
+        // Overflows: stays at 0 until the selection leaves the first window,
+        // then scrolls just enough, never past the last full window.
+        assert_eq!(scroll_offset(4, 8, 5), 0);
+        assert_eq!(scroll_offset(5, 8, 5), 1);
+        assert_eq!(scroll_offset(7, 8, 5), 3);
+        assert_eq!(scroll_offset(7, 8, 5), 8 - 5);
+    }
+
+    #[test]
+    fn search_view_shows_query_labels_and_marker_not_population() {
+        let state = search_state(
+            "cape",
+            vec![
+                place("Cape Town", "Western Cape", "South Africa", Some(3_400_000)),
+                place("Capetown", "Ohio", "United States", Some(500)),
+            ],
+        );
+        let mut term = Terminal::new(TestBackend::new(70, 18)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_search(f.buffer_mut(), area, &state);
+        })
+        .unwrap();
+        let text = buffer_text(term.backend().buffer());
+        assert!(
+            text.contains("cape_"),
+            "the typed query shows with a cursor"
+        );
+        assert!(text.contains("Cape Town, Western Cape, South Africa"));
+        assert!(text.contains("Capetown, Ohio, United States"));
+        assert!(text.contains("▸"), "selected row carries the marker");
+        assert!(
+            text.contains("enter pick"),
+            "the full nav hint shows while locations are listed"
+        );
+        // Population is a ranking signal only; it must never reach the screen.
+        assert!(!text.contains("3400000"));
+        assert!(!text.contains("500"));
+    }
+
+    #[test]
+    fn search_view_shows_placeholder_when_empty_and_counter_on_overflow() {
+        // Empty query: a soft placeholder, no list, only the escape hint.
+        let empty = search_state("", vec![]);
+        let mut term = Terminal::new(TestBackend::new(70, 18)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_search(f.buffer_mut(), area, &empty);
+        })
+        .unwrap();
+        let text = buffer_text(term.backend().buffer());
+        assert!(text.contains("city or place name"));
+        assert!(text.contains("esc cancel"));
+        assert!(
+            !text.contains("enter pick"),
+            "no list, so no list-navigation hint"
+        );
+
+        // An overflowing list shows the position counter as the "more" hint.
+        let many = search_state(
+            "town",
+            (0..8u64)
+                .map(|i| place(&format!("Town{i}"), "Region", "Country", Some(i)))
+                .collect(),
+        );
+        term.draw(|f| {
+            let area = f.area();
+            draw_search(f.buffer_mut(), area, &many);
+        })
+        .unwrap();
+        assert!(buffer_text(term.backend().buffer()).contains("1/8"));
+    }
+
+    #[test]
+    fn search_view_distinguishes_loading_empty_and_offline() {
+        let mut state = search_state("lon", vec![]);
+        let mut term = Terminal::new(TestBackend::new(70, 18)).unwrap();
+        for (status, message) in [
+            (SearchStatus::Loading, "searching..."),
+            (SearchStatus::Empty, "no matches"),
+            (SearchStatus::Offline, "no connection"),
+        ] {
+            state.status = status;
+            term.draw(|f| {
+                let area = f.area();
+                draw_search(f.buffer_mut(), area, &state);
+            })
+            .unwrap();
+            let text = buffer_text(term.backend().buffer());
+            assert!(text.contains(message), "status should render {message:?}");
+            assert!(
+                !text.contains("no matches") || status == SearchStatus::Empty,
+                "loading must never flash the no-matches message"
+            );
+        }
     }
 }

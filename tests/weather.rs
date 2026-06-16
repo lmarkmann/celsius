@@ -37,6 +37,39 @@ fn geocoding_label_includes_country() {
 }
 
 #[test]
+fn best_match_on_real_response_picks_most_populous() {
+    // Real Open-Meteo data: five "Hamburg" matches. best_match must return the
+    // German one (1.8M), and its label drops the redundant admin1 (the city is
+    // its own state) to read "Hamburg, Germany".
+    let parsed: GeoResponse = serde_json::from_str(GEOCODING_HAMBURG).unwrap();
+    let pick = celsius::weather::location::best_match(parsed.results).expect("a match");
+    assert_eq!(pick.name, "Hamburg");
+    assert_eq!(pick.country.as_deref(), Some("Germany"));
+    assert_eq!(
+        pick.population,
+        Some(1_845_229),
+        "population must deserialize"
+    );
+    assert_eq!(pick.label(), "Hamburg, Germany");
+}
+
+#[test]
+fn rank_reorders_when_api_order_is_not_by_population() {
+    // The API's order is not population-sorted here: Grafton (11,527) is listed
+    // after the smaller Hamburg, Arkansas (2,791). rank must fix the tail.
+    let parsed: GeoResponse = serde_json::from_str(GEOCODING_HAMBURG).unwrap();
+    let original: Vec<String> = parsed.results.iter().map(|r| r.label()).collect();
+    let ranked = celsius::weather::location::rank(parsed.results);
+    let pops: Vec<u64> = ranked.iter().map(|r| r.population.unwrap_or(0)).collect();
+    assert!(
+        pops.windows(2).all(|w| w[0] >= w[1]),
+        "rank must be non-increasing in population, got {pops:?}"
+    );
+    let reordered: Vec<String> = ranked.iter().map(|r| r.label()).collect();
+    assert_ne!(original, reordered, "rank should reorder this fixture");
+}
+
+#[test]
 fn geocoding_empty_results_deserializes_to_empty_vec() {
     let empty = r#"{"generationtime_ms": 0.5}"#;
     let parsed: GeoResponse = serde_json::from_str(empty).unwrap();

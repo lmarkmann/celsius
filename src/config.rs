@@ -23,8 +23,19 @@ pub struct Config {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum LocationPref {
-    Name { name: String },
-    Coords { lat: f64, lon: f64 },
+    // Coords must come before Name: it requires `lat`/`lon` (no defaults), so a
+    // name-only table falls through to Name, while a coords table (with or
+    // without the optional label) matches here. If Name came first it would
+    // greedily claim any table carrying a `name` key and drop the coordinates.
+    Coords {
+        lat: f64,
+        lon: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    Name {
+        name: String,
+    },
 }
 
 pub fn config_path() -> PathBuf {
@@ -89,16 +100,34 @@ mod tests {
             location: Some(LocationPref::Coords {
                 lat: 53.55,
                 lon: 9.99,
+                name: Some("Hamburg, Germany".into()),
             }),
             bortle: None,
         };
         let back = roundtrip(&cfg);
         match back.location {
-            Some(LocationPref::Coords { lat, lon }) => {
+            Some(LocationPref::Coords { lat, lon, name }) => {
                 assert_eq!(lat, 53.55);
                 assert_eq!(lon, 9.99);
+                assert_eq!(name.as_deref(), Some("Hamburg, Germany"));
             }
             other => panic!("untagged enum picked wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_coords_without_name_parses() {
+        // Configs written before the picker carry only lat/lon. They must still
+        // load as Coords (name defaulting to None), not get misread as Name.
+        let cfg: Config =
+            basic_toml::from_str("[location]\nlat = 53.55\nlon = 9.99\n").expect("parse");
+        match cfg.location {
+            Some(LocationPref::Coords { lat, lon, name }) => {
+                assert_eq!(lat, 53.55);
+                assert_eq!(lon, 9.99);
+                assert_eq!(name, None);
+            }
+            other => panic!("legacy coords misparsed: {other:?}"),
         }
     }
 

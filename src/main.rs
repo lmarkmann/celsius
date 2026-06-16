@@ -203,33 +203,56 @@ fn main() -> Result<()> {
     // A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
     let mode = output_mode(&cli);
     if !matches!(mode, OutputMode::Tui) {
-        let timeline = build_live_timeline(&cli, None).context("building forecast")?;
+        let location = resolve_location(&cli).context("resolving location")?;
+        let timeline = build_live_timeline(&cli, &location).context("building forecast")?;
         return write_oneshot(&timeline.states[timeline.home], &mode);
     }
 
-    // Live TUI: the retry loop handles fetch errors and location changes.
-    let mut location_override: Option<String> = None;
+    // Live TUI: the loop rebuilds on retry and on a location change. A fetch
+    // failure becomes an error sky the user can retry from with `r`.
+    let mut screen = Screen::Resolve;
     loop {
-        let timeline = match build_live_timeline(&cli, location_override.as_deref()) {
-            Ok(t) => t,
-            Err(e) => Timeline::single(error_sky(&e.to_string())),
+        let timeline = match &screen {
+            Screen::Resolve => timeline_or_error(&cli, resolve_location(&cli)),
+            Screen::Place(geo) => timeline_or_error(&cli, Ok(geo.clone())),
         };
         match tui::run(&timeline).context("running tui")? {
             RunOutcome::Quit => return Ok(()),
-            RunOutcome::Retry => location_override = None,
-            RunOutcome::ChangeLocation(name) => location_override = Some(name),
+            RunOutcome::Retry => screen = Screen::Resolve,
+            RunOutcome::ChangeLocation => {
+                // Cancelling the search keeps the current sky.
+                if let Some(geo) = tui::search_location().context("location search")? {
+                    screen = Screen::Place(geo);
+                }
+            }
         }
     }
 }
 
-fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Timeline> {
+/// What the live TUI loop should show next.
+enum Screen {
+    /// Resolve from CLI flags or saved config (initial launch and after retry).
+    Resolve,
+    /// A place the user picked in the location search.
+    Place(location::GeoResult),
+}
+
+/// Build the timeline for a resolved location, collapsing any failure into an
+/// error sky so the loop always has something to show.
+fn timeline_or_error(cli: &Cli, location: Result<location::GeoResult>) -> Timeline {
+    match location.and_then(|loc| build_live_timeline(cli, &loc)) {
+        Ok(t) => t,
+        Err(e) => Timeline::single(error_sky(&e.to_string())),
+    }
+}
+
+fn build_live_timeline(cli: &Cli, location: &location::GeoResult) -> Result<Timeline> {
     let now_unix = Utc::now().timestamp();
     let at_unix = match cli.at.as_deref() {
         Some(s) => parse_at(s, now_unix)?,
         None => now_unix,
     };
 
-    let location = resolve_location(cli, location_override)?;
     let forecast = forecast::fetch(location.latitude, location.longitude)
         .with_context(|| format!("fetching forecast for {}", location.label()))?;
     let hours = forecast.hourly.len();
@@ -243,26 +266,18 @@ fn build_live_timeline(cli: &Cli, location_override: Option<&str>) -> Result<Tim
         analytic: cli.sky == SkyModel::Analytic,
     };
     let mut states: Vec<_> = (0..hours)
-        .map(|h| compose(&forecast, &location, h, now_unix, opts))
+        .map(|h| compose(&forecast, location, h, now_unix, opts))
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
     // Render the home slot at the exact requested instant, interpolating between
     // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
-    states[home] = compose_at(&forecast, &location, at_unix, now_unix, opts)
+    states[home] = compose_at(&forecast, location, at_unix, now_unix, opts)
         .context("composing sky for requested time")?;
     Ok(Timeline::new(states, home))
 }
 
-fn resolve_location(cli: &Cli, override_name: Option<&str>) -> Result<location::GeoResult> {
-    // Location overlay in the TUI takes precedence over everything.
-    if let Some(name) = override_name {
-        let results = location::geocode(name).with_context(|| format!("geocoding '{name}'"))?;
-        return results
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow!("no places matched '{name}'"));
-    }
+fn resolve_location(cli: &Cli) -> Result<location::GeoResult> {
     match (cli.lat, cli.lon, cli.location.as_deref()) {
         (Some(lat), Some(lon), name) => Ok(location::GeoResult {
             name: name.unwrap_or("custom").to_string(),
@@ -276,10 +291,7 @@ fn resolve_location(cli: &Cli, override_name: Option<&str>) -> Result<location::
         }),
         (None, None, Some(name)) => {
             let results = location::geocode(name).with_context(|| format!("geocoding '{name}'"))?;
-            results
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("no places matched '{name}'"))
+            location::best_match(results).ok_or_else(|| anyhow!("no places matched '{name}'"))
         }
         (Some(_), None, _) | (None, Some(_), _) => {
             bail!("--lat and --lon must be passed together")
@@ -291,8 +303,8 @@ fn resolve_location(cli: &Cli, override_name: Option<&str>) -> Result<location::
 fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
     let cfg = config::load();
     match cfg.location {
-        Some(LocationPref::Coords { lat, lon }) => Ok(location::GeoResult {
-            name: "saved".to_string(),
+        Some(LocationPref::Coords { lat, lon, name }) => Ok(location::GeoResult {
+            name: name.unwrap_or_else(|| "saved".to_string()),
             latitude: lat,
             longitude: lon,
             timezone: "UTC".to_string(),
@@ -304,22 +316,23 @@ fn resolve_from_config_or_prompt() -> Result<location::GeoResult> {
         Some(LocationPref::Name { name }) => {
             let results =
                 location::geocode(&name).with_context(|| format!("geocoding '{name}'"))?;
-            results
-                .into_iter()
-                .next()
+            location::best_match(results)
                 .ok_or_else(|| anyhow!("no places matched saved location '{name}'"))
         }
         None => {
-            // First run: ask the user for a location, save it, then geocode.
-            let name = tui::prompt_location().context("location prompt")?;
-            let results =
-                location::geocode(&name).with_context(|| format!("geocoding '{name}'"))?;
-            let geo = results
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("no places matched '{name}'"))?;
+            // First run: live-search for a location, then remember the exact
+            // place (coords + name) so the choice sticks and a later best_match
+            // can never re-rank it away. Cancelling the search exits cleanly.
+            let geo = match tui::search_location().context("location search")? {
+                Some(geo) => geo,
+                None => std::process::exit(0),
+            };
             let mut cfg = config::load();
-            cfg.location = Some(LocationPref::Name { name });
+            cfg.location = Some(LocationPref::Coords {
+                lat: geo.latitude,
+                lon: geo.longitude,
+                name: Some(geo.name.clone()),
+            });
             config::save(&cfg).context("saving config")?;
             Ok(geo)
         }
