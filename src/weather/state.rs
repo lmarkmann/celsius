@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, NaiveDateTime, TimeZone, Utc};
+use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
@@ -112,13 +112,14 @@ pub fn compose(
     opts: ComposeOpts,
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
-    let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h])?;
+    let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h], forecast.utc_offset_seconds)?;
     let sample = HourSample::at(forecast, h);
     Ok(build_sky(
         &sample,
         location,
         unix_utc,
         now_unix,
+        forecast.utc_offset_seconds,
         forecast.daily.as_ref(),
         opts,
     ))
@@ -142,6 +143,7 @@ pub fn compose_at(
         location,
         target_unix,
         now_unix,
+        forecast.utc_offset_seconds,
         forecast.daily.as_ref(),
         opts,
     ))
@@ -154,10 +156,11 @@ fn bracket_hours(
     target_unix: i64,
 ) -> Result<(usize, usize, f64), WeatherError> {
     let times = &forecast.hourly.time;
+    let offset = forecast.utc_offset_seconds;
     let last = times.len().saturating_sub(1);
     let mut h0 = 0usize;
     for (i, t) in times.iter().enumerate() {
-        if parse_hour_to_unix(t)? <= target_unix {
+        if parse_hour_to_unix(t, offset)? <= target_unix {
             h0 = i;
         } else {
             break;
@@ -166,8 +169,8 @@ fn bracket_hours(
     if h0 >= last {
         return Ok((last, last, 0.0));
     }
-    let t0 = parse_hour_to_unix(&times[h0])?;
-    let t1 = parse_hour_to_unix(&times[h0 + 1])?;
+    let t0 = parse_hour_to_unix(&times[h0], offset)?;
+    let t1 = parse_hour_to_unix(&times[h0 + 1], offset)?;
     let span = (t1 - t0).max(1) as f64;
     let frac = ((target_unix - t0) as f64 / span).clamp(0.0, 1.0);
     Ok((h0, h0 + 1, frac))
@@ -185,6 +188,7 @@ fn build_sky(
     location: &GeoResult,
     unix_utc: i64,
     now_unix: i64,
+    offset: i64,
     daily: Option<&DailyArrays>,
     opts: ComposeOpts,
 ) -> SkyState {
@@ -245,11 +249,13 @@ fn build_sky(
     );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
 
-    let date_iso = utc_date_iso(unix_utc);
-    let sun_day = daily.and_then(|d| sun_day_for(d, &date_iso));
+    let date_iso = utc_date_iso(unix_utc + offset);
+    let sun_day = daily.and_then(|d| sun_day_for(d, &date_iso, offset));
     let high_low = daily.and_then(|d| daily_high_low(d, &date_iso));
 
-    let chrome = build_chrome(location, unix_utc, now_unix, sample, sun_day, high_low);
+    let chrome = build_chrome(
+        location, unix_utc, now_unix, offset, sample, sun_day, high_low,
+    );
 
     // Prototype: the analytic sky is daytime-only (Preetham's zenith formula
     // breaks once the sun is below the horizon); twilight and night keep the
@@ -333,10 +339,13 @@ fn build_lightning(
     ))
 }
 
-fn parse_hour_to_unix(time_str: &str) -> Result<i64, WeatherError> {
+// Open-Meteo returns its time strings already in the location's local zone
+// (timezone=auto), so subtract the location's UTC offset to recover true UTC;
+// the whole internal pipeline then runs in UTC.
+fn parse_hour_to_unix(time_str: &str, offset: i64) -> Result<i64, WeatherError> {
     let naive = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M")
         .map_err(|e| WeatherError::Decode(format!("hour timestamp '{time_str}': {e}")))?;
-    Ok(naive.and_utc().timestamp())
+    Ok(naive.and_utc().timestamp() - offset)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -357,7 +366,7 @@ fn utc_date_iso(unix_utc: i64) -> String {
 // polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00.
 // polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00.
 // Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
-fn sun_day_for(daily: &DailyArrays, date_iso: &str) -> Option<SunDay> {
+fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDay> {
     let i = daily.time.iter().position(|d| d == date_iso)?;
     let dur = daily.daylight_duration.get(i).copied()?;
     if dur >= 86_399.0 {
@@ -366,8 +375,8 @@ fn sun_day_for(daily: &DailyArrays, date_iso: &str) -> Option<SunDay> {
     if dur <= 1.0 {
         return Some(SunDay::PolarNight);
     }
-    let rise = parse_hour_to_unix(daily.sunrise.get(i)?).ok()?;
-    let set = parse_hour_to_unix(daily.sunset.get(i)?).ok()?;
+    let rise = parse_hour_to_unix(daily.sunrise.get(i)?, offset).ok()?;
+    let set = parse_hour_to_unix(daily.sunset.get(i)?, offset).ok()?;
     Some(SunDay::Times {
         rise_unix: rise,
         set_unix: set,
@@ -384,31 +393,25 @@ fn daily_high_low(daily: &DailyArrays, date_iso: &str) -> Option<(f64, f64)> {
     Some((high, low))
 }
 
-fn local_hhmm(unix_utc: i64) -> String {
-    Local
-        .timestamp_opt(unix_utc, 0)
+fn local_hhmm(unix_utc: i64, offset: i64) -> String {
+    Utc.timestamp_opt(unix_utc + offset, 0)
         .single()
         .map(|dt| dt.format("%H:%M").to_string())
-        .unwrap_or_else(|| {
-            Utc.timestamp_opt(unix_utc, 0)
-                .unwrap()
-                .format("%H:%M")
-                .to_string()
-        })
+        .unwrap_or_default()
 }
 
 // Arrows ↑ U+2191 / ↓ U+2193 are East-Asian-Width Ambiguous: width 1 in western
 // terminals (default), width 2 in CJK locales or when ambiguous-as-wide is set.
 // Column math elsewhere assumes width 1; revisit if that changes.
-fn format_sun_segment(sun_day: Option<&SunDay>) -> String {
+fn format_sun_segment(sun_day: Option<&SunDay>, offset: i64) -> String {
     match sun_day {
         Some(SunDay::Times {
             rise_unix,
             set_unix,
         }) => format!(
             "   ↑ {}  ↓ {}",
-            local_hhmm(*rise_unix),
-            local_hhmm(*set_unix)
+            local_hhmm(*rise_unix, offset),
+            local_hhmm(*set_unix, offset)
         ),
         Some(SunDay::PolarDay) => "   polar day".to_string(),
         Some(SunDay::PolarNight) => "   polar night".to_string(),
@@ -671,6 +674,7 @@ fn build_chrome(
     location: &GeoResult,
     unix_utc: i64,
     now_unix: i64,
+    offset: i64,
     sample: &HourSample,
     sun_day: Option<SunDay>,
     high_low: Option<(f64, f64)>,
@@ -679,8 +683,8 @@ fn build_chrome(
     let header_right = format!(
         "{}   {}{}",
         location.label(),
-        format_label(unix_utc, now_unix),
-        format_sun_segment(sun_day.as_ref()),
+        format_label(unix_utc, now_unix, offset),
+        format_sun_segment(sun_day.as_ref(), offset),
     );
 
     let temp = sample
@@ -715,8 +719,8 @@ fn build_chrome(
     }
 }
 
-fn format_label(unix_utc: i64, now_unix: i64) -> String {
-    let target = match Local.timestamp_opt(unix_utc, 0).single() {
+fn format_label(unix_utc: i64, now_unix: i64, offset: i64) -> String {
+    let target = match Utc.timestamp_opt(unix_utc + offset, 0).single() {
         Some(dt) => dt,
         None => {
             return Utc
@@ -726,7 +730,10 @@ fn format_label(unix_utc: i64, now_unix: i64) -> String {
                 .to_string();
         }
     };
-    let now = Local.timestamp_opt(now_unix, 0).single().unwrap_or(target);
+    let now = Utc
+        .timestamp_opt(now_unix + offset, 0)
+        .single()
+        .unwrap_or(target);
     let day_diff = (target.date_naive() - now.date_naive()).num_days();
     let hhmm = target.format("%H:%M").to_string();
     match day_diff {
@@ -847,9 +854,34 @@ mod tests {
 
     #[test]
     fn parse_hour_round_trip() {
-        let unix = parse_hour_to_unix("2026-04-11T00:00").unwrap();
+        let unix = parse_hour_to_unix("2026-04-11T00:00", 0).unwrap();
         // 2026-04-11T00:00:00Z, verified against `date -u -d @1775865600`
         assert_eq!(unix, 1_775_865_600);
+    }
+
+    #[test]
+    fn parse_hour_subtracts_local_offset() {
+        // Under timezone=auto the string is local; UTC+8 02:00 is 18:00Z prior.
+        let local = parse_hour_to_unix("2026-06-16T02:00", 8 * 3600).unwrap();
+        let utc = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
+        assert_eq!(local, utc);
+    }
+
+    #[test]
+    fn local_hhmm_applies_offset() {
+        let unix = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
+        assert_eq!(local_hhmm(unix, 8 * 3600), "02:00");
+        assert_eq!(local_hhmm(unix, 0), "18:00");
+    }
+
+    #[test]
+    fn format_label_uses_location_offset_not_machine() {
+        // 18:00Z is 02:00 the next local day at UTC+8; with "now" at the same
+        // instant the header reads the location's wall clock, not the machine's.
+        let unix = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
+        assert_eq!(format_label(unix, unix, 8 * 3600), "today 02:00");
+        let next = unix + 86_400;
+        assert_eq!(format_label(next, unix, 8 * 3600), "tomorrow 02:00");
     }
 
     #[test]
@@ -937,7 +969,7 @@ mod tests {
             "2026-04-11T18:14",
             48_960.0,
         );
-        match sun_day_for(&daily, "2026-04-11") {
+        match sun_day_for(&daily, "2026-04-11", 0) {
             Some(SunDay::Times {
                 rise_unix,
                 set_unix,
@@ -959,13 +991,16 @@ mod tests {
             "2026-05-10T00:00",
             86_400.0,
         );
-        assert_eq!(sun_day_for(&daily, "2026-05-09"), Some(SunDay::PolarDay));
+        assert_eq!(sun_day_for(&daily, "2026-05-09", 0), Some(SunDay::PolarDay));
     }
 
     #[test]
     fn sun_day_polar_night_from_zero_daylight() {
         let daily = daily_one_day("2025-12-22", "2025-12-22T00:00", "2025-12-22T00:00", 0.0);
-        assert_eq!(sun_day_for(&daily, "2025-12-22"), Some(SunDay::PolarNight));
+        assert_eq!(
+            sun_day_for(&daily, "2025-12-22", 0),
+            Some(SunDay::PolarNight)
+        );
     }
 
     #[test]
@@ -976,7 +1011,7 @@ mod tests {
             "2026-04-11T18:14",
             48_960.0,
         );
-        assert_eq!(sun_day_for(&daily, "2026-04-12"), None);
+        assert_eq!(sun_day_for(&daily, "2026-04-12", 0), None);
     }
 
     fn daily_with_high_low(date: &str, high: Option<f64>, low: Option<f64>) -> DailyArrays {
@@ -1013,10 +1048,13 @@ mod tests {
 
     #[test]
     fn format_sun_segment_branches() {
-        assert_eq!(format_sun_segment(None), "");
-        assert_eq!(format_sun_segment(Some(&SunDay::PolarDay)), "   polar day");
+        assert_eq!(format_sun_segment(None, 0), "");
         assert_eq!(
-            format_sun_segment(Some(&SunDay::PolarNight)),
+            format_sun_segment(Some(&SunDay::PolarDay), 0),
+            "   polar day"
+        );
+        assert_eq!(
+            format_sun_segment(Some(&SunDay::PolarNight), 0),
             "   polar night"
         );
     }
