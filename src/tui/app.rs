@@ -764,7 +764,7 @@ mod tests {
             chrome: Chrome {
                 header_left: "celsius".into(),
                 header_right: "testville   today 12:00".into(),
-                footer: "10°  clear   wind n 5".into(),
+                footer: "10°  clear   wind N 5".into(),
                 keys: "q quit".into(),
                 status: "Testville 10C clear wind N 5".into(),
                 footer_tiers: Vec::new(),

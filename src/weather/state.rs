@@ -678,7 +678,7 @@ fn build_chrome(
     let header_left = "celsius".to_string();
     let header_right = format!(
         "{}   {}{}",
-        location.label().to_lowercase(),
+        location.label(),
         format_label(unix_utc, now_unix),
         format_sun_segment(sun_day.as_ref()),
     );
@@ -693,16 +693,15 @@ fn build_chrome(
     let high_low = high_low.map(|(hi, lo)| format!("H{hi:.0} L{lo:.0}"));
     let footer = format!("{temp}  {word}   wind {compass} {speed}");
 
-    // ASCII one-liner for --plain: proper-case place, no degree sign, uppercase
-    // compass. Grep- and pipe-friendly, distinct from the decorative footer.
+    // ASCII one-liner for --plain: carries the place name, no degree sign.
+    // Grep- and pipe-friendly, distinct from the decorative footer.
     let temp_ascii = sample
         .temperature_c
         .map(|t| format!("{t:.0}C"))
         .unwrap_or_else(|| "--C".to_string());
     let status = format!(
-        "{} {temp_ascii} {word} wind {} {speed}",
-        location.name,
-        compass.to_uppercase(),
+        "{} {temp_ascii} {word} wind {compass} {speed}",
+        location.name
     );
 
     Chrome {
@@ -748,7 +747,7 @@ const MONTHS: [&str; 12] = [
 ];
 
 fn compass_from_deg(deg: f64) -> &'static str {
-    const DIRS: [&str; 8] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+    const DIRS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
     let idx = (((deg / 45.0).round() as i64).rem_euclid(8)) as usize;
     DIRS[idx]
 }
@@ -898,11 +897,11 @@ mod tests {
 
     #[test]
     fn compass_round() {
-        assert_eq!(compass_from_deg(0.0), "n");
-        assert_eq!(compass_from_deg(45.0), "ne");
-        assert_eq!(compass_from_deg(180.0), "s");
-        assert_eq!(compass_from_deg(270.0), "w");
-        assert_eq!(compass_from_deg(360.0), "n");
+        assert_eq!(compass_from_deg(0.0), "N");
+        assert_eq!(compass_from_deg(45.0), "NE");
+        assert_eq!(compass_from_deg(180.0), "S");
+        assert_eq!(compass_from_deg(270.0), "W");
+        assert_eq!(compass_from_deg(360.0), "N");
     }
 
     #[test]
