@@ -199,11 +199,51 @@ impl<'a> App<'a> {
     }
 }
 
-pub fn run(timeline: &Timeline) -> Result<RunOutcome> {
-    let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &mut App::new(timeline));
-    ratatui::restore();
-    result
+/// Owns the terminal for one interactive run: a single alternate-screen enter on
+/// `new`, a single leave on `Drop`. The live sky, the location search, and the
+/// loading screen all draw to this one surface, so the view never tears down and
+/// flashes the shell between them, nor sits bare while a forecast fetches.
+pub struct Session {
+    terminal: DefaultTerminal,
+}
+
+impl Session {
+    pub fn new() -> Self {
+        Self {
+            terminal: ratatui::init(),
+        }
+    }
+
+    pub fn run(&mut self, timeline: &Timeline) -> Result<RunOutcome> {
+        event_loop(&mut self.terminal, &mut App::new(timeline))
+    }
+
+    pub fn search_location(&mut self) -> Result<Option<GeoResult>> {
+        search_loop(&mut self.terminal)
+    }
+
+    /// Hold the sky on screen (drawing `current`, or a plain fill on first
+    /// launch) under a loading box while `rx` delivers the next timeline.
+    pub fn await_timeline(
+        &mut self,
+        current: Option<&Timeline>,
+        label: &str,
+        rx: mpsc::Receiver<Timeline>,
+    ) -> Result<Option<Timeline>> {
+        await_loop(&mut self.terminal, current, label, rx)
+    }
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        ratatui::restore();
+    }
 }
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome> {
@@ -290,15 +330,87 @@ const SEARCH_POLL: Duration = Duration::from_millis(40);
 /// a single slow attempt already eats most of this; fast failures get retried.
 const OFFLINE_AFTER: Duration = Duration::from_millis(2500);
 
-/// Live type-ahead location search: a single view where the candidate list
-/// updates under the input as you type. Returns the chosen place, or `None` if
-/// cancelled. Same `init`/`restore` discipline as the rest of the TUI, so the
-/// caller never touches the terminal.
-pub fn search_location() -> Result<Option<GeoResult>> {
-    let mut terminal = ratatui::init();
-    let result = search_loop(&mut terminal);
-    ratatui::restore();
-    result
+/// Spinner phases for the loading box; the quarter-circle glyphs read as a spin.
+const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
+
+/// Keep the sky on screen under a centered loading box while a background thread
+/// fetches the next timeline, returning it the moment `rx` delivers, or `None`
+/// if the user cancels with esc. Drawing `current` (or a plain fill on first
+/// launch) here is what replaces the old bare-shell gap during a fetch.
+fn await_loop(
+    terminal: &mut DefaultTerminal,
+    current: Option<&Timeline>,
+    label: &str,
+    rx: mpsc::Receiver<Timeline>,
+) -> Result<Option<Timeline>> {
+    let mut app = current.map(App::new);
+    let mut last_tick = Instant::now();
+    let mut spinner = 0usize;
+    loop {
+        draw_synchronized(terminal, |frame| {
+            let area = frame.area();
+            let buf = frame.buffer_mut();
+            match &mut app {
+                Some(app) => draw_sky(buf, area, app),
+                None => fill(buf, area, OVERLAY_BG),
+            }
+            draw_loading_overlay(buf, area, label, SPINNER[spinner % SPINNER.len()]);
+        })
+        .context("drawing loading screen")?;
+
+        match rx.try_recv() {
+            Ok(timeline) => return Ok(Some(timeline)),
+            // The worker dropped its sender without a value (a panic while
+            // composing): fall back to the current sky rather than spin forever.
+            Err(mpsc::TryRecvError::Disconnected) => return Ok(None),
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+
+        let timeout = TICK.saturating_sub(last_tick.elapsed());
+        if event::poll(timeout).context("polling input")?
+            && let Event::Key(key) = event::read().context("reading input")?
+            && key.kind == KeyEventKind::Press
+            && is_cancel_key(&key)
+        {
+            return Ok(None);
+        }
+
+        if last_tick.elapsed() >= TICK {
+            let elapsed = last_tick.elapsed();
+            last_tick = Instant::now();
+            if let Some(app) = &mut app {
+                app.tick(elapsed);
+            }
+            spinner = spinner.wrapping_add(1);
+        }
+    }
+}
+
+fn is_cancel_key(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Esc)
+        || (matches!(key.code, KeyCode::Char('c')) && key.modifiers.contains(KeyModifiers::CONTROL))
+}
+
+fn fill(buf: &mut Buffer, area: Rect, bg: Color) {
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let cell = &mut buf[(x, y)];
+            cell.set_char(' ');
+            cell.set_bg(bg);
+        }
+    }
+}
+
+fn draw_loading_overlay(buf: &mut Buffer, area: Rect, label: &str, spinner: &str) {
+    let title = format!("loading {label}");
+    let status = format!("{spinner} fetching sky");
+    let hint = "esc cancel";
+    let content = title.width().max(status.width()).max(hint.width()) as u16;
+    let w = (content + 6).min(area.width);
+    let inner = draw_overlay_box(buf, area, w, 5);
+    put_str(buf, inner.x, inner.y, inner.width, &title, OVERLAY_FG);
+    put_str(buf, inner.x, inner.y + 1, inner.width, &status, OVERLAY_DIM);
+    put_str(buf, inner.x, inner.y + 2, inner.width, hint, OVERLAY_DIM);
 }
 
 /// One geocode reply tagged with the query generation that asked for it, so the
@@ -1652,5 +1764,22 @@ mod tests {
                 "loading must never flash the no-matches message"
             );
         }
+    }
+
+    #[test]
+    fn loading_overlay_names_the_city_and_offers_cancel() {
+        let mut term = Terminal::new(TestBackend::new(70, 18)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_loading_overlay(f.buffer_mut(), area, "Paris", SPINNER[0]);
+        })
+        .unwrap();
+        let text = buffer_text(term.backend().buffer());
+        assert!(
+            text.contains("loading Paris"),
+            "names the city being fetched"
+        );
+        assert!(text.contains(SPINNER[0]), "shows the current spinner phase");
+        assert!(text.contains("esc cancel"), "offers the escape hatch");
     }
 }
