@@ -3,6 +3,16 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.3] - 2026-06-16
+
+### Added
+
+- Rank geocoding by population and add a location picker ([#55](https://github.com/lmarkmann/celsius/pull/55))
+
+### Fixed
+
+- Capitalize wind direction and location in chrome ([#53](https://github.com/lmarkmann/celsius/pull/53))
+
 ## [0.4.2] - 2026-06-15
 
 ### Fixed
