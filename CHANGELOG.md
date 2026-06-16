@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.4] - 2026-06-16
+
+### Added
+
+- Show the viewed location's local time ([#56](https://github.com/lmarkmann/celsius/pull/56))
+
 ## [0.4.3] - 2026-06-16
 
 ### Added
