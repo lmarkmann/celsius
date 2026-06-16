@@ -83,6 +83,9 @@ fn forecast_response_parses_hamburg() {
     assert!((parsed.latitude - 53.56).abs() < 0.1);
     assert!((parsed.longitude - 10.0).abs() < 0.1);
     assert_eq!(parsed.timezone, "GMT");
+    // Fixture predates timezone=auto and carries no offset; serde defaults it to
+    // 0, so its UTC times survive the local->UTC boundary unchanged.
+    assert_eq!(parsed.utc_offset_seconds, 0);
     assert_eq!(parsed.hourly.len(), 6);
     assert_eq!(parsed.hourly.time[0], "2026-04-11T00:00");
     assert_eq!(parsed.hourly.temperature_2m[0], Some(4.8));
@@ -90,6 +93,31 @@ fn forecast_response_parses_hamburg() {
     let daily = parsed.daily.expect("daily block present");
     assert_eq!(daily.temperature_2m_max[0], Some(14.2));
     assert_eq!(daily.temperature_2m_min[0], Some(5.8));
+}
+
+#[test]
+fn forecast_captures_utc_offset_when_present() {
+    // timezone=auto responses carry the location's offset; Hong Kong is +8h.
+    let json = r#"{
+        "latitude": 22.34,
+        "longitude": 114.18,
+        "timezone": "Asia/Hong_Kong",
+        "utc_offset_seconds": 28800,
+        "hourly": {
+            "time": ["2026-06-16T02:00"],
+            "temperature_2m": [28.0],
+            "cloud_cover_low": [10.0],
+            "cloud_cover_mid": [0.0],
+            "cloud_cover_high": [0.0],
+            "precipitation": [0.0],
+            "wind_speed_10m": [5.0],
+            "wind_direction_10m": [180.0],
+            "visibility": [24000.0],
+            "weather_code": [0]
+        }
+    }"#;
+    let parsed: Forecast = serde_json::from_str(json).expect("must deserialize");
+    assert_eq!(parsed.utc_offset_seconds, 28800);
 }
 
 #[test]
@@ -259,7 +287,14 @@ fn live_geocoding_returns_hamburg() {
 #[ignore]
 fn live_forecast_returns_168_hours() {
     let forecast = celsius::weather::forecast::fetch(53.5511, 9.9937).expect("live request");
-    assert_eq!(forecast.timezone, "GMT");
+    // timezone=auto resolves the zone from the coordinates: Hamburg is Berlin,
+    // CET (+3600) in winter or CEST (+7200) under summer time.
+    assert_eq!(forecast.timezone, "Europe/Berlin");
+    assert!(
+        [3600, 7200].contains(&forecast.utc_offset_seconds),
+        "Berlin offset should be CET or CEST, got {}",
+        forecast.utc_offset_seconds
+    );
     assert_eq!(
         forecast.hourly.len(),
         168,

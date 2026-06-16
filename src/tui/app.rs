@@ -16,6 +16,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::colorspace::PixelBuffer;
 use crate::lightning;
+use crate::pigs;
 use crate::render::render;
 use crate::scene::{Chrome, SkyState};
 use crate::tui::widget::SkyWidget;
@@ -36,6 +37,12 @@ pub enum RunOutcome {
 pub struct Timeline {
     pub states: Vec<SkyState>,
     pub home: usize,
+    /// Viewer coordinates when known; drives the location-gated easter egg.
+    /// `None` for scene files and error skies, which never trigger it.
+    pub coords: Option<(f64, f64)>,
+    /// The viewed location's UTC offset in seconds, so the local-time gate uses
+    /// the sky's wall clock rather than the machine's. `0` when unknown.
+    pub offset: i64,
 }
 
 impl Timeline {
@@ -43,12 +50,24 @@ impl Timeline {
         Self {
             states: vec![state],
             home: 0,
+            coords: None,
+            offset: 0,
         }
     }
 
-    pub fn new(states: Vec<SkyState>, home: usize) -> Self {
+    pub fn new(
+        states: Vec<SkyState>,
+        home: usize,
+        coords: Option<(f64, f64)>,
+        offset: i64,
+    ) -> Self {
         let home = home.min(states.len().saturating_sub(1));
-        Self { states, home }
+        Self {
+            states,
+            home,
+            coords,
+            offset,
+        }
     }
 
     fn len(&self) -> usize {
@@ -84,6 +103,8 @@ pub struct App<'a> {
     drift_paused: bool,
     overlay: Overlay,
     lightning_elapsed: Duration,
+    egg_frame: u64,
+    egg_prev: bool,
     outcome: Option<RunOutcome>,
     sky_dirty: bool,
     sky_cache: Option<SkyCache>,
@@ -100,10 +121,22 @@ impl<'a> App<'a> {
             drift_paused: false,
             overlay: Overlay::None,
             lightning_elapsed: Duration::ZERO,
+            egg_frame: 0,
+            egg_prev: false,
             outcome: None,
             sky_dirty: true,
             sky_cache: None,
         }
+    }
+
+    /// Whether the flying-pigs egg should show right now: at Kowloon Tong and
+    /// inside the 01:28-02:10 local-time window. Recomputed live so it turns on
+    /// and off as the real clock crosses the window edges.
+    fn egg_active(&self) -> bool {
+        let offset = self.timeline.offset;
+        self.timeline
+            .coords
+            .is_some_and(|(lat, lon)| pigs::gate_open(lat, lon, offset))
     }
 
     /// Advance the animation by `elapsed` and report whether the visible frame
@@ -125,7 +158,13 @@ impl<'a> App<'a> {
             changed = true;
         }
         self.lightning_elapsed += elapsed;
-        changed || self.display.lightning.is_some()
+        self.egg_frame = self.egg_frame.wrapping_add(1);
+        // While the egg flies, every tick is a new frame. The transition catches
+        // the moment it turns off, so one last redraw clears it from the sky.
+        let egg = self.egg_active();
+        let egg_changed = egg != self.egg_prev;
+        self.egg_prev = egg;
+        changed || self.display.lightning.is_some() || egg || egg_changed
     }
 
     /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome`
@@ -521,6 +560,10 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
     let (foot_left, foot_keys) = fit_footer(footer.width, chrome);
     draw_chrome_bar(buf, footer, foot_left, foot_keys);
 
+    // Read before the cache borrow below, which mutably borrows app.sky_cache.
+    let egg = app.egg_active();
+    let egg_frame = app.egg_frame;
+
     let px_width = sky_area.width as u32;
     let px_height = (sky_area.height as u32) * 2;
     let cache = match &mut app.sky_cache {
@@ -534,11 +577,16 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
             })
         }
     };
-    // Lightning composites onto a copy so the cached base stays reusable;
-    // its flash timing is per-frame state, not part of the sky render.
-    if let Some(lt) = &app.display.lightning {
+    // Lightning and the pigs egg composite onto a copy so the cached base stays
+    // reusable; their timing is per-frame state, not part of the sky render.
+    if app.display.lightning.is_some() || egg {
         let mut pixels = cache.pixels.clone();
-        lightning::overlay(&mut pixels, lt, app.lightning_elapsed.as_secs_f64());
+        if let Some(lt) = &app.display.lightning {
+            lightning::overlay(&mut pixels, lt, app.lightning_elapsed.as_secs_f64());
+        }
+        if egg {
+            pigs::overlay(&mut pixels, egg_frame);
+        }
         SkyWidget { pixels: &pixels }.render(sky_area, buf);
     } else {
         SkyWidget {
@@ -1006,7 +1054,12 @@ mod tests {
     }
 
     fn timeline() -> Timeline {
-        Timeline::new((0..50).map(|i| sky(&format!("s{i}"))).collect(), 10)
+        Timeline::new(
+            (0..50).map(|i| sky(&format!("s{i}"))).collect(),
+            10,
+            None,
+            0,
+        )
     }
 
     fn press(code: KeyCode) -> KeyEvent {

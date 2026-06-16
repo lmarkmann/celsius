@@ -26,6 +26,8 @@ pub struct Forecast {
     #[serde(default)]
     pub elevation: Option<f64>,
     pub timezone: String,
+    #[serde(default)]
+    pub utc_offset_seconds: i64,
     pub hourly: HourlyArrays,
     #[serde(default)]
     pub daily: Option<DailyArrays>,
@@ -76,7 +78,7 @@ pub fn fetch(lat: f64, lon: f64) -> Result<Forecast, WeatherError> {
         .query("longitude", lon.to_string())
         .query("hourly", HOURLY_FIELDS)
         .query("daily", DAILY_FIELDS)
-        .query("timezone", "UTC")
+        .query("timezone", "auto")
         .query("forecast_days", "7")
         .call()?;
     let status = response.status();

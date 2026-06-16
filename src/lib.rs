@@ -7,6 +7,7 @@ pub mod haze;
 pub mod lightning;
 pub mod moon;
 pub mod noise;
+pub mod pigs;
 pub mod precipitation;
 pub mod render;
 pub mod scene;

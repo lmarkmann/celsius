@@ -274,7 +274,13 @@ fn build_live_timeline(cli: &Cli, location: &location::GeoResult) -> Result<Time
     // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
     states[home] = compose_at(&forecast, location, at_unix, now_unix, opts)
         .context("composing sky for requested time")?;
-    Ok(Timeline::new(states, home))
+    let coords = Some((location.latitude, location.longitude));
+    Ok(Timeline::new(
+        states,
+        home,
+        coords,
+        forecast.utc_offset_seconds,
+    ))
 }
 
 fn resolve_location(cli: &Cli) -> Result<location::GeoResult> {
@@ -436,7 +442,8 @@ fn nearest_hour_index(forecast: &forecast::Forecast, target_unix: i64) -> usize 
         let Ok(naive) = NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M") else {
             continue;
         };
-        let unix = naive.and_utc().timestamp();
+        // Forecast times are local (timezone=auto); shift to UTC to compare.
+        let unix = naive.and_utc().timestamp() - forecast.utc_offset_seconds;
         let dist = (unix - target_unix).abs();
         if dist < best_dist {
             best_dist = dist;
