@@ -288,6 +288,7 @@ fn build_sky(
         horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
         analytic: analytic_sky,
         wind_speed_kmh: sample.wind_speed.unwrap_or(0.0),
+        unix_utc,
     }
 }
 
@@ -822,6 +823,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         horizon_glow: None,
         analytic: None,
         wind_speed_kmh: 0.0,
+        unix_utc: 0,
     }
 }
 

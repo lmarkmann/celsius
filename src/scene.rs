@@ -226,6 +226,10 @@ pub struct SkyState {
     /// live-weather daytime path; scenes leave it None.
     pub analytic: Option<AnalyticSky>,
     pub wind_speed_kmh: f64,
+    /// The UTC instant this sky depicts, so time-gated overlays read the hour on
+    /// screen rather than the machine clock. `0` for static scene files and the
+    /// error sky, which never trigger them.
+    pub unix_utc: i64,
 }
 
 #[derive(Deserialize)]
@@ -307,6 +311,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         horizon_glow: None,
         analytic: None,
         wind_speed_kmh: 0.0,
+        unix_utc: 0,
     })
 }
 
