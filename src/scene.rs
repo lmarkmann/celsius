@@ -7,6 +7,7 @@ use thiserror::Error;
 use crate::analytic_sky::AnalyticSky;
 use crate::gradient::Gradient;
 use crate::lightning::Lightning;
+use crate::meteors::Meteors;
 
 #[derive(Debug, Error)]
 pub enum SceneError {
@@ -206,6 +207,7 @@ pub struct SkyState {
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
     pub lightning: Option<Lightning>,
+    pub meteors: Option<Meteors>,
     pub horizon_glow: Option<HorizonGlow>,
     /// Prototype: when present, render computes the sky background from the Preetham analytic model instead of sampling `gradient`. Set only for the live-weather daytime path; scenes leave it None.
     pub analytic: Option<AnalyticSky>,
@@ -340,6 +342,7 @@ fn parse_scene(path: &Path, text: &str) -> Result<SkyState, SceneError> {
         moon: raw.moon,
         precipitation: raw.precipitation,
         lightning: None,
+        meteors: None,
         horizon_glow: None,
         analytic: None,
         wind_speed_kmh: 0.0,

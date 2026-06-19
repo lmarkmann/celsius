@@ -3,6 +3,7 @@ use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
 use crate::lightning::Lightning;
+use crate::meteors::Meteors;
 use crate::scene::{
     Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, PrecipKind, Precipitation, SkyState,
     Stars, Sun,
@@ -239,6 +240,14 @@ fn build_sky(
         center_az,
     );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
+    let meteors = build_meteors(
+        sun_altaz.altitude,
+        total_cover,
+        lat,
+        lon,
+        unix_utc,
+        center_az,
+    );
 
     let date_iso = utc_date_iso(unix_utc + offset);
     let sun_day = daily.and_then(|d| sun_day_for(d, &date_iso, offset));
@@ -273,6 +282,7 @@ fn build_sky(
         moon,
         precipitation,
         lightning,
+        meteors,
         horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
         analytic: analytic_sky,
         wind_speed_kmh: sample.wind_speed.unwrap_or(0.0),
@@ -324,6 +334,31 @@ fn build_lightning(
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, hour, 0x1167_8175]) as u32;
     Some(Lightning::new(
         seed, intensity, 3_600.0, with_bolts, SKY_W, SKY_H,
+    ))
+}
+
+// Meteors show on a dark, clear-enough sky: sun well below the horizon and not overcast. Seeded per (place, day) like the clouds and lightning.
+fn build_meteors(
+    sun_alt: f64,
+    total_cover: f64,
+    lat: f64,
+    lon: f64,
+    unix_utc: i64,
+    center_az: f64,
+) -> Option<Meteors> {
+    if sun_alt > -3.0 || total_cover > 0.6 {
+        return None;
+    }
+    let day_ordinal = unix_utc.div_euclid(86_400) as u64;
+    let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, 0x3A9F_C217]) as u32;
+    Some(Meteors::new(
+        seed,
+        unix_utc,
+        lat,
+        lon,
+        center_az,
+        3_600.0,
+        (SKY_W, SKY_H),
     ))
 }
 
@@ -786,6 +821,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         moon: None,
         precipitation: None,
         lightning: None,
+        meteors: None,
         horizon_glow: None,
         analytic: None,
         wind_speed_kmh: 0.0,

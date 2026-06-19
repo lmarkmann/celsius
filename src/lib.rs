@@ -5,6 +5,7 @@ pub mod config;
 pub mod gradient;
 pub mod haze;
 pub mod lightning;
+pub mod meteors;
 pub mod moon;
 pub mod noise;
 pub mod pigs;

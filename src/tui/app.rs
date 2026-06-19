@@ -16,6 +16,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::colorspace::PixelBuffer;
 use crate::lightning;
+use crate::meteors;
 use crate::pigs;
 use crate::render::render;
 use crate::scene::{Chrome, SkyState};
@@ -96,7 +97,7 @@ pub struct App<'a> {
     display: SkyState,
     drift_paused: bool,
     overlay: Overlay,
-    lightning_elapsed: Duration,
+    overlay_elapsed: Duration,
     egg_frame: u64,
     egg_prev: bool,
     outcome: Option<RunOutcome>,
@@ -114,7 +115,7 @@ impl<'a> App<'a> {
             display,
             drift_paused: false,
             overlay: Overlay::None,
-            lightning_elapsed: Duration::ZERO,
+            overlay_elapsed: Duration::ZERO,
             egg_frame: 0,
             egg_prev: false,
             outcome: None,
@@ -132,7 +133,7 @@ impl<'a> App<'a> {
             .is_some_and(|(lat, lon)| pigs::gate_open(lat, lon, unix_utc, offset))
     }
 
-    /// Advance the animation by `elapsed` and report whether the visible frame changed, so the event loop can skip redrawing an identical one. Cloud drift and the lightning clock both freeze while paused, so a paused sky is fully still. Otherwise the frame changes when clouds drift, and on every tick of a lightning scene, whose flash is recomputed per frame.
+    /// Advance the animation by `elapsed` and report whether the visible frame changed, so the event loop can skip redrawing an identical one. Cloud drift and the overlay clock both freeze while paused, so a paused sky is fully still. Otherwise the frame changes when clouds drift, and on every tick of an animated scene (lightning, meteors), whose overlays are recomputed per frame.
     pub fn tick(&mut self, elapsed: Duration) -> bool {
         if self.drift_paused {
             return false;
@@ -146,13 +147,17 @@ impl<'a> App<'a> {
             self.sky_dirty = true;
             changed = true;
         }
-        self.lightning_elapsed += elapsed;
+        self.overlay_elapsed += elapsed;
         self.egg_frame = self.egg_frame.wrapping_add(1);
         // While the egg flies, every tick is a new frame. The transition catches the moment it turns off, so one last redraw clears it from the sky.
         let egg = self.egg_active();
         let egg_changed = egg != self.egg_prev;
         self.egg_prev = egg;
-        changed || self.display.lightning.is_some() || egg || egg_changed
+        changed
+            || self.display.lightning.is_some()
+            || self.display.meteors.is_some()
+            || egg
+            || egg_changed
     }
 
     /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome` for the event loop to drain; everything else mutates in place. Assumes the caller already filtered to `KeyEventKind::Press`.
@@ -654,11 +659,14 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
             })
         }
     };
-    // Lightning and the pigs egg composite onto a copy so the cached base stays reusable; their timing is per-frame state, not part of the sky render.
-    if app.display.lightning.is_some() || egg {
+    // Lightning, meteors, and the pigs egg composite onto a copy so the cached base stays reusable; their timing is per-frame state, not part of the sky render. `overlay_elapsed` is the shared real-time clock every tick overlay reads.
+    if app.display.lightning.is_some() || app.display.meteors.is_some() || egg {
         let mut pixels = cache.pixels.clone();
         if let Some(lt) = &app.display.lightning {
-            lightning::overlay(&mut pixels, lt, app.lightning_elapsed.as_secs_f64());
+            lightning::overlay(&mut pixels, lt, app.overlay_elapsed.as_secs_f64());
+        }
+        if let Some(m) = &app.display.meteors {
+            meteors::overlay(&mut pixels, m, app.overlay_elapsed.as_secs_f64());
         }
         if egg {
             pigs::overlay(&mut pixels, egg_frame);
@@ -1112,6 +1120,7 @@ mod tests {
             moon: None,
             precipitation: None,
             lightning: None,
+            meteors: None,
             horizon_glow: None,
             analytic: None,
             wind_speed_kmh: 20.0,

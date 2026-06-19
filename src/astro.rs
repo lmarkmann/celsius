@@ -106,6 +106,13 @@ pub fn sun_position(lat: f64, lon: f64, unix_utc: i64) -> AltAz {
     to_horizontal(ra, dec, lat, lon, jd_val)
 }
 
+/// Horizontal coordinates of a fixed celestial direction (RA, Dec in degrees,
+/// J2000) for an observer at `(lat, lon)` at `unix_utc`. Used to place a
+/// meteor-shower radiant in the sky.
+pub fn equatorial_to_altaz(ra_deg: f64, dec_deg: f64, lat: f64, lon: f64, unix_utc: i64) -> AltAz {
+    to_horizontal(ra_deg, dec_deg, lat, lon, jd(unix_utc))
+}
+
 pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     let jd_val = jd(unix_utc);
     let t = jc(jd_val);

@@ -291,6 +291,7 @@ pub fn analytic_state(sun_alt: f64, turbidity: f64) -> SkyState {
         moon: None,
         precipitation: None,
         lightning: None,
+        meteors: None,
         horizon_glow: None,
         analytic: Some(AnalyticSky {
             sun_alt,
