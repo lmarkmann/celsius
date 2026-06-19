@@ -266,6 +266,43 @@ fn compose_at_post_sunrise_attaches_analytic_sky() {
     );
 }
 
+// compose() (the hour-index entry point) only ran against the live API before;
+// the compose_at tests above cover the interpolating instant path. Lock the
+// hour-index path on the fixture's clear pre-dawn hour 0, and confirm it agrees
+// with compose_at at that same instant, where interpolation is a no-op.
+#[test]
+fn compose_locks_clear_night_via_hour_index() {
+    let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let opts = celsius::weather::ComposeOpts {
+        center_az: 180.0,
+        bortle: None,
+        analytic: true,
+    };
+    let t00 = 1_775_865_600; // 2026-04-11T00:00Z, the fixture's first hour
+    let sky = celsius::weather::compose(&forecast, &hamburg_geo(), 0, t00, opts)
+        .expect("compose on fixture");
+
+    assert!(!sky.sun.visible, "sun is below the horizon pre-dawn");
+    assert!(sky.stars.is_some(), "a clear night renders a star field");
+    assert!(
+        sky.analytic.is_none(),
+        "the analytic sky is daytime-only, even with analytic enabled"
+    );
+    assert!(sky.clouds.is_empty(), "cloud cover is 0 at this hour");
+    assert!(sky.precipitation.is_none(), "weather_code 0 is dry");
+    assert!(
+        sky.chrome.status.to_lowercase().contains("hamburg"),
+        "the plain status carries the place name, got {:?}",
+        sky.chrome.status
+    );
+
+    // Hour-index and instant paths agree at the top of the hour.
+    let same = celsius::weather::compose_at(&forecast, &hamburg_geo(), t00, t00, opts)
+        .expect("compose_at on fixture");
+    assert_eq!(sky.sun.visible, same.sun.visible);
+    assert!((sky.wind_speed_kmh - same.wind_speed_kmh).abs() < 1e-9);
+}
+
 // Live network smoke tests. Opt-in via `cargo test -- --ignored` so they
 // only run when a developer wants to verify the real Open-Meteo response
 // still matches our types. Never in CI.
