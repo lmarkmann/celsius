@@ -11,8 +11,6 @@
 
 use std::sync::LazyLock;
 
-use chrono::{Timelike, Utc};
-
 use crate::colorspace::{PixelBuffer, Rgb, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 
 const W: i32 = 24;
@@ -380,16 +378,17 @@ fn in_window(local_minutes: u32) -> bool {
     (WINDOW_START..=WINDOW_END).contains(&local_minutes)
 }
 
-// Wall-clock minutes since midnight at the viewed location, from its UTC offset.
-fn local_minutes(offset: i64) -> u32 {
-    let local = Utc::now() + chrono::Duration::seconds(offset);
-    local.hour() * 60 + local.minute()
+// Minutes since local midnight for the instant `unix_utc`, given the location's
+// UTC `offset`. rem_euclid keeps it right for negative offsets.
+fn local_minutes(unix_utc: i64, offset: i64) -> u32 {
+    ((unix_utc + offset).rem_euclid(86_400) / 60) as u32
 }
 
-/// Whether the egg should show right now for a viewer at `(lat, lon)` whose
-/// local time runs `offset` seconds ahead of UTC.
-pub fn gate_open(lat: f64, lon: f64, offset: i64) -> bool {
-    at_kowloon_tong(lat, lon) && in_window(local_minutes(offset))
+/// Whether the egg should show for a viewer at `(lat, lon)` looking at the sky
+/// for `unix_utc`, whose local time runs `offset` seconds ahead of UTC. Keyed on
+/// the displayed instant, so scrubbing the timeline into the window summons it.
+pub fn gate_open(lat: f64, lon: f64, unix_utc: i64, offset: i64) -> bool {
+    at_kowloon_tong(lat, lon) && in_window(local_minutes(unix_utc, offset))
 }
 
 #[cfg(test)]
@@ -398,13 +397,37 @@ mod tests {
 
     const KT: (f64, f64) = KOWLOON_TONG;
     const ELSEWHERE: (f64, f64) = (52.520, 13.405); // Berlin
+    const HK_OFFSET: i64 = 28_800; // Asia/Hong_Kong, UTC+8
+    // What Open-Meteo actually geocodes "Kowloon Tong" to; must clear the gate.
+    const KT_GEOCODED: (f64, f64) = (22.33312, 114.17969);
+    // UTC instants whose Hong Kong local time lands on a window edge.
+    const HK_0130: i64 = 63_000; // 01:30, inside
+    const HK_0127: i64 = 62_820; // 01:27, just outside
+    const HK_NOON: i64 = 14_400; // 12:00, well outside
 
     #[test]
     fn place_match_is_radius_bounded() {
         assert!(at_kowloon_tong(KT.0, KT.1));
         assert!(at_kowloon_tong(KT.0 + 0.04, KT.1 - 0.04));
+        assert!(at_kowloon_tong(KT_GEOCODED.0, KT_GEOCODED.1));
         assert!(!at_kowloon_tong(ELSEWHERE.0, ELSEWHERE.1));
         assert!(!at_kowloon_tong(KT.0 + 1.0, KT.1));
+    }
+
+    #[test]
+    fn local_minutes_is_minute_of_local_day() {
+        assert_eq!(local_minutes(HK_0130, HK_OFFSET), 90); // 01:30
+        assert_eq!(local_minutes(HK_NOON, HK_OFFSET), 720); // 12:00
+        assert_eq!(local_minutes(0, -3_600), 1_380); // UTC-1: 23:00 the day before
+    }
+
+    #[test]
+    fn gate_opens_on_viewed_instant_not_wall_clock() {
+        assert!(gate_open(KT_GEOCODED.0, KT_GEOCODED.1, HK_0130, HK_OFFSET));
+        assert!(!gate_open(KT_GEOCODED.0, KT_GEOCODED.1, HK_0127, HK_OFFSET));
+        assert!(!gate_open(KT_GEOCODED.0, KT_GEOCODED.1, HK_NOON, HK_OFFSET));
+        // Right time of day but the wrong place stays shut.
+        assert!(!gate_open(ELSEWHERE.0, ELSEWHERE.1, HK_0130, HK_OFFSET));
     }
 
     #[test]

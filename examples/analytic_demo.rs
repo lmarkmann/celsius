@@ -64,6 +64,7 @@ fn demo_sky(sun_alt: f64, turbidity: f64) -> SkyState {
             blend: 1.0,
         }),
         wind_speed_kmh: 0.0,
+        unix_utc: 0,
     }
 }
 

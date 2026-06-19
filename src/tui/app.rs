@@ -129,14 +129,16 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Whether the flying-pigs egg should show right now: at Kowloon Tong and
-    /// inside the 01:28-02:10 local-time window. Recomputed live so it turns on
-    /// and off as the real clock crosses the window edges.
+    /// Whether the flying-pigs egg should show: at Kowloon Tong and the hour on
+    /// screen inside the 01:28-02:10 local-time window. Keyed on the displayed
+    /// sky's instant, so scrubbing (or `--at`) into the window turns it on and
+    /// scrubbing out turns it off.
     fn egg_active(&self) -> bool {
         let offset = self.timeline.offset;
+        let unix_utc = self.display.unix_utc;
         self.timeline
             .coords
-            .is_some_and(|(lat, lon)| pigs::gate_open(lat, lon, offset))
+            .is_some_and(|(lat, lon)| pigs::gate_open(lat, lon, unix_utc, offset))
     }
 
     /// Advance the animation by `elapsed` and report whether the visible frame
@@ -1176,6 +1178,7 @@ mod tests {
             horizon_glow: None,
             analytic: None,
             wind_speed_kmh: 20.0,
+            unix_utc: 0,
         }
     }
 
@@ -1221,6 +1224,23 @@ mod tests {
         app.handle_key(press(KeyCode::Tab));
         app.handle_key(press(KeyCode::Tab));
         assert_eq!(app.index, 49);
+    }
+
+    #[test]
+    fn egg_active_tracks_the_viewed_hour_at_kowloon_tong() {
+        let kt = (22.33312, 114.17969); // what Open-Meteo returns for Kowloon Tong
+        let hk = 28_800; // UTC+8
+        let at = |unix: i64, coords| {
+            let mut s = sky("kt");
+            s.unix_utc = unix;
+            Timeline::new(vec![s], 0, coords, hk)
+        };
+        // 01:30 HK on screen at Kowloon Tong: pigs.
+        assert!(App::new(&at(63_000, Some(kt))).egg_active());
+        // Noon on screen: nothing.
+        assert!(!App::new(&at(14_400, Some(kt))).egg_active());
+        // In-window hour but no coordinates (a scene file): nothing.
+        assert!(!App::new(&at(63_000, None)).egg_active());
     }
 
     #[test]
