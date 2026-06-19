@@ -256,12 +256,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
         if needs_redraw {
             draw_synchronized(terminal, |frame| {
                 let area = frame.area();
-                let buf = frame.buffer_mut();
-                draw_sky(buf, area, app);
-                match &app.overlay {
-                    Overlay::Help => draw_help_overlay(buf, area),
-                    Overlay::None => {}
-                }
+                draw_frame(frame.buffer_mut(), area, app);
             })
             .context("drawing frame")?;
             needs_redraw = false;
@@ -650,8 +645,27 @@ const BRAND: Color = Color::Rgb(252, 215, 172);
 const VALUE_OK: Color = Color::Rgb(150, 200, 140);
 const VALUE_SHORT: Color = Color::Rgb(220, 90, 90);
 
+/// Below this the sky can't render legibly, so the too-small screen takes over
+/// the whole frame; nothing (not even the help overlay) draws on top of it.
+fn too_small(area: Rect) -> bool {
+    area.width < MIN_COLS || area.height < MIN_ROWS
+}
+
+/// One full frame: the sky (or the too-small takeover) plus any open overlay.
+/// The too-small screen is exclusive, so overlays stay off it and its "terminal
+/// too small" message is never hidden.
+fn draw_frame(buf: &mut Buffer, area: Rect, app: &mut App) {
+    draw_sky(buf, area, app);
+    if !too_small(area) {
+        match &app.overlay {
+            Overlay::Help => draw_help_overlay(buf, area),
+            Overlay::None => {}
+        }
+    }
+}
+
 fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
-    if area.width < MIN_COLS || area.height < MIN_ROWS {
+    if too_small(area) {
         draw_too_small(buf, area);
         return;
     }
@@ -1404,12 +1418,33 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(80, 40)).unwrap();
         term.draw(|f| {
             let area = f.area();
-            let buf = f.buffer_mut();
-            draw_sky(buf, area, &mut app);
-            draw_help_overlay(buf, area);
+            draw_frame(f.buffer_mut(), area, &mut app);
         })
         .unwrap();
         assert!(buffer_text(term.backend().buffer()).contains("keybindings"));
+    }
+
+    #[test]
+    fn too_small_screen_wins_over_open_help() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        app.handle_key(press(KeyCode::Char('?')));
+        // Help is open, but the terminal is below the gate.
+        let mut term = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_frame(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        let content = buffer_text(term.backend().buffer());
+        assert!(
+            content.contains("the sky is too cramped"),
+            "too-small message must show through an open help overlay"
+        );
+        assert!(
+            !content.contains("keybindings"),
+            "help overlay must not paint over the too-small screen"
+        );
     }
 
     #[test]
