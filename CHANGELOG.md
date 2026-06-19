@@ -3,6 +3,14 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.5] - 2026-06-19
+
+### Fixed
+
+- Gate time-based overlays on the viewed sky's instant ([#61](https://github.com/lmarkmann/celsius/pull/61))
+- Keep the too-small screen above the help overlay ([#60](https://github.com/lmarkmann/celsius/pull/60))
+- Keep the sky on screen while a new city loads ([#58](https://github.com/lmarkmann/celsius/pull/58))
+
 ## [0.4.4] - 2026-06-16
 
 ### Added
