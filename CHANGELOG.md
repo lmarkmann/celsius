@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.6] - 2026-06-19
+
+### Test
+
+- Lock compose() hour-index path; document noise seed truncation ([#62](https://github.com/lmarkmann/celsius/pull/62))
+
 ## [0.4.5] - 2026-06-19
 
 ### Fixed
