@@ -3,6 +3,12 @@
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 
+## [0.4.7] - 2026-07-15
+
+### Other
+
+- Update Cargo.lock dependencies
+
 ## [0.4.6] - 2026-06-19
 
 ### Test
