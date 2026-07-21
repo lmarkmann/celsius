@@ -47,7 +47,7 @@ ureq = { version = "3", default-features = false, features = ["rustls", "json"] 
 
 [dev-dependencies]
 assert_cmd = "2"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "5.0.1", features = ["html_reports"], package = "codspeed-criterion-compat" }
 predicates = "3"
 serde_json = "1"
 sha2 = "0.10"
