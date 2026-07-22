@@ -31,8 +31,12 @@ jobs:
       - name: clippy (png feature)
         run: cargo clippy --all-targets --features png -- -D warnings
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: test
-        run: cargo test --features png
+        run: cargo nextest run --features png
 
       - name: bench (compile + smoke)
         run: cargo bench --bench render -- --test
@@ -47,3 +51,13 @@ jobs:
           tool: cargo-audit
       # paste (via ratatui) and lru (via ratatui's layout cache); not our code
       - run: cargo audit --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0002
+
+  zizmor:
+    name: zizmor (Actions security)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # ref-pin baseline in .github/zizmor.yml; gate on high so tag pins pass.
+      - run: pipx run zizmor==1.26.1 --min-severity high .github/workflows/
+        env:
+          GH_TOKEN: ${{ github.token }}

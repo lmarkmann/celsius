@@ -33,6 +33,14 @@ default = []
 # TUI-only binary; the oracle path pulls it in via `--features png`.
 png = ["dep:image"]
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+
 [dependencies]
 anyhow = "1"
 chrono = "0.4"

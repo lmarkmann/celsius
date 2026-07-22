@@ -18,7 +18,7 @@ check:
 
 # Everything the CI test job runs, before pushing (audit still lives only in CI).
 ci: check
-    cargo test --features png
+    cargo nextest run --features png
     cargo bench --bench render -- --test
 
 fmt:
@@ -34,11 +34,11 @@ build-oracle:
 
 # Release tests incl. the golden oracle (the deterministic scene-lock path).
 test:
-    cargo test --release --features png
+    cargo nextest run --release --features png
 
 # Release tests with captured output shown (use to see which scene the oracle reports on failure).
 verify:
-    cargo test --release --features png -- --nocapture
+    cargo nextest run --release --features png --no-capture
 
 # Render one scene to out/NAME.png.
 render name:
@@ -53,10 +53,9 @@ render-all:
 render-wip:
     for s in {{wip_scenes}}; do just render $s; done
 
-# Re-lock celsius goldens (PNGs + manifest.toml) from the current renderer. Run this only after a deliberate pipeline change you want to bless. The bless test renders each scene, writes its PNG, and rewrites manifest.toml.
+# Re-lock celsius golden scene examples (PNGs + manifest.toml) from the current renderer. This should only be run after deliberate changes, of the scenes or how they are rendered.
 lock:
     CELSIUS_SCENES="{{scenes}}" cargo test --release --features png --test oracle bless_goldens -- --ignored --nocapture
 
-# Criterion render + noise benchmarks.
 bench:
     cargo bench --bench render
