@@ -21,8 +21,7 @@ pub fn glow_contribution(
     let d = (dx * dx + dy * dy * 3.0).sqrt();
     let falloff = (1.0 - d / 0.40).max(0.0);
     if falloff == 0.0 {
-        // Same signs the powf path yields for a zero base, so the caller's
-        // additive blend stays bit-identical while most pixels skip the powf.
+        // Same signs the powf path yields for a zero base, so the caller's additive blend stays bit-identical while most pixels skip the powf.
         return (0.0, -0.0, -0.0);
     }
     let glow = falloff.powf(2.2);

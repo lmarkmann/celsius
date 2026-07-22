@@ -10,11 +10,7 @@ use crate::precipitation;
 use crate::scene::SkyState;
 use crate::stars::build_star_field;
 
-// A cloud layer's gaussian altitude mask is feathered to zero across this band
-// instead of switching off in one row. Below the floor the layer contributes
-// nothing and is skipped; from floor to knee its density ramps in via smoothstep
-// so a near-uniform high-cover deck fades at its edge rather than leaving a hard
-// horizontal seam where the mask crossed an abrupt cutoff.
+// A cloud layer's gaussian altitude mask is feathered to zero across this band instead of switching off in one row. Below the floor the layer contributes nothing and is skipped; from floor to knee its density ramps in via smoothstep so a near-uniform high-cover deck fades at its edge rather than leaving a hard horizontal seam where the mask crossed an abrupt cutoff.
 const ALTITUDE_FLOOR: f64 = 0.02;
 const ALTITUDE_KNEE: f64 = 0.14;
 
@@ -23,9 +19,7 @@ fn sun_disc_color() -> Oklab {
 }
 
 thread_local! {
-    // A noise grid depends only on its seed, so animated re-renders (the TUI
-    // redraws on every drift tick) reuse grids instead of rebuilding one per
-    // layer per frame. Realistic workloads see a few dozen seeds at ~24KB each.
+    // A noise grid depends only on its seed, so animated re-renders (the TUI redraws on every drift tick) reuse grids instead of rebuilding one per layer per frame. Realistic workloads see a few dozen seeds at ~24KB each.
     static NOISE_CACHE: RefCell<HashMap<u64, Rc<Noise>>> = RefCell::new(HashMap::new());
 }
 
@@ -40,8 +34,7 @@ fn noise_for(seed: u64) -> Rc<Noise> {
     })
 }
 
-// Per-layer render parameters resolved once from the layer's cloud kind, so the
-// per-pixel loop never reconstructs morphology or re-converts colors.
+// Per-layer render parameters resolved once from the layer's cloud kind, so the per-pixel loop never reconstructs morphology or re-converts colors.
 struct LayerRender {
     noise: Rc<Noise>,
     octaves: u32,
@@ -95,13 +88,10 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let sun_r = sun.radius;
     let sun_disc = sun_disc_color();
 
-    // Prototype: when an analytic sky is attached, its Preetham radiance field
-    // replaces the vertical gradient as the background. Prepared once here; the
-    // per-pixel cost is one Perez ratio plus a color conversion.
+    // Prototype: when an analytic sky is attached, its Preetham radiance field replaces the vertical gradient as the background. Prepared once here; the per-pixel cost is one Perez ratio plus a color conversion.
     let analytic = state.analytic.as_ref().map(crate::analytic_sky::prepare);
 
-    // Row-invariant cloud terms: the altitude gaussian and the noise row
-    // coordinate change per row and per layer, never per pixel.
+    // Row-invariant cloud terms: the altitude gaussian and the noise row coordinate change per row and per layer, never per pixel.
     let mut row_clouds: Vec<(f64, f64)> = vec![(0.0, 0.0); cloud_layers.len()];
 
     for py in 0..height {
@@ -153,8 +143,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                 b += db;
             }
 
-            // Sun lighting is the same for every layer at this pixel; computed
-            // at most once, and only when some layer actually has density.
+            // Sun lighting is the same for every layer at this pixel; computed at most once, and only when some layer actually has density.
             let mut sun_lit: Option<f64> = None;
             for ((layer, lr), &(alt, ny)) in state.clouds.iter().zip(&cloud_layers).zip(&row_clouds)
             {
@@ -167,8 +156,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                 let nx = fx * layer.scale_x + layer.offset_x;
                 let n = lr.noise.warped_fbm_oct(nx, ny, lr.octaves);
                 let noise_density = ((n - layer.threshold).max(0.0) * lr.edge) * alt * layer.cover;
-                // A flat deck ignores the noise gate and fills the altitude band
-                // solidly; flatten blends between the two.
+                // A flat deck ignores the noise gate and fills the altitude band solidly; flatten blends between the two.
                 let flat_density = (alt * layer.cover).min(1.0);
                 let mut density =
                     (noise_density * (1.0 - lr.flatten) + flat_density * lr.flatten) * edge_fade;

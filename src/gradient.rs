@@ -48,9 +48,7 @@ impl Gradient {
         stops.last().copied().unwrap().color
     }
 
-    /// Cross-fade toward another gradient in Oklab. Samples both at the union
-    /// of their stop positions so neither gradient's keyframes are lost, which
-    /// keeps a continuous sky transition smooth as `k` sweeps 0 -> 1.
+    /// Cross-fade toward another gradient in Oklab. Samples both at the union of their stop positions so neither gradient's keyframes are lost, which keeps a continuous sky transition smooth as `k` sweeps 0 -> 1.
     pub fn blend(&self, other: &Gradient, k: f64) -> Gradient {
         let k = k.clamp(0.0, 1.0);
         if k == 0.0 {

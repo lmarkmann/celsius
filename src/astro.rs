@@ -53,9 +53,7 @@ fn gast(jd_val: f64) -> f64 {
     norm(gmst + eq_equinoxes)
 }
 
-// Saemundsson's formula: lifts geometric altitude to apparent altitude.
-// At the horizon the sun/moon disc appears ~29 arcmin above its true position;
-// shifts sunrise/sunset timing by a few minutes at mid latitudes, more near the poles.
+// Saemundsson's formula: lifts geometric altitude to apparent altitude. At the horizon the sun/moon disc appears ~29 arcmin above its true position; shifts sunrise/sunset timing by a few minutes at mid latitudes, more near the poles.
 fn refraction_deg(h_deg: f64) -> f64 {
     if h_deg < -1.0 {
         return 0.0;
@@ -119,8 +117,7 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     let mm = rad(norm(134.9633964 + 477_198.867_505_5 * t)); // moon mean anomaly
     let f = rad(norm(93.2720950 + 483_202.017_523_3 * t)); // argument of latitude
 
-    // Longitude perturbations (Meeus Table 47.A, 20 largest terms, units: 0.001 arcsec -> divide by 1e6 for deg)
-    // Coefficients are in units of 0.000001 degrees
+    // Longitude perturbations (Meeus Table 47.A, 20 largest terms, units: 0.001 arcsec -> divide by 1e6 for deg) Coefficients are in units of 0.000001 degrees
     #[rustfmt::skip]
     let sigma_l: f64 = [
         ( 6_288_774.0,  0.0,  0.0,  1.0,  0.0),
@@ -186,8 +183,7 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
 
     let altaz = to_horizontal(ra, dec, lat, lon, jd_val);
 
-    // Phase: elongation between moon and sun in ecliptic longitude.
-    // Reuse t (already computed); skip the full horizontal transform.
+    // Phase: elongation between moon and sun in ecliptic longitude. Reuse t (already computed); skip the full horizontal transform.
     let sun_t = t;
     let sun_l0 = norm(280.466_46 + 36_000.769_83 * sun_t);
     let sun_m = rad(norm(357.529_11 + 35_999.050_29 * sun_t));
@@ -208,13 +204,7 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     }
 }
 
-// Orthographic projection of the sky dome onto the view plane facing
-// `center_az`. The object's unit direction has an eastward and an upward
-// component (the depth component, toward the look direction, is dropped). This
-// foreshortens azimuth as altitude rises, so a star near the zenith barely
-// shifts sideways while one near the horizon swings the full width, and it bows
-// the solar arc the way the real sky does instead of the old anamorphic linear
-// map. Horizon stays at the frame bottom (y=1), zenith at the top (y=0).
+// Orthographic projection of the sky dome onto the view plane facing `center_az`. The object's unit direction has an eastward and an upward component (the depth component, toward the look direction, is dropped). This foreshortens azimuth as altitude rises, so a star near the zenith barely shifts sideways while one near the horizon swings the full width, and it bows the solar arc the way the real sky does instead of the old anamorphic linear map. Horizon stays at the frame bottom (y=1), zenith at the top (y=0).
 pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> (f64, f64) {
     let alt = altaz.altitude.to_radians();
     let az_delta = (norm(altaz.azimuth - center_az + 180.0) - 180.0).to_radians();
@@ -229,9 +219,7 @@ pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> (f64, f64) {
 mod tests {
     use super::*;
 
-    // Reference: USNO solar calculator, Washington DC (38.9N, 77.0W), 2025-06-21 solar noon.
-    // Solar noon at -77 lon is ~17:08 UTC (77/15 = 5.13h offset + small equation-of-time term).
-    // Expected: altitude ~74 deg, azimuth ~180 deg.
+    // Reference: USNO solar calculator, Washington DC (38.9N, 77.0W), 2025-06-21 solar noon. Solar noon at -77 lon is ~17:08 UTC (77/15 = 5.13h offset + small equation-of-time term). Expected: altitude ~74 deg, azimuth ~180 deg.
     #[test]
     fn sun_washington_solstice_noon() {
         // 2025-06-21 17:08:00 UTC
@@ -249,8 +237,7 @@ mod tests {
         );
     }
 
-    // Reference: USNO, same location, 2025-12-21 UTC noon.
-    // Winter solstice: sun altitude much lower, still roughly south.
+    // Reference: USNO, same location, 2025-12-21 UTC noon. Winter solstice: sun altitude much lower, still roughly south.
     #[test]
     fn sun_washington_winter_noon() {
         // 2025-12-21 17:00 UTC ~ solar noon in Washington DC
@@ -268,8 +255,7 @@ mod tests {
         );
     }
 
-    // At north pole on summer solstice, sun altitude ~ 23.5 deg (axial tilt)
-    // and it circles the horizon, never setting.
+    // At north pole on summer solstice, sun altitude ~ 23.5 deg (axial tilt) and it circles the horizon, never setting.
     #[test]
     fn sun_north_pole_solstice() {
         // 2025-06-21 12:00 UTC
@@ -296,12 +282,10 @@ mod tests {
         );
     }
 
-    // Moon phase sanity: 2025-01-29 was a full moon.
-    // Illumination should be close to 1.0.
+    // Moon phase sanity: 2025-01-29 was a full moon. Illumination should be close to 1.0.
     #[test]
     fn moon_full_2025_jan_29() {
-        // 2025-01-29 18:36 UTC (new moon is wrong, let me use a full moon)
-        // Full moon: 2025-01-13 22:27 UTC
+        // 2025-01-29 18:36 UTC (new moon is wrong, let me use a full moon) Full moon: 2025-01-13 22:27 UTC
         let unix = 1_736_810_820i64; // 2025-01-13 22:27:00 UTC
         let state = moon_state(51.5, -0.1, unix); // London
         // At full moon illumination >= 0.95
@@ -321,8 +305,7 @@ mod tests {
         );
     }
 
-    // Moon phase sanity: 2025-01-29 was a new moon.
-    // Illumination should be close to 0.
+    // Moon phase sanity: 2025-01-29 was a new moon. Illumination should be close to 0.
     #[test]
     fn moon_new_2025_jan_29() {
         // New moon: 2025-01-29 12:36 UTC
@@ -335,9 +318,7 @@ mod tests {
         );
     }
 
-    // Atmospheric refraction at the horizon: a body at geometric altitude 0
-    // should appear lifted by ~29 arcmin (Saemundsson). At zenith, refraction
-    // is zero. Above ~10 deg, it drops below 6 arcmin.
+    // Atmospheric refraction at the horizon: a body at geometric altitude 0 should appear lifted by ~29 arcmin (Saemundsson). At zenith, refraction is zero. Above ~10 deg, it drops below 6 arcmin.
     #[test]
     fn refraction_horizon_and_zenith() {
         assert!(
@@ -381,9 +362,7 @@ mod tests {
 
     #[test]
     fn sky_fracs_foreshortens_high_objects() {
-        // 60deg up, 60deg east of the south-facing center. Orthographic projection
-        // pulls it toward the middle (x ~ 0.72), well short of the old linear
-        // map's 0.83, and seats it high (y from sin(60)).
+        // 60deg up, 60deg east of the south-facing center. Orthographic projection pulls it toward the middle (x ~ 0.72), well short of the old linear map's 0.83, and seats it high (y from sin(60)).
         let altaz = AltAz {
             altitude: 60.0,
             azimuth: 240.0,

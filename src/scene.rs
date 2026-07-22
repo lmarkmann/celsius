@@ -37,11 +37,7 @@ pub struct Sun {
     pub visible: bool,
 }
 
-/// Cloud morphology class. Drives noise detail, edge sharpness, and the
-/// lit/shadow colors so a thin cirrus veil, a flat stratus deck, and a dark
-/// storm tower no longer share one texture. `Generic` reproduces the
-/// pre-morphology render exactly, which keeps vendored scenes and the oracle
-/// goldens unchanged.
+/// Cloud morphology class. Drives noise detail, edge sharpness, and the lit/shadow colors so a thin cirrus veil, a flat stratus deck, and a dark storm tower no longer share one texture. `Generic` reproduces the pre-morphology render exactly, which keeps vendored scenes and the oracle goldens unchanged.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CloudKind {
@@ -115,8 +111,7 @@ pub struct CloudLayer {
     pub seed: u64,
     #[serde(default)]
     pub kind: CloudKind,
-    /// 0 = full noise texture, 1 = featureless flat deck. Lets a high-cover
-    /// stratus layer render as a solid lid instead of separate blobs.
+    /// 0 = full noise texture, 1 = featureless flat deck. Lets a high-cover stratus layer render as a solid lid instead of separate blobs.
     #[serde(default)]
     pub flatten: f64,
     #[serde(default = "default_offset_x")]
@@ -160,25 +155,18 @@ pub struct Chrome {
     pub header_right: String,
     pub footer: String,
     pub keys: String,
-    /// One-line ASCII summary for the `--plain` surface, built from structured
-    /// weather data. Empty for scene files, which have no structured weather;
-    /// `write_plain` falls back to the decorative chrome there.
+    /// One-line ASCII summary for the `--plain` surface, built from structured weather data. Empty for scene files, which have no structured weather; `write_plain` falls back to the decorative chrome there.
     #[serde(default)]
     pub status: String,
-    /// Footer payload (temp, H/L, condition, wind) as width tiers, richest
-    /// first. The TUI picks the widest tier that fits so the live reading
-    /// survives while the window narrows. Empty for scene files, which keep the
-    /// static `footer` string.
+    /// Footer payload (temp, H/L, condition, wind) as width tiers, richest first. The TUI picks the widest tier that fits so the live reading survives while the window narrows. Empty for scene files, which keep the static `footer` string.
     #[serde(skip)]
     pub footer_tiers: Vec<String>,
-    /// Key-hint tiers, richest first, collapsing to `? help` before any footer
-    /// payload is dropped. Empty for scene files, which keep the static `keys`.
+    /// Key-hint tiers, richest first, collapsing to `? help` before any footer payload is dropped. Empty for scene files, which keep the static `keys`.
     #[serde(skip)]
     pub keys_tiers: Vec<String>,
 }
 
-/// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to
-/// slip through the old stringly field and silently render as snow.
+/// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to slip through the old stringly field and silently render as snow.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PrecipKind {
@@ -198,9 +186,7 @@ pub struct Precipitation {
     pub opacity: f64,
 }
 
-/// Warm light concentrated on the horizon at the sun's bearing. The vertical
-/// gradient is azimuth-blind, so this is what puts sunrise/sunset color on the
-/// side the sun actually is rather than symmetrically across the frame.
+/// Warm light concentrated on the horizon at the sun's bearing. The vertical gradient is azimuth-blind, so this is what puts sunrise/sunset color on the side the sun actually is rather than symmetrically across the frame.
 #[derive(Clone, Debug)]
 pub struct HorizonGlow {
     pub x_frac: f64,
@@ -221,14 +207,10 @@ pub struct SkyState {
     pub precipitation: Option<Precipitation>,
     pub lightning: Option<Lightning>,
     pub horizon_glow: Option<HorizonGlow>,
-    /// Prototype: when present, render computes the sky background from the
-    /// Preetham analytic model instead of sampling `gradient`. Set only for the
-    /// live-weather daytime path; scenes leave it None.
+    /// Prototype: when present, render computes the sky background from the Preetham analytic model instead of sampling `gradient`. Set only for the live-weather daytime path; scenes leave it None.
     pub analytic: Option<AnalyticSky>,
     pub wind_speed_kmh: f64,
-    /// The UTC instant this sky depicts, so time-gated overlays read the hour on
-    /// screen rather than the machine clock. `0` for static scene files and the
-    /// error sky, which never trigger them.
+    /// The UTC instant this sky depicts, so time-gated overlays read the hour on screen rather than the machine clock. `0` for static scene files and the error sky, which never trigger them.
     pub unix_utc: i64,
 }
 
@@ -273,8 +255,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         source: e,
     })?;
 
-    // Gradient::sample panics on zero stops; reject it here so a bad scene
-    // file fails with a SceneError instead of a render-time panic.
+    // Gradient::sample panics on zero stops; reject it here so a bad scene file fails with a SceneError instead of a render-time panic.
     if raw.gradient.stops.is_empty() {
         return Err(SceneError::EmptyGradient {
             path: path.to_path_buf(),

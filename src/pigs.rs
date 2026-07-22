@@ -1,13 +1,8 @@
 //! Three flying pigs: a hidden easter egg.
 //!
-//! Three fat pink pigs with angel wings and halos fly single file across the
-//! sky, each leaving a short Nyan-Cat rainbow contrail. It appears only at
-//! Kowloon Tong, Kowloon, Hong Kong, between 01:28 and 02:10 local time; any
-//! other place or time renders the normal sky untouched.
+//! Three fat pink pigs with angel wings and halos fly single file across the sky, each leaving a short Nyan-Cat rainbow contrail. It appears only at Kowloon Tong, Kowloon, Hong Kong, between 01:28 and 02:10 local time; any other place or time renders the normal sky untouched.
 //!
-//! Like lightning, this lives outside the render pipeline: `overlay()` composites
-//! onto a copy of the rendered sky each TUI tick. Positions are pixel-exact at
-//! the 104x50 reference size and scale the flight path to the actual buffer.
+//! Like lightning, this lives outside the render pipeline: `overlay()` composites onto a copy of the rendered sky each TUI tick. Positions are pixel-exact at the 104x50 reference size and scale the flight path to the actual buffer.
 
 use std::sync::LazyLock;
 
@@ -29,8 +24,7 @@ const WING: Rgb = Rgb::new(250, 250, 255);
 const WING_EDGE: Rgb = Rgb::new(204, 206, 230);
 const HALO: Rgb = Rgb::new(255, 216, 120);
 
-// Wingless pig, one char per cell ('.' transparent). The back is solid (row 8)
-// so a swung-away wing never leaves a hole there.
+// Wingless pig, one char per cell ('.' transparent). The back is solid (row 8) so a swung-away wing never leaves a hole there.
 const BASE: [&str; 22] = [
     "........................",
     "........................",
@@ -71,8 +65,7 @@ fn palette(ch: char) -> Option<Rgb> {
     }
 }
 
-// Near wing in three poses; the tip travels high (up) -> out-left (mid) -> low
-// (down) so the flap sweeps. Trailing-edge cells get the feathered tint.
+// Near wing in three poses; the tip travels high (up) -> out-left (mid) -> low (down) so the flap sweeps. Trailing-edge cells get the feathered tint.
 const WING_UP: &[(i32, i32)] = &[
     (6, 1),
     (7, 1),
@@ -244,8 +237,7 @@ const TRAIL_LEN: i32 = 18; // px the contrail persists
 const TRAIL_ATTACH: i32 = 4; // rear offset where emission starts
 const TRAIL_TOP: i32 = 10; // band top relative to the bobbing pig origin
 
-// Match Python's round() (round half to even); the sandbox is authored against
-// it, so odd-distance trail columns would land 1px off with away-from-zero.
+// Match Python's round() (round half to even); the sandbox is authored against it, so odd-distance trail columns would land 1px off with away-from-zero.
 fn iround(x: f64) -> i64 {
     x.round_ties_even() as i64
 }
@@ -285,8 +277,7 @@ fn blend(bg: Rgb, fg: Rgb, a: f64) -> Rgb {
     ))
 }
 
-// Long enough for the rearmost pig's whole trail to clear the right edge, so the
-// loop wraps on empty sky with no rainbow popping at the edge.
+// Long enough for the rearmost pig's whole trail to clear the right edge, so the loop wraps on empty sky with no rainbow popping at the edge.
 fn frame_count(width: i32) -> i64 {
     let rear_reach = SPACING * (NUM_PIGS as i32 - 1) + TRAIL_LEN;
     iround(((width - START_X) + rear_reach) as f64 / SPEED) + 1
@@ -345,8 +336,7 @@ fn paste_body(pixels: &mut PixelBuffer, frame: &Sprite, px: i32, py: i32) {
     }
 }
 
-/// Composite the egg onto an already-rendered sky for the given tick. Trails for
-/// all pigs first, then bodies on top, so each pig sits over every trail.
+/// Composite the egg onto an already-rendered sky for the given tick. Trails for all pigs first, then bodies on top, so each pig sits over every trail.
 pub fn overlay(pixels: &mut PixelBuffer, tick: u64) {
     let w = pixels.width as i32;
     let h = pixels.height as i32;
@@ -378,15 +368,12 @@ fn in_window(local_minutes: u32) -> bool {
     (WINDOW_START..=WINDOW_END).contains(&local_minutes)
 }
 
-// Minutes since local midnight for the instant `unix_utc`, given the location's
-// UTC `offset`. rem_euclid keeps it right for negative offsets.
+// Minutes since local midnight for the instant `unix_utc`, given the location's UTC `offset`. rem_euclid keeps it right for negative offsets.
 fn local_minutes(unix_utc: i64, offset: i64) -> u32 {
     ((unix_utc + offset).rem_euclid(86_400) / 60) as u32
 }
 
-/// Whether the egg should show for a viewer at `(lat, lon)` looking at the sky
-/// for `unix_utc`, whose local time runs `offset` seconds ahead of UTC. Keyed on
-/// the displayed instant, so scrubbing the timeline into the window summons it.
+/// Whether the egg should show for a viewer at `(lat, lon)` looking at the sky for `unix_utc`, whose local time runs `offset` seconds ahead of UTC. Keyed on the displayed instant, so scrubbing the timeline into the window summons it.
 pub fn gate_open(lat: f64, lon: f64, unix_utc: i64, offset: i64) -> bool {
     at_kowloon_tong(lat, lon) && in_window(local_minutes(unix_utc, offset))
 }

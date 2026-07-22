@@ -1,7 +1,4 @@
-//! Throwaway: render the prototype analytic sky across sun elevations and
-//! turbidities to PNGs in out/, so the model can be eyeballed without a live
-//! forecast. Sun position is chosen directly (due south), no network.
-//!   cargo run --example analytic_demo --features png
+//! Throwaway: render the prototype analytic sky across sun elevations and turbidities to PNGs in out/, so the model can be eyeballed without a live forecast. Sun position is chosen directly (due south), no network.   cargo run --example analytic_demo --features png
 
 use std::path::Path;
 
@@ -78,16 +75,14 @@ fn main() {
             terminal::write_png(&pixels, Path::new(&path)).unwrap();
             println!("{path}");
 
-            // Same scene at the real half-block terminal resolution (104x100),
-            // so the on-screen coarseness is visible, not just the smooth PNG.
+            // Same scene at the real half-block terminal resolution (104x100), so the on-screen coarseness is visible, not just the smooth PNG.
             let term = render(&sky, 104, 100);
             let tpath = format!("out/analytic_alt{:02}_t{}_term.png", alt as i32, t as i32);
             terminal::write_png(&term, Path::new(&tpath)).unwrap();
         }
     }
 
-    // Analytic sky under a cumulus deck: clouds composite on top, analytic blue
-    // shows through the gaps. The one case to confirm before defaulting on.
+    // Analytic sky under a cumulus deck: clouds composite on top, analytic blue shows through the gaps. The one case to confirm before defaulting on.
     let mut cloudy = demo_sky(30.0, 2.5);
     cloudy.clouds = vec![cumulus_layer()];
     let px = render(&cloudy, 240, 120);

@@ -65,10 +65,7 @@ struct Cli {
     #[arg(long, value_name = "F64", global = true, allow_hyphen_values = true)]
     lon: Option<f64>,
 
-    /// UTC time to scrub to. Accepts a bare hour ("17"), HH:MM ("17:30"),
-    /// a relative offset from now ("+3h", "-30m", "+1d"), a date alone
-    /// ("2026-06-21", defaults to 12:00 UTC), or full ISO 8601
-    /// ("2026-06-21T17:00:00Z"). Default: now.
+    /// UTC time to scrub to. Accepts a bare hour ("17"), HH:MM ("17:30"), a relative offset from now ("+3h", "-30m", "+1d"), a date alone ("2026-06-21", defaults to 12:00 UTC), or full ISO 8601 ("2026-06-21T17:00:00Z"). Default: now.
     #[arg(long, value_name = "TIME", global = true, allow_hyphen_values = true)]
     at: Option<String>,
 
@@ -76,30 +73,23 @@ struct Cli {
     #[arg(long, value_name = "PATH", global = true)]
     scene: Option<PathBuf>,
 
-    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W.
-    /// Default 180 (south) suits northern-hemisphere observers.
+    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W. Default 180 (south) suits northern-hemisphere observers.
     #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
     facing: f64,
 
-    /// Bortle dark-sky class for your location: 1 (pristine) to 9 (inner city).
-    /// Scales visible star count and tints the horizon with light-pollution glow.
-    /// Default: unset (treat as Bortle 1, today's behavior). Falls back to config.
+    /// Bortle dark-sky class for your location: 1 (pristine) to 9 (inner city). Scales visible star count and tints the horizon with light-pollution glow. Default: unset (treat as Bortle 1, today's behavior). Falls back to config.
     #[arg(long, value_name = "1..9", global = true, value_parser = clap::value_parser!(u8).range(1..=9))]
     bortle: Option<u8>,
 
-    /// Print a one-line ASCII weather summary and exit, no full-screen UI.
-    /// Also the default when stdout is not a terminal or NO_COLOR is set.
+    /// Print a one-line ASCII weather summary and exit, no full-screen UI. Also the default when stdout is not a terminal or NO_COLOR is set.
     #[arg(long, visible_alias = "no-tui", global = true)]
     plain: bool,
 
-    /// Print one ANSI half-block frame (104x50) and exit: the visual capture
-    /// surface, for piping into a file or `less -R`.
+    /// Print one ANSI half-block frame (104x50) and exit: the visual capture surface, for piping into a file or `less -R`.
     #[arg(long, global = true, conflicts_with = "plain")]
     frame: bool,
 
-    /// Sky model for the live-weather background. `analytic` (default) is the
-    /// Preetham physical sky, crossfading to the `palette` gradient through
-    /// twilight and night. Pass `--sky palette` to force the hand-tuned gradient.
+    /// Sky model for the live-weather background. `analytic` (default) is the Preetham physical sky, crossfading to the `palette` gradient through twilight and night. Pass `--sky palette` to force the hand-tuned gradient.
     #[arg(long, value_enum, default_value_t = SkyModel::Analytic, global = true)]
     sky: SkyModel,
 
@@ -138,9 +128,7 @@ enum OutputMode {
     Frame,
 }
 
-/// Decide how to render. First match wins: an explicit `--frame` beats
-/// everything; otherwise anything that means "not an interactive color
-/// terminal" (--plain, NO_COLOR, a pipe) falls back to the flat text surface.
+/// Decide how to render. First match wins: an explicit `--frame` beats everything; otherwise anything that means "not an interactive color terminal" (--plain, NO_COLOR, a pipe) falls back to the flat text surface.
 fn output_mode(cli: &Cli) -> OutputMode {
     if cli.frame {
         OutputMode::Frame
@@ -155,8 +143,7 @@ fn output_mode(cli: &Cli) -> OutputMode {
     }
 }
 
-/// Write one state non-interactively and exit. A broken pipe (`celsius | head`)
-/// is a normal way to stop reading, not an error, so it maps to success.
+/// Write one state non-interactively and exit. A broken pipe (`celsius | head`) is a normal way to stop reading, not an error, so it maps to success.
 fn write_oneshot(state: &SkyState, mode: &OutputMode) -> Result<()> {
     let mut out = BufWriter::new(stdout().lock());
     let written = match mode {
@@ -204,8 +191,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Non-interactive (pipe, --plain, --frame, NO_COLOR): build once, no retry.
-    // A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
+    // Non-interactive (pipe, --plain, --frame, NO_COLOR): build once, no retry. A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
     let mode = output_mode(&cli);
     if !matches!(mode, OutputMode::Tui) {
         let location = resolve_location(&cli)
@@ -216,14 +202,11 @@ fn main() -> Result<()> {
         return write_oneshot(&timeline.states[timeline.home], &mode);
     }
 
-    // Live TUI: one continuous terminal session. Forecasts fetch on a background
-    // thread behind a loading screen, so the sky never drops to a bare shell
-    // while a city loads. A fetch failure becomes an error sky retryable with `r`.
+    // Live TUI: one continuous terminal session. Forecasts fetch on a background thread behind a loading screen, so the sky never drops to a bare shell while a city loads. A fetch failure becomes an error sky retryable with `r`.
     let params = FetchParams::from(&cli);
     let mut session = tui::Session::new();
     let result = run_tui(&mut session, &cli, &params);
-    // Drop the session (restoring the terminal) before any error is printed, so
-    // it lands on the normal screen rather than inside the alternate one.
+    // Drop the session (restoring the terminal) before any error is printed, so it lands on the normal screen rather than inside the alternate one.
     drop(session);
     result
 }
@@ -259,8 +242,7 @@ fn run_tui(session: &mut tui::Session, cli: &Cli, params: &FetchParams) -> Resul
     }
 }
 
-/// The compose-relevant CLI fields, owned so a background fetch thread can hold
-/// them while the main thread keeps drawing.
+/// The compose-relevant CLI fields, owned so a background fetch thread can hold them while the main thread keeps drawing.
 #[derive(Clone)]
 struct FetchParams {
     at: Option<String>,
@@ -280,9 +262,7 @@ impl From<&Cli> for FetchParams {
     }
 }
 
-/// Fetch and compose the timeline for `geo` on a background thread, drawing the
-/// loading screen over `current` until it lands. `Ok(None)` means the user
-/// cancelled the wait; the caller keeps whatever sky was showing.
+/// Fetch and compose the timeline for `geo` on a background thread, drawing the loading screen over `current` until it lands. `Ok(None)` means the user cancelled the wait; the caller keeps whatever sky was showing.
 fn fetch_timeline(
     session: &mut tui::Session,
     params: &FetchParams,
@@ -298,8 +278,7 @@ fn fetch_timeline(
     session.await_timeline(current, &label, rx)
 }
 
-/// Build the timeline for a location, collapsing any failure into an error sky
-/// so the loop (and the loading screen) always have something to show.
+/// Build the timeline for a location, collapsing any failure into an error sky so the loop (and the loading screen) always have something to show.
 fn timeline_or_error(params: &FetchParams, location: location::GeoResult) -> Timeline {
     match build_live_timeline(params, &location) {
         Ok(t) => t,
@@ -331,8 +310,7 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
-    // Render the home slot at the exact requested instant, interpolating between
-    // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
+    // Render the home slot at the exact requested instant, interpolating between the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
     states[home] = compose_at(&forecast, location, at_unix, now_unix, opts)
         .context("composing sky for requested time")?;
     let coords = Some((location.latitude, location.longitude));
@@ -344,9 +322,7 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
     ))
 }
 
-/// The starting location: CLI flags or saved config, falling back to the
-/// interactive picker (and saving the pick) on a fresh install. `None` only if
-/// the user cancels that first-run picker.
+/// The starting location: CLI flags or saved config, falling back to the interactive picker (and saving the pick) on a fresh install. `None` only if the user cancels that first-run picker.
 fn first_location(session: &mut tui::Session, cli: &Cli) -> Result<Option<location::GeoResult>> {
     match resolve_location(cli)? {
         Some(geo) => Ok(Some(geo)),
@@ -354,8 +330,7 @@ fn first_location(session: &mut tui::Session, cli: &Cli) -> Result<Option<locati
     }
 }
 
-/// Resolve from CLI flags or saved config. `Ok(None)` means nothing is set yet,
-/// so an interactive caller should prompt and a pipe should error.
+/// Resolve from CLI flags or saved config. `Ok(None)` means nothing is set yet, so an interactive caller should prompt and a pipe should error.
 fn resolve_location(cli: &Cli) -> Result<Option<location::GeoResult>> {
     match (cli.lat, cli.lon, cli.location.as_deref()) {
         (Some(lat), Some(lon), name) => Ok(Some(location::GeoResult {
@@ -406,9 +381,7 @@ fn resolve_from_config() -> Result<Option<location::GeoResult>> {
     }
 }
 
-/// First run with no saved location: search interactively, remember the exact
-/// place (coords + name) so a later best_match can never re-rank it away, and
-/// return it. `None` if the user cancels the picker.
+/// First run with no saved location: search interactively, remember the exact place (coords + name) so a later best_match can never re-rank it away, and return it. `None` if the user cancels the picker.
 fn pick_and_save(session: &mut tui::Session) -> Result<Option<location::GeoResult>> {
     let Some(geo) = session.search_location().context("location search")? else {
         return Ok(None);
@@ -465,8 +438,7 @@ fn parse_at(raw: &str, now_unix: i64) -> Result<i64> {
         return Ok(NaiveDateTime::new(d, t).and_utc().timestamp());
     }
 
-    // Date + time with either T or space separator.
-    // Accepts a bare hour, HH:MM, or HH:MM:SS on the right side.
+    // Date + time with either T or space separator. Accepts a bare hour, HH:MM, or HH:MM:SS on the right side.
     if let Some((date_part, time_part)) = body.split_once('T').or_else(|| body.split_once(' '))
         && let Ok(d) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d")
         && let Some(t) = parse_clock(time_part)

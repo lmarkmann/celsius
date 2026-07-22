@@ -39,9 +39,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", h.finalize())
 }
 
-/// Render a scene the way the oracle does and return its scene-TOML hash, the
-/// PNG bytes, and the PNG hash. The checker and the bless writer both go through
-/// here, so a locked manifest can never disagree with what the test verifies.
+/// Render a scene the way the oracle does and return its scene-TOML hash, the PNG bytes, and the PNG hash. The checker and the bless writer both go through here, so a locked manifest can never disagree with what the test verifies.
 fn render_golden(scene: &Path) -> Result<(String, Vec<u8>, String)> {
     let scene_bytes = fs::read(scene)?;
     let scene_sha = sha256_hex(&scene_bytes);
@@ -85,11 +83,7 @@ fn lab_scenes_match_locked_goldens() -> Result<()> {
     Ok(())
 }
 
-/// Regenerate `tests/goldens/<NAME>.png` and `manifest.toml` for every scene in
-/// the space-separated `CELSIUS_SCENES`. Ignored by default; `just lock` runs it
-/// with the scene list from the justfile. This is the old write_manifest.py,
-/// moved into Rust so the repo carries no Python and the writer shares the
-/// renderer/hash path with the checker above.
+/// Regenerate `tests/goldens/<NAME>.png` and `manifest.toml` for every scene in the space-separated `CELSIUS_SCENES`. Ignored by default; `just lock` runs it with the scene list from the justfile. This is the old write_manifest.py, moved into Rust so the repo carries no Python and the writer shares the renderer/hash path with the checker above.
 #[test]
 #[ignore = "writes goldens; run via `just lock`"]
 fn bless_goldens() -> Result<()> {

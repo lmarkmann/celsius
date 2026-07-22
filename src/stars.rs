@@ -3,9 +3,7 @@ use crate::gradient::Gradient;
 use crate::noise::Mt19937;
 use crate::scene::Stars;
 
-/// Star contributions on a flat row-major grid, None where nothing painted.
-/// Render looks this up for every pixel of every frame, so it must be an
-/// array load, not a hash.
+/// Star contributions on a flat row-major grid, None where nothing painted. Render looks this up for every pixel of every frame, so it must be an array load, not a hash.
 pub type StarField = Vec<Option<Oklab>>;
 
 pub fn build_star_field(cfg: &Stars, width: u32, height: u32, gradient: &Gradient) -> StarField {

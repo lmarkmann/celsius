@@ -1,24 +1,13 @@
-//! Prototype: an analytic daytime sky (Preetham et al. 1999), the closed-form
-//! member of the Hosek-Wilkie family. Sky radiance is computed per pixel from
-//! the sun's position and an atmospheric turbidity via the Perez function, so
-//! the zenith-to-horizon falloff and the sun-side brightening fall out of one
-//! physical model instead of hand-tuned palettes. Daytime only: `build_sky`
-//! attaches this only when the sun is above the horizon, and `render` falls
-//! back to the gradient otherwise (Preetham's zenith formula is undefined once
-//! the solar zenith angle passes 90 degrees).
+//! Prototype: an analytic daytime sky (Preetham et al. 1999), the closed-form member of the Hosek-Wilkie family. Sky radiance is computed per pixel from the sun's position and an atmospheric turbidity via the Perez function, so the zenith-to-horizon falloff and the sun-side brightening fall out of one physical model instead of hand-tuned palettes. Daytime only: `build_sky` attaches this only when the sun is above the horizon, and `render` falls back to the gradient otherwise (Preetham's zenith formula is undefined once the solar zenith angle passes 90 degrees).
 
 use std::f64::consts::PI;
 
 use crate::colorspace::Oklab;
 
-/// Tone-map gain. Preetham radiance is in kcd/m^2 with enormous dynamic range;
-/// this is the one knob that decides how that maps into terminal brightness.
-/// Tuned by eye against a clear-noon zenith; this is the value to tweak.
+/// Tone-map gain. Preetham radiance is in kcd/m^2 with enormous dynamic range; this is the one knob that decides how that maps into terminal brightness. Tuned by eye against a clear-noon zenith; this is the value to tweak.
 const EXPOSURE: f64 = 0.045;
 
-/// Horizontal field of view across the frame width, in radians (~140 deg). The
-/// frame is a horizon-facing window, not a fisheye, so azimuth maps rectilinearly
-/// across x and the whole frame is sky (no orthographic dome / dark corners).
+/// Horizontal field of view across the frame width, in radians (~140 deg). The frame is a horizon-facing window, not a fisheye, so azimuth maps rectilinearly across x and the whole frame is sky (no orthographic dome / dark corners).
 const FOV_H: f64 = 2.443;
 
 /// Parameters for one analytic sky, filled from live weather in `build_sky`.
@@ -28,10 +17,7 @@ pub struct AnalyticSky {
     pub sun_az: f64,
     pub center_az: f64,
     pub turbidity: f64,
-    /// Crossfade weight toward the analytic sky, 0..1. Ramps up from 0 at the
-    /// horizon to 1 a few degrees above it, so the model fades into the palette
-    /// through twilight instead of popping in at sunrise. render lerps the
-    /// palette gradient toward `sample()` by this amount.
+    /// Crossfade weight toward the analytic sky, 0..1. Ramps up from 0 at the horizon to 1 a few degrees above it, so the model fades into the palette through twilight instead of popping in at sunrise. render lerps the palette gradient toward `sample()` by this amount.
     pub blend: f64,
 }
 
@@ -72,8 +58,7 @@ fn cy_coeffs(t: f64) -> Coeffs {
     }
 }
 
-// Perez F(theta, gamma): theta enters through its cosine (the view ray's zenith
-// angle), gamma is the angle between the view ray and the sun.
+// Perez F(theta, gamma): theta enters through its cosine (the view ray's zenith angle), gamma is the angle between the view ray and the sun.
 fn perez(cos_theta: f64, gamma: f64, k: &Coeffs) -> f64 {
     let cos_theta = cos_theta.max(0.001); // guard the secant at the horizon
     let cg = gamma.cos();
@@ -98,8 +83,7 @@ fn zenith_cy(t: f64, ts: f64) -> f64 {
         + (0.15346 * ts3 - 0.26756 * ts2 + 0.06670 * ts + 0.26688)
 }
 
-/// Per-sky constants computed once, so the per-pixel loop only does the Perez
-/// ratio and the color conversion.
+/// Per-sky constants computed once, so the per-pixel loop only does the Perez ratio and the color conversion.
 pub struct Prepared {
     sun: [f64; 3],
     lum: Coeffs,
@@ -114,8 +98,7 @@ pub struct Prepared {
     pub blend: f64,
 }
 
-// View / sun direction as a unit vector in (east, up, forward), matching
-// astro::to_sky_fracs so the analytic sun lines up with the drawn sun disc.
+// View / sun direction as a unit vector in (east, up, forward), matching astro::to_sky_fracs so the analytic sun lines up with the drawn sun disc.
 fn dir_from_altaz(alt_deg: f64, az_deg: f64, center_az: f64) -> [f64; 3] {
     let alt = alt_deg.to_radians();
     let az_delta = (((az_deg - center_az + 180.0).rem_euclid(360.0)) - 180.0).to_radians();
@@ -132,8 +115,7 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
     let lum = lum_coeffs(t);
     let cx = cx_coeffs(t);
     let cy = cy_coeffs(t);
-    // Normalize so the zenith value equals the analytic zenith (Preetham's
-    // value(theta,gamma) = Z * perez(theta,gamma) / perez(0, theta_sun)).
+    // Normalize so the zenith value equals the analytic zenith (Preetham's value(theta,gamma) = Z * perez(theta,gamma) / perez(0, theta_sun)).
     let denom_lum = perez(1.0, theta_sun, &lum);
     let denom_cx = perez(1.0, theta_sun, &cx);
     let denom_cy = perez(1.0, theta_sun, &cy);
@@ -154,9 +136,7 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
 
 impl Prepared {
     pub fn sample(&self, x_frac: f64, y_frac: f64) -> Oklab {
-        // Vertical position is altitude (orthographic up = sin(alt), matching the
-        // sun-disc placement); horizontal is a rectilinear azimuth sweep so the
-        // whole rectangular frame is sky.
+        // Vertical position is altitude (orthographic up = sin(alt), matching the sun-disc placement); horizontal is a rectilinear azimuth sweep so the whole rectangular frame is sky.
         let up = (1.0 - y_frac).clamp(0.0, 1.0);
         let alt = up.asin();
         let az_delta = (x_frac - 0.5) * FOV_H;
@@ -189,8 +169,7 @@ fn xyy_to_oklab(cx: f64, cy: f64, lum: f64) -> Oklab {
     lin_rgb_to_oklab(r, g, b)
 }
 
-// Linear sRGB -> Oklab. colorspace::rgb_to_oklab gamma-decodes first; our input
-// is already linear, so apply the LMS matrix directly.
+// Linear sRGB -> Oklab. colorspace::rgb_to_oklab gamma-decodes first; our input is already linear, so apply the LMS matrix directly.
 fn lin_rgb_to_oklab(lr: f64, lg: f64, lb: f64) -> Oklab {
     let l = 0.412_221_470_8 * lr + 0.536_332_536_3 * lg + 0.051_445_992_9 * lb;
     let m = 0.211_903_498_2 * lr + 0.680_699_545_1 * lg + 0.107_396_956_6 * lb;

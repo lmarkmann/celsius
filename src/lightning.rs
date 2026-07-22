@@ -1,8 +1,6 @@
 //! Lightning flashes for thunderstorm scenes (WMO 95-99).
 //!
-//! Lives outside the render pipeline: composed once when SkyState is built,
-//! evaluated each TUI tick by `overlay()`. Bit-parity with celsius-lab's
-//! lightning.py for strike scheduling (verified by tests/lightning.rs).
+//! Lives outside the render pipeline: composed once when SkyState is built, evaluated each TUI tick by `overlay()`. Bit-parity with celsius-lab's lightning.py for strike scheduling (verified by tests/lightning.rs).
 
 use std::sync::LazyLock;
 
@@ -227,8 +225,7 @@ pub fn l_bump_at(strikes: &[Strike], t_now: f64, params: &FlashParams) -> f64 {
 
 fn active_bolt<'a>(strikes: &'a [Strike], t_now: f64, params: &FlashParams) -> Option<&'a Bolt> {
     for s in strikes {
-        // A boltless strike must not end the search; `?` here would return
-        // None for the whole function at the first sheet flash.
+        // A boltless strike must not end the search; `?` here would return None for the whole function at the first sheet flash.
         let Some(bolt) = s.bolt.as_ref() else {
             continue;
         };

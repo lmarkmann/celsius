@@ -4,9 +4,7 @@ use super::WeatherError;
 
 const ENDPOINT: &str = "https://geocoding-api.open-meteo.com/v1/search";
 
-/// How many candidates to fetch per query. More than fit the picker on screen
-/// at once, on purpose: common ambiguous names (Springfield, San Jose) need a
-/// list the user can scroll, and `rank` orders the whole set by population.
+/// How many candidates to fetch per query. More than fit the picker on screen at once, on purpose: common ambiguous names (Springfield, San Jose) need a list the user can scroll, and `rank` orders the whole set by population.
 const CANDIDATE_LIMIT: u32 = 20;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -46,11 +44,7 @@ pub(crate) struct GeoResponse {
     pub results: Vec<GeoResult>,
 }
 
-/// Rank candidates most-likely-first. Open-Meteo returns its own relevance
-/// order; we resort by population so a one-word query like "capetown" lands on
-/// the real city, not a hamlet that merely matches the spelling. When
-/// population data is absent the stable index tie-break keeps the API's
-/// relevance order, so an unranked query never regresses.
+/// Rank candidates most-likely-first. Open-Meteo returns its own relevance order; we resort by population so a one-word query like "capetown" lands on the real city, not a hamlet that merely matches the spelling. When population data is absent the stable index tie-break keeps the API's relevance order, so an unranked query never regresses.
 pub fn rank(results: Vec<GeoResult>) -> Vec<GeoResult> {
     let mut indexed: Vec<(usize, GeoResult)> = results.into_iter().enumerate().collect();
     indexed.sort_by(|(ai, a), (bi, b)| {
@@ -62,9 +56,7 @@ pub fn rank(results: Vec<GeoResult>) -> Vec<GeoResult> {
     indexed.into_iter().map(|(_, r)| r).collect()
 }
 
-/// The single most likely match: the top of [`rank`]. Every non-interactive
-/// resolver path (CLI flag, saved config, piped output) uses this so they all
-/// agree with the picker's default-selected row.
+/// The single most likely match: the top of [`rank`]. Every non-interactive resolver path (CLI flag, saved config, piped output) uses this so they all agree with the picker's default-selected row.
 pub fn best_match(results: Vec<GeoResult>) -> Option<GeoResult> {
     rank(results).into_iter().next()
 }
@@ -120,8 +112,7 @@ mod tests {
 
     #[test]
     fn rank_without_population_keeps_api_order() {
-        // All None means every key is 0, so the stable index tie-break wins and
-        // the API's relevance order survives untouched.
+        // All None means every key is 0, so the stable index tie-break wins and the API's relevance order survives untouched.
         let ranked = rank(vec![
             geo("First", None),
             geo("Second", None),

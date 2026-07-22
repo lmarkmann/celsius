@@ -8,9 +8,7 @@ use std::io::{self, Write};
 use crate::render::render;
 use crate::scene::SkyState;
 
-/// The flat-text surface for `--plain`, pipes, and `NO_COLOR`: one ASCII status
-/// line, no escape codes. Falls back to the decorative chrome for scene files,
-/// which carry no structured `status`.
+/// The flat-text surface for `--plain`, pipes, and `NO_COLOR`: one ASCII status line, no escape codes. Falls back to the decorative chrome for scene files, which carry no structured `status`.
 pub fn write_plain<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
     let line = if state.chrome.status.is_empty() {
         format!(

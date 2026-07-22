@@ -37,11 +37,9 @@ pub enum RunOutcome {
 pub struct Timeline {
     pub states: Vec<SkyState>,
     pub home: usize,
-    /// Viewer coordinates when known; drives the location-gated easter egg.
-    /// `None` for scene files and error skies, which never trigger it.
+    /// Viewer coordinates when known; drives the location-gated easter egg. `None` for scene files and error skies, which never trigger it.
     pub coords: Option<(f64, f64)>,
-    /// The viewed location's UTC offset in seconds, so the local-time gate uses
-    /// the sky's wall clock rather than the machine's. `0` when unknown.
+    /// The viewed location's UTC offset in seconds, so the local-time gate uses the sky's wall clock rather than the machine's. `0` when unknown.
     pub offset: i64,
 }
 
@@ -84,18 +82,14 @@ enum Overlay {
     Help,
 }
 
-/// The last sky render, reused while nothing visual changes. The pixel
-/// pipeline is the expensive part of a frame; ratatui's cell diff already
-/// makes repeat draws free downstream of it.
+/// The last sky render, reused while nothing visual changes. The pixel pipeline is the expensive part of a frame; ratatui's cell diff already makes repeat draws free downstream of it.
 struct SkyCache {
     width: u32,
     height: u32,
     pixels: PixelBuffer,
 }
 
-/// The interactive state. Render reads it; key/tick handlers are the only
-/// places it mutates. Keeping it terminal-free is what makes the handlers
-/// testable without a real terminal (see the tests at the bottom of this file).
+/// The interactive state. Render reads it; key/tick handlers are the only places it mutates. Keeping it terminal-free is what makes the handlers testable without a real terminal (see the tests at the bottom of this file).
 pub struct App<'a> {
     timeline: &'a Timeline,
     index: usize,
@@ -129,10 +123,7 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Whether the flying-pigs egg should show: at Kowloon Tong and the hour on
-    /// screen inside the 01:28-02:10 local-time window. Keyed on the displayed
-    /// sky's instant, so scrubbing (or `--at`) into the window turns it on and
-    /// scrubbing out turns it off.
+    /// Whether the flying-pigs egg should show: at Kowloon Tong and the hour on screen inside the 01:28-02:10 local-time window. Keyed on the displayed sky's instant, so scrubbing (or `--at`) into the window turns it on and scrubbing out turns it off.
     fn egg_active(&self) -> bool {
         let offset = self.timeline.offset;
         let unix_utc = self.display.unix_utc;
@@ -141,11 +132,7 @@ impl<'a> App<'a> {
             .is_some_and(|(lat, lon)| pigs::gate_open(lat, lon, unix_utc, offset))
     }
 
-    /// Advance the animation by `elapsed` and report whether the visible frame
-    /// changed, so the event loop can skip redrawing an identical one. Cloud
-    /// drift and the lightning clock both freeze while paused, so a paused sky
-    /// is fully still. Otherwise the frame changes when clouds drift, and on
-    /// every tick of a lightning scene, whose flash is recomputed per frame.
+    /// Advance the animation by `elapsed` and report whether the visible frame changed, so the event loop can skip redrawing an identical one. Cloud drift and the lightning clock both freeze while paused, so a paused sky is fully still. Otherwise the frame changes when clouds drift, and on every tick of a lightning scene, whose flash is recomputed per frame.
     pub fn tick(&mut self, elapsed: Duration) -> bool {
         if self.drift_paused {
             return false;
@@ -161,17 +148,14 @@ impl<'a> App<'a> {
         }
         self.lightning_elapsed += elapsed;
         self.egg_frame = self.egg_frame.wrapping_add(1);
-        // While the egg flies, every tick is a new frame. The transition catches
-        // the moment it turns off, so one last redraw clears it from the sky.
+        // While the egg flies, every tick is a new frame. The transition catches the moment it turns off, so one last redraw clears it from the sky.
         let egg = self.egg_active();
         let egg_changed = egg != self.egg_prev;
         self.egg_prev = egg;
         changed || self.display.lightning.is_some() || egg || egg_changed
     }
 
-    /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome`
-    /// for the event loop to drain; everything else mutates in place. Assumes
-    /// the caller already filtered to `KeyEventKind::Press`.
+    /// Dispatch a key press. Quit / Retry / ChangeLocation land in `outcome` for the event loop to drain; everything else mutates in place. Assumes the caller already filtered to `KeyEventKind::Press`.
     pub fn handle_key(&mut self, key: KeyEvent) {
         match self.overlay {
             Overlay::Help => self.overlay = Overlay::None,
@@ -201,10 +185,7 @@ impl<'a> App<'a> {
     }
 }
 
-/// Owns the terminal for one interactive run: a single alternate-screen enter on
-/// `new`, a single leave on `Drop`. The live sky, the location search, and the
-/// loading screen all draw to this one surface, so the view never tears down and
-/// flashes the shell between them, nor sits bare while a forecast fetches.
+/// Owns the terminal for one interactive run: a single alternate-screen enter on `new`, a single leave on `Drop`. The live sky, the location search, and the loading screen all draw to this one surface, so the view never tears down and flashes the shell between them, nor sits bare while a forecast fetches.
 pub struct Session {
     terminal: DefaultTerminal,
 }
@@ -224,8 +205,7 @@ impl Session {
         search_loop(&mut self.terminal)
     }
 
-    /// Hold the sky on screen (drawing `current`, or a plain fill on first
-    /// launch) under a loading box while `rx` delivers the next timeline.
+    /// Hold the sky on screen (drawing `current`, or a plain fill on first launch) under a loading box while `rx` delivers the next timeline.
     pub fn await_timeline(
         &mut self,
         current: Option<&Timeline>,
@@ -250,9 +230,7 @@ impl Drop for Session {
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome> {
     let mut last_tick = Instant::now();
-    // Draw only when something changed. A still sky then sits idle instead of
-    // repainting 30 times a second, and a burst of resize events collapses into
-    // one repaint (see the drain loop below).
+    // Draw only when something changed. A still sky then sits idle instead of repainting 30 times a second, and a burst of resize events collapses into one repaint (see the drain loop below).
     let mut needs_redraw = true;
     loop {
         if needs_redraw {
@@ -266,9 +244,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
 
         let timeout = TICK.saturating_sub(last_tick.elapsed());
         if event::poll(timeout).context("polling input")? {
-            // Drain the whole queue before redrawing. During a window drag the
-            // terminal floods us with Resize events; coalescing them means one
-            // repaint at the final size, not one per intermediate size.
+            // Drain the whole queue before redrawing. During a window drag the terminal floods us with Resize events; coalescing them means one repaint at the final size, not one per intermediate size.
             loop {
                 match event::read().context("reading input")? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -297,12 +273,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
     }
 }
 
-/// Draw one frame inside a DEC 2026 synchronized update so the terminal presents
-/// it atomically. ratatui's resize path clears the screen and resets its diff
-/// buffer (a `\e[2J` plus a full repaint); without batching, the gap between the
-/// clear and the repaint shows as a flash while a window is dragged. Emulators
-/// that lack 2026 ignore the toggles, so this is safe everywhere; the markers
-/// are best-effort, and the frame still draws if they fail to write.
+/// Draw one frame inside a DEC 2026 synchronized update so the terminal presents it atomically. ratatui's resize path clears the screen and resets its diff buffer (a `\e[2J` plus a full repaint); without batching, the gap between the clear and the repaint shows as a flash while a window is dragged. Emulators that lack 2026 ignore the toggles, so this is safe everywhere; the markers are best-effort, and the frame still draws if they fail to write.
 fn draw_synchronized<F>(terminal: &mut DefaultTerminal, render: F) -> io::Result<()>
 where
     F: FnOnce(&mut Frame),
@@ -315,25 +286,19 @@ where
 
 /// How many candidate rows are visible at once; the rest scroll into view.
 const SEARCH_WINDOW: usize = 5;
-/// Wait this long after the last keystroke before geocoding, so a fast typist
-/// makes one request instead of one per character.
+/// Wait this long after the last keystroke before geocoding, so a fast typist makes one request instead of one per character.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(220);
 /// Shortest query worth a request.
 const MIN_QUERY: usize = 2;
 /// How often the loop wakes to drain results and fire debounced searches.
 const SEARCH_POLL: Duration = Duration::from_millis(40);
-/// Keep retrying a failing query for this long (a slow or just-waking network)
-/// before settling on "no connection". The agent's own 5s connect timeout means
-/// a single slow attempt already eats most of this; fast failures get retried.
+/// Keep retrying a failing query for this long (a slow or just-waking network) before settling on "no connection". The agent's own 5s connect timeout means a single slow attempt already eats most of this; fast failures get retried.
 const OFFLINE_AFTER: Duration = Duration::from_millis(2500);
 
 /// Spinner phases for the loading box; the quarter-circle glyphs read as a spin.
 const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
-/// Keep the sky on screen under a centered loading box while a background thread
-/// fetches the next timeline, returning it the moment `rx` delivers, or `None`
-/// if the user cancels with esc. Drawing `current` (or a plain fill on first
-/// launch) here is what replaces the old bare-shell gap during a fetch.
+/// Keep the sky on screen under a centered loading box while a background thread fetches the next timeline, returning it the moment `rx` delivers, or `None` if the user cancels with esc. Drawing `current` (or a plain fill on first launch) here is what replaces the old bare-shell gap during a fetch.
 fn await_loop(
     terminal: &mut DefaultTerminal,
     current: Option<&Timeline>,
@@ -357,8 +322,7 @@ fn await_loop(
 
         match rx.try_recv() {
             Ok(timeline) => return Ok(Some(timeline)),
-            // The worker dropped its sender without a value (a panic while
-            // composing): fall back to the current sky rather than spin forever.
+            // The worker dropped its sender without a value (a panic while composing): fall back to the current sky rather than spin forever.
             Err(mpsc::TryRecvError::Disconnected) => return Ok(None),
             Err(mpsc::TryRecvError::Empty) => {}
         }
@@ -410,15 +374,13 @@ fn draw_loading_overlay(buf: &mut Buffer, area: Rect, label: &str, spinner: &str
     put_str(buf, inner.x, inner.y + 2, inner.width, hint, OVERLAY_DIM);
 }
 
-/// One geocode reply tagged with the query generation that asked for it, so the
-/// loop can discard answers to queries the user has already typed past.
+/// One geocode reply tagged with the query generation that asked for it, so the loop can discard answers to queries the user has already typed past.
 type SearchReply = (
     u64,
     std::result::Result<Vec<GeoResult>, crate::weather::WeatherError>,
 );
 
-/// What the body of the search view is currently showing. Separating "loading"
-/// from "empty" is what stops a "no matches" flash before the first reply lands.
+/// What the body of the search view is currently showing. Separating "loading" from "empty" is what stops a "no matches" flash before the first reply lands.
 #[derive(Clone, Copy, PartialEq)]
 enum SearchStatus {
     /// Query too short to search yet.
@@ -488,8 +450,7 @@ fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
                     state.query_started = None;
                 }
                 Err(crate::weather::WeatherError::Network(_)) => {
-                    // A just-waking or flaky network gets retried until the grace
-                    // window closes, then we settle on "no connection".
+                    // A just-waking or flaky network gets retried until the grace window closes, then we settle on "no connection".
                     let within_grace = state
                         .query_started
                         .is_some_and(|t| t.elapsed() < OFFLINE_AFTER);
@@ -501,8 +462,7 @@ fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
                         state.query_started = None;
                     }
                 }
-                // Server (HTTP) or decode errors are not connection problems;
-                // there is simply nothing usable to show.
+                // Server (HTTP) or decode errors are not connection problems; there is simply nothing usable to show.
                 Err(_) => {
                     state.candidates.clear();
                     state.status = SearchStatus::Empty;
@@ -511,8 +471,7 @@ fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
             }
         }
 
-        // Fire a geocode once typing has settled, on a thread so the input never
-        // blocks; stale threads still send but get discarded by generation.
+        // Fire a geocode once typing has settled, on a thread so the input never blocks; stale threads still send but get discarded by generation.
         if let Some(edited) = state.last_edit
             && edited.elapsed() >= SEARCH_DEBOUNCE
         {
@@ -568,11 +527,7 @@ enum SearchAction {
     Ignore,
 }
 
-/// Pure key handler for the search view, factored out so editing and navigation
-/// are testable without a terminal or network. Printable keys edit the query, so
-/// navigation is the arrow keys (j/k would type, not move); up/down move the
-/// selection; enter chooses; esc and ctrl-c cancel. Any edit resets the
-/// selection to the top and stamps `last_edit` so the loop can debounce.
+/// Pure key handler for the search view, factored out so editing and navigation are testable without a terminal or network. Printable keys edit the query, so navigation is the arrow keys (j/k would type, not move); up/down move the selection; enter chooses; esc and ctrl-c cancel. Any edit resets the selection to the top and stamps `last_edit` so the loop can debounce.
 fn search_step(key: &KeyEvent, state: &mut SearchState) -> SearchAction {
     match key.code {
         KeyCode::Enter => SearchAction::Choose,
@@ -603,10 +558,7 @@ fn search_step(key: &KeyEvent, state: &mut SearchState) -> SearchAction {
     }
 }
 
-/// First visible row so `selected` stays inside a `window`-row viewport. Zero
-/// while the list fits or the selection is in the first window; otherwise it
-/// scrolls just far enough to keep the selection on the bottom row, never past
-/// the end.
+/// First visible row so `selected` stays inside a `window`-row viewport. Zero while the list fits or the selection is in the first window; otherwise it scrolls just far enough to keep the selection on the bottom row, never past the end.
 fn scroll_offset(selected: usize, len: usize, window: usize) -> usize {
     if len <= window {
         return 0;
@@ -647,15 +599,12 @@ const BRAND: Color = Color::Rgb(252, 215, 172);
 const VALUE_OK: Color = Color::Rgb(150, 200, 140);
 const VALUE_SHORT: Color = Color::Rgb(220, 90, 90);
 
-/// Below this the sky can't render legibly, so the too-small screen takes over
-/// the whole frame; nothing (not even the help overlay) draws on top of it.
+/// Below this the sky can't render legibly, so the too-small screen takes over the whole frame; nothing (not even the help overlay) draws on top of it.
 fn too_small(area: Rect) -> bool {
     area.width < MIN_COLS || area.height < MIN_ROWS
 }
 
-/// One full frame: the sky (or the too-small takeover) plus any open overlay.
-/// The too-small screen is exclusive, so overlays stay off it and its "terminal
-/// too small" message is never hidden.
+/// One full frame: the sky (or the too-small takeover) plus any open overlay. The too-small screen is exclusive, so overlays stay off it and its "terminal too small" message is never hidden.
 fn draw_frame(buf: &mut Buffer, area: Rect, app: &mut App) {
     draw_sky(buf, area, app);
     if !too_small(area) {
@@ -705,8 +654,7 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
             })
         }
     };
-    // Lightning and the pigs egg composite onto a copy so the cached base stays
-    // reusable; their timing is per-frame state, not part of the sky render.
+    // Lightning and the pigs egg composite onto a copy so the cached base stays reusable; their timing is per-frame state, not part of the sky render.
     if app.display.lightning.is_some() || egg {
         let mut pixels = cache.pixels.clone();
         if let Some(lt) = &app.display.lightning {
@@ -732,9 +680,7 @@ fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
         cell.set_fg(CHROME_FG);
     }
     let style = Style::default().fg(CHROME_FG).bg(CHROME_BG);
-    // Measure by display width, not char count, so wide glyphs (CJK place
-    // names) right-justify correctly. set_stringn clips to the column budget
-    // and handles wide-cell placement, which a per-char set_char loop cannot.
+    // Measure by display width, not char count, so wide glyphs (CJK place names) right-justify correctly. set_stringn clips to the column budget and handles wide-cell placement, which a per-char set_char loop cannot.
     let right_w = right.width() as u16;
     let right_start = (area.x + area.width).saturating_sub(right_w);
     let max_left = right_start.saturating_sub(area.x + 1);
@@ -742,12 +688,10 @@ fn draw_chrome_bar(buf: &mut Buffer, area: Rect, left: &str, right: &str) {
     buf.set_stringn(right_start, area.y, right, right_w as usize, style);
 }
 
-// Minimum blank columns kept between the footer payload and the key hints, so
-// the two never butt against each other when the bar is tight.
+// Minimum blank columns kept between the footer payload and the key hints, so the two never butt against each other when the bar is tight.
 const FOOTER_GAP: usize = 2;
 
-// Widest tier whose display width fits the budget; the last (narrowest) tier is
-// the floor when nothing fits, so this never returns empty for a non-empty list.
+// Widest tier whose display width fits the budget; the last (narrowest) tier is the floor when nothing fits, so this never returns empty for a non-empty list.
 fn pick_tier(tiers: &[String], budget: usize) -> &str {
     tiers
         .iter()
@@ -756,10 +700,7 @@ fn pick_tier(tiers: &[String], budget: usize) -> &str {
         .unwrap_or_else(|| tiers.last().map_or("", String::as_str))
 }
 
-// Choose the footer payload and key-hint strings for the current width. The
-// payload wins: it is fitted against the width minus the reserved `? help`
-// floor, then the hints take the richest tier the remainder allows. Scenes
-// carry no tiers, so they fall back to the static footer/keys strings.
+// Choose the footer payload and key-hint strings for the current width. The payload wins: it is fitted against the width minus the reserved `? help` floor, then the hints take the richest tier the remainder allows. Scenes carry no tiers, so they fall back to the static footer/keys strings.
 fn fit_footer(width: u16, chrome: &Chrome) -> (&str, &str) {
     if chrome.footer_tiers.is_empty() || chrome.keys_tiers.is_empty() {
         return (&chrome.footer, &chrome.keys);
@@ -846,8 +787,7 @@ fn draw_search(buf: &mut Buffer, area: Rect, state: &SearchState) {
         }
     }
     let has_list = !state.candidates.is_empty();
-    // title, blank, input, blank, body (list rows or one message line), blank,
-    // footer, plus the box border.
+    // title, blank, input, blank, body (list rows or one message line), blank, footer, plus the box border.
     let body_rows = if has_list {
         state.candidates.len().min(SEARCH_WINDOW) as u16
     } else {
@@ -856,8 +796,7 @@ fn draw_search(buf: &mut Buffer, area: Rect, state: &SearchState) {
     let w = 54.min(area.width);
     let box_h = (body_rows + 8).min(area.height);
     let bx = area.x + area.width.saturating_sub(w) / 2;
-    // Anchor the top above center so the list grows DOWNWARD (Google-style): the
-    // input stays put and only the box's bottom edge moves as results arrive.
+    // Anchor the top above center so the list grows DOWNWARD (Google-style): the input stays put and only the box's bottom edge moves as results arrive.
     let by = (area.y + area.height / 3).min(area.y + area.height.saturating_sub(box_h));
     for y in by..by + box_h {
         for x in bx..bx + w {
@@ -926,9 +865,7 @@ fn draw_search(buf: &mut Buffer, area: Rect, state: &SearchState) {
     }
     row += 1;
 
-    // The full nav hint only appears while locations are listed; otherwise just
-    // the escape hatch. The position counter is the "more" affordance, shown
-    // only when the list overflows the window.
+    // The full nav hint only appears while locations are listed; otherwise just the escape hatch. The position counter is the "more" affordance, shown only when the list overflows the window.
     let footer = if has_list {
         if state.candidates.len() > SEARCH_WINDOW {
             format!(
@@ -1724,8 +1661,7 @@ mod tests {
         // Fits the window: never scrolls.
         assert_eq!(scroll_offset(0, 3, 5), 0);
         assert_eq!(scroll_offset(2, 3, 5), 0);
-        // Overflows: stays at 0 until the selection leaves the first window,
-        // then scrolls just enough, never past the last full window.
+        // Overflows: stays at 0 until the selection leaves the first window, then scrolls just enough, never past the last full window.
         assert_eq!(scroll_offset(4, 8, 5), 0);
         assert_eq!(scroll_offset(5, 8, 5), 1);
         assert_eq!(scroll_offset(7, 8, 5), 3);

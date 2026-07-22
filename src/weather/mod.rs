@@ -15,10 +15,7 @@ use std::time::Duration;
 use thiserror::Error;
 use ureq::Agent;
 
-/// One agent for both Open-Meteo endpoints: connection reuse, and explicit
-/// timeouts so a stalled network fails the fetch instead of hanging the
-/// launch (or the in-TUI retry) forever. Status handling stays manual so
-/// error responses keep their body for the Http variant.
+/// One agent for both Open-Meteo endpoints: connection reuse, and explicit timeouts so a stalled network fails the fetch instead of hanging the launch (or the in-TUI retry) forever. Status handling stays manual so error responses keep their body for the Http variant.
 pub(crate) static AGENT: LazyLock<Agent> = LazyLock::new(|| {
     Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(5)))
@@ -43,8 +40,7 @@ pub enum WeatherError {
 impl From<ureq::Error> for WeatherError {
     fn from(err: ureq::Error) -> Self {
         match err {
-            // Unreachable while the agent disables http_status_as_error, but
-            // kept total so a config change cannot silently misclassify.
+            // Unreachable while the agent disables http_status_as_error, but kept total so a config change cannot silently misclassify.
             ureq::Error::StatusCode(status) => WeatherError::Http {
                 status,
                 body: String::new(),

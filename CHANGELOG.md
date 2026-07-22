@@ -1,144 +1,211 @@
 # Changelog
 
-All notable changes to celsius are recorded here. Format roughly follows
-Keep a Changelog and versions follow SemVer.
+All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.7] - 2026-07-15
 
-### Other
+### Security
 
-- Update Cargo.lock dependencies
+- Updated `crossbeam-epoch` from 0.9.18 to 0.9.20 to resolve RUSTSEC-2026-0204, which caused the audit job on the v0.4.6 tag to fail.
+- Updated `anyhow` from 1.0.102 to 1.0.103 to clear the related RUSTSEC-2026-0190 warning. This release changes dependencies only and does not change celsius runtime behavior ([#64](https://github.com/lmarkmann/celsius/pull/64)).
 
-## [0.4.6] - 2026-06-19
+## [0.4.6] - 2026-07-13
 
-### Test
+### Testing
 
-- Lock compose() hour-index path; document noise seed truncation ([#62](https://github.com/lmarkmann/celsius/pull/62))
+- Added a fixture-driven test for the hour-index `compose()` entry point. It locks a clear pre-dawn forecast to its expected `SkyState` and proves that `compose()` agrees with the interpolating `compose_at()` path at the top of an hour.
+- Documented that truncating noise seeds to 32 bits is deliberate because it preserves bit parity with the private scene lab. This release contains no runtime behavior changes ([#62](https://github.com/lmarkmann/celsius/pull/62)).
 
 ## [0.4.5] - 2026-06-19
 
 ### Fixed
 
-- Gate time-based overlays on the viewed sky's instant ([#61](https://github.com/lmarkmann/celsius/pull/61))
-- Keep the too-small screen above the help overlay ([#60](https://github.com/lmarkmann/celsius/pull/60))
-- Keep the sky on screen while a new city loads ([#58](https://github.com/lmarkmann/celsius/pull/58))
+- Kept the current sky visible while a newly selected city loads. Forecast fetching and composition now run on a worker thread beneath a cancellable loading overlay, and one terminal session owns the live sky, location picker, and loading state. First launch and retry use the same path ([#58](https://github.com/lmarkmann/celsius/pull/58)).
+- Made the minimum-size screen exclusive so an open help overlay can no longer cover the resize instructions ([#60](https://github.com/lmarkmann/celsius/pull/60)).
+- Keyed time-gated overlays to the forecast instant on screen instead of the machine clock. Timeline scrubbing and `--at` now keep the displayed sky and its overlays on the same hour ([#61](https://github.com/lmarkmann/celsius/pull/61)).
 
 ## [0.4.4] - 2026-06-16
 
 ### Added
 
-- Show the viewed location's local time ([#56](https://github.com/lmarkmann/celsius/pull/56))
+- Displayed the viewed location's wall clock, sunrise, sunset, and daily high/low against its Open-Meteo UTC offset rather than the computer's local timezone. The astronomy and seed pipeline remain in UTC, and daily lookups use the viewed location's calendar date across midnight ([#56](https://github.com/lmarkmann/celsius/pull/56)).
+- Added a hidden location-and-time-gated animated sky Easter egg. It is composited by the TUI outside the deterministic renderer, so scene goldens remain unchanged ([#56](https://github.com/lmarkmann/celsius/pull/56)).
 
 ## [0.4.3] - 2026-06-16
 
 ### Added
 
-- Rank geocoding by population and add a location picker ([#55](https://github.com/lmarkmann/celsius/pull/55))
+- Replaced the blocking location prompt with a live type-ahead picker. Search is debounced and runs on a worker thread, arrow keys move through a scrolling result list, and the UI distinguishes loading, no matches, and network failure states ([#55](https://github.com/lmarkmann/celsius/pull/55)).
+- Ranked ambiguous geocoding matches by population, so a major city is shown before a much smaller place with the same or a similar name. Population is used only for ranking and is not displayed ([#55](https://github.com/lmarkmann/celsius/pull/55)).
 
 ### Fixed
 
-- Capitalize wind direction and location in chrome ([#53](https://github.com/lmarkmann/celsius/pull/53))
+- Preserved geocoder capitalization in location names and made compass labels consistently uppercase across the TUI and `--plain` output ([#53](https://github.com/lmarkmann/celsius/pull/53)).
+
+### Testing
+
+- Added fixture tests that lock the forecast-to-`SkyState` mapping before and after sunrise, including star visibility, analytic-sky attachment, and the south-facing projection rule ([#52](https://github.com/lmarkmann/celsius/pull/52)).
+
+### Maintenance
+
+- Updated GitHub Actions that still used the deprecated Node.js 20 runtime, without changing the release or Homebrew workflow inputs ([#51](https://github.com/lmarkmann/celsius/pull/51)).
 
 ## [0.4.2] - 2026-06-15
 
 ### Fixed
 
-- Present TUI frames atomically to remove resize flicker ([#49](https://github.com/lmarkmann/celsius/pull/49))
+- Wrapped terminal draws in DEC 2026 synchronized output so a resize clear and repaint are presented atomically on supporting terminals. This removes the blank flash seen while dragging a terminal window ([#49](https://github.com/lmarkmann/celsius/pull/49)).
+- Coalesced queued resize events before drawing and gated redraws on visible changes. A still sky now remains idle instead of repainting about 30 times per second. Terminals without synchronized-output support still benefit from the reduced repaint count ([#49](https://github.com/lmarkmann/celsius/pull/49)).
 
 ## [0.4.1] - 2026-06-15
 
 ### Added
 
-- Responsive footer chrome with daily high/low ([#48](https://github.com/lmarkmann/celsius/pull/48))
-- Responsive minimum terminal size screen ([#44](https://github.com/lmarkmann/celsius/pull/44))
-
-### Build
-
-- Replace toml with basic-toml, generate goldens in Rust ([#46](https://github.com/lmarkmann/celsius/pull/46))
+- Replaced clipped output in small terminals with a responsive minimum-size screen. It reports the required 60 by 25 dimensions when space allows and degrades to a compact branded message in extremely small windows ([#44](https://github.com/lmarkmann/celsius/pull/44)).
+- Added the viewed day's high and low next to the current temperature. Celsius now fetches Open-Meteo's daily maximum and minimum fields and follows the selected day while scrubbing the forecast ([#48](https://github.com/lmarkmann/celsius/pull/48)).
+- Made footer chrome width-responsive. Key hints collapse in tiers before any live weather reading is removed, with `? help` retained as the final hint ([#48](https://github.com/lmarkmann/celsius/pull/48)).
 
 ### Fixed
 
-- Remove horizontal cloud seam, plus release-prep cleanup ([#47](https://github.com/lmarkmann/celsius/pull/47))
+- Removed the hard horizontal seam visible at the edge of dense cloud decks. Cloud altitude masks now feather smoothly from a negligible-density cutoff into the body of the layer instead of switching an entire row on at once ([#47](https://github.com/lmarkmann/celsius/pull/47)).
+- Replaced a private lab path in CLI help with the public vendored scene path ([#47](https://github.com/lmarkmann/celsius/pull/47)).
+
+### Maintenance
+
+- Replaced the `toml` parser with `basic-toml` to reduce the dependency tree used by scene and config loading ([#46](https://github.com/lmarkmann/celsius/pull/46)).
+- Moved golden generation into the ignored Rust `bless_goldens` test. The writer and checker now share one render-and-hash path, and the public repository no longer contains Python tooling ([#46](https://github.com/lmarkmann/celsius/pull/46)).
 
 ## [0.4.0] - 2026-06-12
 
 ### Added
 
-- Bundle compose options into ComposeOpts ([#42](https://github.com/lmarkmann/celsius/pull/42))
-- Validate scenes at parse, stabilize seeds, surface config errors ([#41](https://github.com/lmarkmann/celsius/pull/41))
-- Physically-based analytic sky (Preetham) for the live daytime view ([#35](https://github.com/lmarkmann/celsius/pull/35))
+- Made the Preetham analytic daytime sky the default for live weather. The Perez radiance model derives the zenith-to-horizon falloff, sun-side warmth, and clear-to-hazy color shift from sun position and visibility-derived turbidity. It blends into the palette over the first 8 degrees above the horizon, while `--sky palette` retains the previous renderer ([#35](https://github.com/lmarkmann/celsius/pull/35)).
 
-### Build
+### Changed
 
-- Move sha2 to dev-dependencies and trim ratatui features ([#37](https://github.com/lmarkmann/celsius/pull/37))
+- Replaced stringly precipitation kinds with the `PrecipKind` enum and rejected empty gradients while loading a scene. Invalid scene files now fail at parse time instead of silently changing precipitation or panicking during render ([#41](https://github.com/lmarkmann/celsius/pull/41)).
+- Replaced toolchain-dependent `DefaultHasher` weather seeds with stable inline FNV-1a mixing. Live cloud, star, and precipitation layouts are now stable across Rust releases ([#41](https://github.com/lmarkmann/celsius/pull/41)).
+- Added `ComposeOpts` to group facing direction, Bortle class, and analytic-sky selection. This is a breaking library API change to the `compose()` and `compose_at()` signatures ([#42](https://github.com/lmarkmann/celsius/pull/42)).
 
 ### Fixed
 
-- Timeouts on weather fetches, ureq 3, panic-free error sky ([#40](https://github.com/lmarkmann/celsius/pull/40))
-
-### Other
-
-- Release PR body is just the changelog entry ([#43](https://github.com/lmarkmann/celsius/pull/43))
+- Added shared 5-second connect and 15-second global timeouts to both Open-Meteo endpoints, so launch and in-TUI retry cannot hang indefinitely on a stalled connection ([#40](https://github.com/lmarkmann/celsius/pull/40)).
+- Made error-footer truncation respect UTF-8 character boundaries, preventing a second panic while reporting failures that contain non-ASCII place names ([#40](https://github.com/lmarkmann/celsius/pull/40)).
+- Warned when a malformed config file is encountered instead of silently replacing it with defaults on the next save. Config saving now exposes a typed `ConfigError` at the library boundary ([#41](https://github.com/lmarkmann/celsius/pull/41)).
+- Continued scanning lightning strikes after a boltless sheet flash, so a later visible bolt in the same schedule is no longer hidden ([#41](https://github.com/lmarkmann/celsius/pull/41)).
+- Treated an empty `NO_COLOR` environment variable as unset, matching the specification ([#42](https://github.com/lmarkmann/celsius/pull/42)).
 
 ### Performance
 
-- Hoist loop invariants out of the render hot paths ([#39](https://github.com/lmarkmann/celsius/pull/39))
-- Cache the rendered sky and skip re-rendering idle frames ([#38](https://github.com/lmarkmann/celsius/pull/38))
+- Cached the base `PixelBuffer` until clouds move, the forecast is scrubbed, or the viewport changes. Paused and windless skies no longer rerun the full renderer on every TUI tick, while lightning remains independently animated ([#38](https://github.com/lmarkmann/celsius/pull/38)).
+- Hoisted row and layer invariants out of per-pixel loops, stored stars in a row-major vector, cached noise grids by seed, and avoided repeated Oklab conversions. Golden hashes stayed byte-identical; measured night and moonlight benchmarks improved by about 32 and 31 percent respectively ([#39](https://github.com/lmarkmann/celsius/pull/39)).
+
+### Maintenance
+
+- Upgraded to `ureq` 3 with only Rustls and JSON enabled, removed unused URL, international-domain, and compression stacks, and reduced the runtime dependency tree from 131 to 105 crates ([#40](https://github.com/lmarkmann/celsius/pull/40)).
+- Moved `sha2` to development dependencies and disabled unused `ratatui` features, reducing the runtime dependency tree from 144 to 131 crates before the `ureq` reduction above ([#37](https://github.com/lmarkmann/celsius/pull/37)).
 
 ## [0.3.2] - 2026-06-10
 
 ### Added
 
-- Show sunrise and sunset times in the header ([#33](https://github.com/lmarkmann/celsius/pull/33))
+- Requested daily sunrise, sunset, and daylight duration from Open-Meteo and displayed sunrise and sunset in the header for the viewed forecast day ([#33](https://github.com/lmarkmann/celsius/pull/33)).
+- Detected polar day and polar night from daylight duration and displayed those states instead of misleading clock times ([#33](https://github.com/lmarkmann/celsius/pull/33)).
 
 ## [0.3.1] - 2026-06-10
 
 ### Added
 
-- Higher-fidelity sky synthesis (cover, palette, clouds, projection, sub-hour now) ([#32](https://github.com/lmarkmann/celsius/pull/32))
+- Used Open-Meteo's total cloud cover, with a union of low, middle, and high layers as fallback, so a full stratus layer no longer appears one-third covered ([#32](https://github.com/lmarkmann/celsius/pull/32)).
+- Blended palette transitions continuously in Oklab by sun altitude, then faded toward cloudy or overcast conditions by total cover. Cloudy nights remain on the night palette ([#32](https://github.com/lmarkmann/celsius/pull/32)).
+- Added cloud morphology for cirrus, altocumulus, stratus, cumulus, and cumulonimbus, including cover-dependent flattening for solid overcast decks and distinct lit and shadow colors ([#32](https://github.com/lmarkmann/celsius/pull/32)).
+- Projected sun and moon positions onto the sky dome, including azimuth foreshortening near the zenith and a bowed solar arc ([#32](https://github.com/lmarkmann/celsius/pull/32)).
+- Added a sun-relative warm horizon bias that is strongest near sunrise and sunset and damped by cloud cover ([#32](https://github.com/lmarkmann/celsius/pull/32)).
+- Interpolated cloud, precipitation, wind, visibility, and temperature between forecast hours for the current view. The home position now represents the exact current minute instead of the start of the hour ([#32](https://github.com/lmarkmann/celsius/pull/32)).
 
-### Test
+### Testing
 
-- Add overcast_night and moonless_darksky oracle goldens ([#30](https://github.com/lmarkmann/celsius/pull/30))
+- Added `overcast_night` and `moonless_darksky` to the locked golden set and made the vendored `scenes/` directory the reproducible source used by golden tooling ([#30](https://github.com/lmarkmann/celsius/pull/30)).
 
 ## [0.3.0] - 2026-06-10
 
 ### Added
 
-- Add --plain/--frame surfaces and a testable TUI App ([#28](https://github.com/lmarkmann/celsius/pull/28))
+- Added `--plain` for a one-line ASCII weather status and `--frame` for an explicit ANSI half-block capture. Pipes, `--no-tui`, and a nonempty `NO_COLOR` now select plain output automatically ([#28](https://github.com/lmarkmann/celsius/pull/28)).
+- Added `--version` and launch tests that keep the reported version tied to the package version ([#28](https://github.com/lmarkmann/celsius/pull/28)).
+
+### Changed
+
+- Changed bare piped output from raw ANSI to plain text. Scripts that need the visual frame must now pass `--frame`; this is the breaking behavior change that moved the project from 0.2.x to 0.3.0 ([#28](https://github.com/lmarkmann/celsius/pull/28)).
+- Extracted the interactive loop into a testable `App` with explicit key and tick handlers, plus terminal-independent state and frame tests ([#28](https://github.com/lmarkmann/celsius/pull/28)).
+
+### Fixed
+
+- Restored the terminal correctly when the first-run location prompt is cancelled and switched the TUI lifecycle to panic-safe `ratatui` setup and restoration ([#28](https://github.com/lmarkmann/celsius/pull/28)).
+- Treated a broken output pipe as a successful exit and made chrome placement display-width aware for wide place names ([#28](https://github.com/lmarkmann/celsius/pull/28)).
+
+### Maintenance
+
+- Changed the Homebrew release workflow to fetch source archives from GitHub's codeload endpoint after the previous archive URL began redirecting ([#27](https://github.com/lmarkmann/celsius/pull/27)).
 
 ## [0.2.2] - 2026-06-07
 
 ### Fixed
 
-- Binstall pkg-url had a stray dot before archive-suffix, add bin-dir for flat archives
+- Corrected the `cargo binstall` package URL, which contained an extra dot before the archive suffix, and declared the binary directory for flat release archives ([commit](https://github.com/lmarkmann/celsius/commit/517d26a1d2dc884b6d1bbf0b2c2cee6e7351c667)).
 
-### Other
+### Testing
 
-- Drop rayon, nothing uses it
-- Dirs 6 (dedups windows-sys), toml 0.5 (drops toml_edit), add cargo-deny config
+- Extended MT19937 parity coverage across two state refills instead of checking only the first generated values. Boundary values and a full-sequence fold are compared with Python's `getrandbits(32)` behavior ([commit](https://github.com/lmarkmann/celsius/commit/c810c2d640b6bdb43fd137c155aa367cc473a28e)).
 
-### Test
+### Maintenance
 
-- Draw past the mt19937 refill boundary
+- Updated `dirs` to version 6, moved to `toml` 0.5, and added `cargo-deny` policy for licenses, advisories, bans, and dependency sources ([commit](https://github.com/lmarkmann/celsius/commit/fbde957e3e2314386694291bab21198f99aa837b)).
+- Removed the unused `rayon` dependency ([commit](https://github.com/lmarkmann/celsius/commit/8e30db2e45f1f65e67ff7981cf84d371d3f31533)).
 
 ## [0.2.1] - 2026-04-25
 
 ### Added
 
-- Lightning flashes for thunderstorm scenes ([#23](https://github.com/lmarkmann/celsius/pull/23))
+- Added deterministic lightning for thunderstorm WMO codes 95 through 99. Storms can produce brief multi-flash illumination and optional branching bolts that are occluded by clouds ([#23](https://github.com/lmarkmann/celsius/pull/23)).
+- Kept lightning outside the static renderer and applied it on TUI ticks, so scene PNGs and their locked hashes remain deterministic. Strike schedules are tested for bit parity with the scene lab ([#23](https://github.com/lmarkmann/celsius/pull/23)).
 
 ## [0.2.0] - 2026-04-25
 
 ### Added
 
-- Bortle dark-sky class input via `--bortle 1..9` flag and `bortle` config field. Scales visible star count along the NELM curve and tints the gradient horizon with a warm sodium/LED glow when the sun is below the horizon. Default = unset = pre-0.2.0 behavior. ([#20](https://github.com/lmarkmann/celsius/pull/20))
-- Prebuilt release binaries for `cargo binstall celsius`. From this release onward, `cargo binstall celsius` resolves directly to GitHub Release tarballs without a Rust toolchain. ([#20](https://github.com/lmarkmann/celsius/pull/20))
+- Added `--bortle 1..9` and a matching config field. The selected Bortle dark-sky class scales star counts along the naked-eye limiting-magnitude curve and adds sun-altitude-gated warm horizon glow for light-polluted night skies. Leaving the setting unset preserves the previous appearance ([#20](https://github.com/lmarkmann/celsius/pull/20)).
+- Published prebuilt GitHub Release archives in the naming scheme expected by `cargo binstall`. From this version onward, `cargo binstall celsius` can use a release binary without compiling the crate or requiring a Rust toolchain ([#20](https://github.com/lmarkmann/celsius/pull/20)).
 
 ### Changed
 
-- Layout reorg: `tools/` -> `scripts/`, `tests/fixtures/scenes/` -> `scenes/`, `goldens/` -> `tests/goldens/`, `tests/fixtures/open-meteo-*.json` -> `tests/`. Cleaner standard-Rust layout; oracle test, weather test, and justfile path imports updated to match. ([#20](https://github.com/lmarkmann/celsius/pull/20))
+- Reorganized development assets into a standard Rust layout: public scenes moved to `scenes/`, goldens to `tests/goldens/`, Open-Meteo fixtures to `tests/`, and development scripts to `scripts/`. The oracle and task runner were updated to use the new paths ([#20](https://github.com/lmarkmann/celsius/pull/20)).
 
 ### Fixed
 
-- Remove `scripts/` and `tests/goldens/` from .gitignore so release-plz can compute the next version (both directories contain tracked files). ([#21](https://github.com/lmarkmann/celsius/pull/21))
+- Removed tracked scripts and goldens from `.gitignore`, allowing release-plz to see package changes and calculate the next release correctly ([#21](https://github.com/lmarkmann/celsius/pull/21)).
+- Made release-plz push release branches with a token that can trigger the protected CI checks required before merge ([#19](https://github.com/lmarkmann/celsius/pull/19)).
+
+## [0.1.0] - 2026-04-11
+
+### Added
+
+- Released the first live weather view: a truecolor half-block TUI that turns a seven-day Open-Meteo forecast into a first-person sky with sun, moon, stars, layered clouds, haze, rain, snow, and weather chrome ([initial import](https://github.com/lmarkmann/celsius/commit/23740ded968b7d895fc75412e906b7b7328d3949)).
+- Added hour-by-hour timeline scrubbing, day jumps, return-to-now, and a `--facing` bearing so observers can center a different part of the sky. Precipitation slant follows wind relative to the chosen bearing ([#6](https://github.com/lmarkmann/celsius/pull/6)).
+- Animated cloud drift from forecast wind speed and added pause and resume control without mutating the canonical forecast timeline ([#4](https://github.com/lmarkmann/celsius/pull/4)).
+- Added saved location configuration and a first-run location prompt. CLI names or coordinates take precedence over the saved location ([#7](https://github.com/lmarkmann/celsius/pull/7)).
+- Added in-TUI help, location entry, weather retry, and a recoverable error sky instead of exiting immediately on network failures ([#9](https://github.com/lmarkmann/celsius/pull/9)).
+- Added distinct dawn and cloudy-day palettes, including a diffuse sun beneath cloud cover and a dedicated dawn transition around the horizon ([#12](https://github.com/lmarkmann/celsius/pull/12)).
+- Added flexible `--at` parsing for full timestamps, dates, bare hours, and relative hour offsets, along with documented keybindings and install paths ([#14](https://github.com/lmarkmann/celsius/pull/14), [#16](https://github.com/lmarkmann/celsius/pull/16)).
+
+### Testing
+
+- Added SHA256 golden-image tests for the deterministic scene renderer and vendored the scene fixtures so those tests exercise real renders in CI ([#3](https://github.com/lmarkmann/celsius/pull/3)).
+- Added fixture tests for Open-Meteo geocoding and forecast parsing, including nullable forecast fields ([initial import](https://github.com/lmarkmann/celsius/commit/23740ded968b7d895fc75412e906b7b7328d3949)).
+- Added Criterion benchmarks for clear and stormy rendering plus noise hot paths, and ran benchmark smoke tests and RustSec audits in CI ([#5](https://github.com/lmarkmann/celsius/pull/5)).
+
+### Maintenance
+
+- Added CI gates for formatting, clippy with warnings denied, the default and PNG feature sets, tests, and oracle rendering ([#1](https://github.com/lmarkmann/celsius/pull/1)).
+- Added release-plz versioning and crates.io publication, tag-triggered GitHub releases, and automated Homebrew formula updates ([#16](https://github.com/lmarkmann/celsius/pull/16)).
+- Excluded demos, goldens, tools, benchmarks, tests, and workflows from the published crate, reducing it from about 5 MiB to 149 KiB, or 43 KiB compressed ([#17](https://github.com/lmarkmann/celsius/pull/17)).

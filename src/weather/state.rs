@@ -16,9 +16,7 @@ use super::location::GeoResult;
 
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
 
-// Key hints from richest to a single `? help` floor. The TUI drops down this
-// list before sacrificing any footer weather data, then holds `? help` until
-// the too-small gate; `?` opens the overlay that lists every binding.
+// Key hints from richest to a single `? help` floor. The TUI drops down this list before sacrificing any footer weather data, then holds `? help` until the too-small gate; `?` opens the overlay that lists every binding.
 const KEYS_TIERS: [&str; 4] = [
     KEYS_HINT,
     "tab day   l location   ? help   q quit",
@@ -26,8 +24,7 @@ const KEYS_TIERS: [&str; 4] = [
     "? help",
 ];
 
-// The weather fields the sky is built from, already resolved (and possibly
-// interpolated between two hours) so the builder never indexes the forecast.
+// The weather fields the sky is built from, already resolved (and possibly interpolated between two hours) so the builder never indexes the forecast.
 struct HourSample {
     temperature_c: Option<f64>,
     reported_cover: Option<f64>,
@@ -81,8 +78,7 @@ impl HourSample {
     }
 }
 
-/// View options shared by every sky in a timeline: where the camera points,
-/// how dark the site is, and which model paints the daytime background.
+/// View options shared by every sky in a timeline: where the camera points, how dark the site is, and which model paints the daytime background.
 #[derive(Clone, Copy, Debug)]
 pub struct ComposeOpts {
     /// Azimuth at the horizontal center of the frame, in degrees (180 = south).
@@ -125,10 +121,7 @@ pub fn compose(
     ))
 }
 
-/// Build a sky for an exact instant, interpolating the weather fields and the
-/// sun/moon position between the bracketing forecast hours instead of snapping
-/// to the top of the hour. This is what makes the live "now" view show the sky
-/// for 14:23 rather than 14:00.
+/// Build a sky for an exact instant, interpolating the weather fields and the sun/moon position between the bracketing forecast hours instead of snapping to the top of the hour. This is what makes the live "now" view show the sky for 14:23 rather than 14:00.
 pub fn compose_at(
     forecast: &Forecast,
     location: &GeoResult,
@@ -149,8 +142,7 @@ pub fn compose_at(
     ))
 }
 
-// Locate the two forecast hours straddling target_unix and the 0..1 fraction
-// between them. Clamps to the ends when the target falls outside the range.
+// Locate the two forecast hours straddling target_unix and the 0..1 fraction between them. Clamps to the ends when the target falls outside the range.
 fn bracket_hours(
     forecast: &Forecast,
     target_unix: i64,
@@ -176,8 +168,7 @@ fn bracket_hours(
     Ok((h0, h0 + 1, frac))
 }
 
-// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km
-// in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
+// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
 fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
     let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
     (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
@@ -225,8 +216,7 @@ fn build_sky(
         lon,
         day_ordinal,
     );
-    // A bright-but-clouded daytime sky needs its own horizon haze regardless of
-    // reported visibility; this matches the old CloudyDay palette regime.
+    // A bright-but-clouded daytime sky needs its own horizon haze regardless of reported visibility; this matches the old CloudyDay palette regime.
     let cloudy_day = sun_altaz.altitude > 3.0 && (0.50..0.80).contains(&total_cover);
     let haze = if cloudy_day {
         Some(Haze {
@@ -257,16 +247,13 @@ fn build_sky(
         location, unix_utc, now_unix, offset, sample, sun_day, high_low,
     );
 
-    // Prototype: the analytic sky is daytime-only (Preetham's zenith formula
-    // breaks once the sun is below the horizon); twilight and night keep the
-    // palette gradient.
+    // Prototype: the analytic sky is daytime-only (Preetham's zenith formula breaks once the sun is below the horizon); twilight and night keep the palette gradient.
     let analytic_sky = (analytic && sun_altaz.altitude > 0.0).then(|| AnalyticSky {
         sun_alt: sun_altaz.altitude,
         sun_az: sun_altaz.azimuth,
         center_az,
         turbidity: turbidity_from_visibility(sample.visibility_m),
-        // Ramp in over the first 8 degrees of solar elevation so the model
-        // crossfades out of the palette through twilight, no seam at sunrise.
+        // Ramp in over the first 8 degrees of solar elevation so the model crossfades out of the palette through twilight, no seam at sunrise.
         blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0),
     });
 
@@ -303,8 +290,7 @@ fn lerp_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
     }
 }
 
-// Interpolate along the shortest arc so 350 -> 10 crosses through 0, not back
-// through 180.
+// Interpolate along the shortest arc so 350 -> 10 crosses through 0, not back through 180.
 fn lerp_angle_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
     match (a, b) {
         (Some(x), Some(y)) => {
@@ -340,9 +326,7 @@ fn build_lightning(
     ))
 }
 
-// Open-Meteo returns its time strings already in the location's local zone
-// (timezone=auto), so subtract the location's UTC offset to recover true UTC;
-// the whole internal pipeline then runs in UTC.
+// Open-Meteo returns its time strings already in the location's local zone (timezone=auto), so subtract the location's UTC offset to recover true UTC; the whole internal pipeline then runs in UTC.
 fn parse_hour_to_unix(time_str: &str, offset: i64) -> Result<i64, WeatherError> {
     let naive = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M")
         .map_err(|e| WeatherError::Decode(format!("hour timestamp '{time_str}': {e}")))?;
@@ -363,10 +347,7 @@ fn utc_date_iso(unix_utc: i64) -> String {
         .unwrap_or_default()
 }
 
-// Open-Meteo encodes polar day/night as sentinel values, not nulls:
-// polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00.
-// polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00.
-// Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
+// Open-Meteo encodes polar day/night as sentinel values, not nulls: polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00. polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00. Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
 fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDay> {
     let i = daily.time.iter().position(|d| d == date_iso)?;
     let dur = daily.daylight_duration.get(i).copied()?;
@@ -384,9 +365,7 @@ fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDa
     })
 }
 
-// The day's high/low for the date of the displayed hour, so a scrubbed future
-// hour shows that day's envelope, not today's. Both ends must be present or the
-// footer omits the H/L segment entirely (no half pair).
+// The day's high/low for the date of the displayed hour, so a scrubbed future hour shows that day's envelope, not today's. Both ends must be present or the footer omits the H/L segment entirely (no half pair).
 fn daily_high_low(daily: &DailyArrays, date_iso: &str) -> Option<(f64, f64)> {
     let i = daily.time.iter().position(|d| d == date_iso)?;
     let high = daily.temperature_2m_max.get(i).copied().flatten()?;
@@ -401,9 +380,7 @@ fn local_hhmm(unix_utc: i64, offset: i64) -> String {
         .unwrap_or_default()
 }
 
-// Arrows ↑ U+2191 / ↓ U+2193 are East-Asian-Width Ambiguous: width 1 in western
-// terminals (default), width 2 in CJK locales or when ambiguous-as-wide is set.
-// Column math elsewhere assumes width 1; revisit if that changes.
+// Arrows ↑ U+2191 / ↓ U+2193 are East-Asian-Width Ambiguous: width 1 in western terminals (default), width 2 in CJK locales or when ambiguous-as-wide is set. Column math elsewhere assumes width 1; revisit if that changes.
 fn format_sun_segment(sun_day: Option<&SunDay>, offset: i64) -> String {
     match sun_day {
         Some(SunDay::Times {
@@ -446,8 +423,7 @@ fn build_moon(state: &astro::MoonState, center_az: f64) -> Option<Moon> {
     })
 }
 
-// Warm horizon light on the sun's side, strongest at sunrise/sunset and gone by
-// full day or deep night. Cover damps it, since an overcast horizon has no glow.
+// Warm horizon light on the sun's side, strongest at sunrise/sunset and gone by full day or deep night. Cover damps it, since an overcast horizon has no glow.
 fn build_horizon_glow(altaz: &AltAz, center_az: f64, total_cover: f64) -> Option<HorizonGlow> {
     if lateral_offset_deg(altaz.azimuth, center_az).abs() >= 90.0 {
         return None;
@@ -499,10 +475,7 @@ fn build_stars(
     })
 }
 
-// Total sky cover. Prefer Open-Meteo's own `cloud_cover` (computed across all
-// levels); when it's missing, combine the three bands as independent occluders
-// (1 - product of clear fractions) rather than averaging them, so a single
-// fully-covered layer still reads as a fully-covered sky.
+// Total sky cover. Prefer Open-Meteo's own `cloud_cover` (computed across all levels); when it's missing, combine the three bands as independent occluders (1 - product of clear fractions) rather than averaging them, so a single fully-covered layer still reads as a fully-covered sky.
 fn total_cover(reported: Option<f64>, low: f64, mid: f64, high: f64) -> f64 {
     let cover = match reported {
         Some(pct) => pct / 100.0,
@@ -544,9 +517,7 @@ fn build_clouds(
     layers
 }
 
-// The low band carries the weather: showers and thunderstorms are convective
-// towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather
-// cumulus, and anything else is a flat stratus deck.
+// The low band carries the weather: showers and thunderstorms are convective towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather cumulus, and anything else is a flat stratus deck.
 fn low_cloud_kind(weather_code: u32, cover_low: f64) -> CloudKind {
     if (80..=82).contains(&weather_code) || (95..=99).contains(&weather_code) {
         CloudKind::Cumulonimbus
@@ -570,8 +541,7 @@ fn cloud_layer(
     }
     let threshold = 0.55 - 0.40 * cover;
     let cover_strength = 0.90 + 1.00 * (1.0 - cover);
-    // A stratus deck flattens into a solid lid as it approaches full cover, and
-    // widens vertically so the overcast fills the sky rather than a thin band.
+    // A stratus deck flattens into a solid lid as it approaches full cover, and widens vertically so the overcast fills the sky rather than a thin band.
     let flatten = if kind == CloudKind::Stratus {
         let f = ((cover - 0.70) / 0.25).clamp(0.0, 1.0);
         f * f * (3.0 - 2.0 * f)
@@ -642,9 +612,7 @@ fn build_precipitation(
     })
 }
 
-// Footer payload tiers, richest to poorest, dropping lowest-value first:
-// abbreviate wind (lose the word "wind"), then the wind value, then H/L, with
-// the condition word and temperature held longest. `temp` alone is the floor.
+// Footer payload tiers, richest to poorest, dropping lowest-value first: abbreviate wind (lose the word "wind"), then the wind value, then H/L, with the condition word and temperature held longest. `temp` alone is the floor.
 fn footer_tiers(
     temp: &str,
     high_low: Option<&str>,
@@ -698,8 +666,7 @@ fn build_chrome(
     let high_low = high_low.map(|(hi, lo)| format!("H{hi:.0} L{lo:.0}"));
     let footer = format!("{temp}  {word}   wind {compass} {speed}");
 
-    // ASCII one-liner for --plain: carries the place name, no degree sign.
-    // Grep- and pipe-friendly, distinct from the decorative footer.
+    // ASCII one-liner for --plain: carries the place name, no degree sign. Grep- and pipe-friendly, distinct from the decorative footer.
     let temp_ascii = sample
         .temperature_c
         .map(|t| format!("{t:.0}C"))
@@ -789,9 +756,7 @@ fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
 pub fn error_sky(msg: &str) -> SkyState {
     let gradient = gradient_for(Palette::Night);
     let first_line = msg.lines().next().unwrap_or(msg);
-    // Truncate on a char boundary: error text carries user-supplied location
-    // labels, and a byte slice through a multibyte char would panic the one
-    // path that must never panic.
+    // Truncate on a char boundary: error text carries user-supplied location labels, and a byte slice through a multibyte char would panic the one path that must never panic.
     let footer = match first_line.char_indices().nth(72) {
         Some((cut, _)) => format!("{}...", &first_line[..cut]),
         None => first_line.to_string(),
@@ -827,9 +792,7 @@ pub fn error_sky(msg: &str) -> SkyState {
     }
 }
 
-/// FNV-1a over the little-endian bytes of each part. Cloud, star and
-/// precipitation seeds must reproduce across toolchains; DefaultHasher's
-/// algorithm is explicitly not guaranteed between Rust releases.
+/// FNV-1a over the little-endian bytes of each part. Cloud, star and precipitation seeds must reproduce across toolchains; DefaultHasher's algorithm is explicitly not guaranteed between Rust releases.
 fn mix_seed(parts: &[u64]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for part in parts {
@@ -847,8 +810,7 @@ mod tests {
 
     #[test]
     fn mix_seed_is_stable_across_toolchains() {
-        // FNV-1a reference vectors, computed independently. If these move,
-        // every daily cloud/star/precip seed moves with them.
+        // FNV-1a reference vectors, computed independently. If these move, every daily cloud/star/precip seed moves with them.
         assert_eq!(mix_seed(&[]), 0xcbf2_9ce4_8422_2325);
         assert_eq!(mix_seed(&[0]), 0xa8c7_f832_281a_39c5);
         assert_eq!(mix_seed(&[1, 2]), 0x7717_9803_63c8_e066);
@@ -878,8 +840,7 @@ mod tests {
 
     #[test]
     fn format_label_uses_location_offset_not_machine() {
-        // 18:00Z is 02:00 the next local day at UTC+8; with "now" at the same
-        // instant the header reads the location's wall clock, not the machine's.
+        // 18:00Z is 02:00 the next local day at UTC+8; with "now" at the same instant the header reads the location's wall clock, not the machine's.
         let unix = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
         assert_eq!(format_label(unix, unix, 8 * 3600), "today 02:00");
         let next = unix + 86_400;
@@ -888,8 +849,7 @@ mod tests {
 
     #[test]
     fn error_sky_truncates_multibyte_text_without_panicking() {
-        // The two-byte ü starts at byte 71, so the old `&first_line[..72]`
-        // sliced through it and panicked the error path itself.
+        // The two-byte ü starts at byte 71, so the old `&first_line[..72]` sliced through it and panicked the error path itself.
         let msg = format!("{}ürich weather fetch failed", "Z".repeat(71));
         let sky = error_sky(&msg);
         assert!(sky.chrome.footer.ends_with("..."));
@@ -920,8 +880,7 @@ mod tests {
 
     #[test]
     fn total_cover_overcast_stratus_is_total() {
-        // 100% low stratus, nothing above: the union must read as fully covered,
-        // not the (1.0+0+0)/3 = 0.33 the old averaging produced.
+        // 100% low stratus, nothing above: the union must read as fully covered, not the (1.0+0+0)/3 = 0.33 the old averaging produced.
         assert!((total_cover(None, 1.0, 0.0, 0.0) - 1.0).abs() < 1e-9);
         // Two half-covered independent layers: 1 - 0.5*0.5 = 0.75.
         assert!((total_cover(None, 0.5, 0.5, 0.0) - 0.75).abs() < 1e-9);
@@ -976,8 +935,7 @@ mod tests {
                 rise_unix,
                 set_unix,
             }) => {
-                // 2026-04-11T00:00Z = 1_775_865_600 (per parse_hour_round_trip);
-                // +4h38m = +16_680, +18h14m = +65_640.
+                // 2026-04-11T00:00Z = 1_775_865_600 (per parse_hour_round_trip); +4h38m = +16_680, +18h14m = +65_640.
                 assert_eq!(rise_unix, 1_775_882_280);
                 assert_eq!(set_unix, 1_775_931_240);
             }

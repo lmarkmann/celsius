@@ -56,8 +56,7 @@ fn frame_surface_emits_ansi() {
 
 #[test]
 fn piped_stdout_defaults_to_plain() {
-    // assert_cmd captures stdout (not a TTY), so with no flag the app must fall
-    // back to the flat surface, never paint escape codes into the pipe.
+    // assert_cmd captures stdout (not a TTY), so with no flag the app must fall back to the flat surface, never paint escape codes into the pipe.
     let out = bin().args(["--scene", &scene()]).output().unwrap();
     assert!(out.status.success());
     assert!(!out.stdout.contains(&0x1b));
