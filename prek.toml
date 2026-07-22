@@ -1,0 +1,24 @@
+# git pre-commit / pre-push gates for celsius.
+# Hooks call the just recipes so there is one source of truth for "checked".
+default_install_hook_types = ["pre-commit", "pre-push"]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "just-check"
+name = "just check (fmt + clippy, both feature sets)"
+language = "system"
+entry = "just check"
+always_run = true
+pass_filenames = false
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "just-ci"
+name = "just ci (fmt + clippy + tests + bench smoke)"
+language = "system"
+entry = "just ci"
+always_run = true
+pass_filenames = false
+stages = ["pre-push"]
