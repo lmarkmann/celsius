@@ -169,7 +169,8 @@ fn bracket_hours(
 }
 
 // Open-Meteo visibility tops out near 24 km on clear days and falls to a few km in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
-fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
+/// Map visibility in metres to the turbidity range used by the analytic sky.
+pub fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
     let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
     (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
 }

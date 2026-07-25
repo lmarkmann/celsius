@@ -108,7 +108,8 @@ const CLEAR_ANCHORS: [(f64, Palette); 5] = [
     (12.0, Palette::Day),
 ];
 
-fn clear_sky_gradient(sun_alt_deg: f64) -> Gradient {
+/// Return the production clear-sky gradient for a solar altitude in degrees.
+pub fn clear_sky_gradient(sun_alt_deg: f64) -> Gradient {
     let (lo_alt, lo_pal) = CLEAR_ANCHORS[0];
     if sun_alt_deg <= lo_alt {
         return gradient_for(lo_pal);
