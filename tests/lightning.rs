@@ -1,4 +1,4 @@
-// Bit-parity test against the celsius-lab lightning prototype. Fixture captured from celsius-lab/src/skyterm_lab/lightning.py with seed=8177, intensity=1.0, duration=2.0, default FlashParams.
+// Fixture captured from the retired Python lightning prototype with seed=8177, intensity=1.0, duration=2.0, and default FlashParams.
 
 use celsius::lightning::{FlashParams, schedule_strikes};
 

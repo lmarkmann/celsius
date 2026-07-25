@@ -13,7 +13,7 @@ impl Noise {
     }
 
     pub fn with_size(seed: u64, width: usize, height: usize) -> Self {
-        // `seed as u32` drops the high 32 bits of the u64. Intentional: the lab's Python reference seeds via init_by_array(&[seed as u32]), and bit parity with it is what the oracle relies on. Keep seeds inside u32 to be safe.
+        // `seed as u32` drops the high 32 bits of the u64. Intentional: the retired Python fixture seeds via init_by_array(&[seed as u32]), and bit parity with it is what the oracle relies on. Keep seeds inside u32 to be safe.
         let mut rng = Mt19937::init_by_array(&[seed as u32]);
         let grid = (0..width * height).map(|_| rng.next_f64()).collect();
         Self {
