@@ -17,6 +17,9 @@ exclude = [
   "justfile",
   "prek.toml",
   "tools/",
+  "deny.toml",
+  "release-plz.toml",
+  ".rumdl.toml",
 ]
 
 [workspace]
