@@ -618,7 +618,7 @@ fn too_small(area: Rect) -> bool {
 }
 
 /// One full frame: the sky (or the too-small takeover) plus any open overlay. The too-small screen is exclusive, so overlays stay off it and its "terminal too small" message is never hidden.
-fn draw_frame(buf: &mut Buffer, area: Rect, app: &mut App) {
+pub fn draw_frame(buf: &mut Buffer, area: Rect, app: &mut App) {
     draw_sky(buf, area, app);
     if !too_small(area) {
         match &app.overlay {

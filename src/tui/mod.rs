@@ -9,6 +9,10 @@ mod widget;
 
 pub use app::{RunOutcome, Session, Timeline};
 
+// Not API: `benches/render.rs` drives the real draw path to measure a frame, and a bench is an external crate. Hidden from docs so it stays off the semver contract that cargo-semver-checks enforces on release.
+#[doc(hidden)]
+pub use app::{App, draw_frame};
+
 use std::io::{self, Write};
 
 use crate::render::render;
