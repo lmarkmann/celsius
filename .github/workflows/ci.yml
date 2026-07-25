@@ -31,12 +31,18 @@ jobs:
       - name: clippy (png feature)
         run: cargo clippy --all-targets --features png -- -D warnings
 
+      - name: clippy (celsius-lab)
+        run: cargo clippy -p celsius-lab --all-targets -- -D warnings
+
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
 
       - name: test
         run: cargo nextest run --features png
+
+      - name: test (celsius-lab)
+        run: cargo nextest run -p celsius-lab
 
       - name: bench (compile + smoke)
         run: cargo bench --bench render -- --test

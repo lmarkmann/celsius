@@ -15,10 +15,12 @@ check:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo clippy --all-targets --features png -- -D warnings
+    cargo clippy -p celsius-lab --all-targets -- -D warnings
 
 # Everything the CI test job runs, before pushing (audit still lives only in CI).
 ci: check
     cargo nextest run --features png
+    cargo nextest run -p celsius-lab
     cargo bench --bench render -- --test
 
 fmt:
@@ -52,6 +54,26 @@ render-all:
 # Render the held-back WIP scenes to out/ to judge whether they are ready to bless.
 render-wip:
     for s in {{wip_scenes}}; do just render $s; done
+
+# Run any production-backed scene-authoring command.
+lab *args:
+    cargo run -p celsius-lab -- {{args}}
+
+# Render one scene to an enlarged PNG in out/lab/.
+lab-render name *args:
+    cargo run -p celsius-lab -- render {{name}} {{args}}
+
+# Compare one scene with a reference image and write an Oklab heatmap.
+lab-diff name *args:
+    cargo run -p celsius-lab -- diff {{name}} {{args}}
+
+# Render every root scene into a labeled contact sheet.
+lab-contact *args:
+    cargo run -p celsius-lab -- contact {{args}}
+
+# Scaffold a scene from production astronomy and render its first preview.
+lab-new name lat lon at *args:
+    cargo run -p celsius-lab -- new {{name}} --lat {{lat}} --lon {{lon}} --at {{at}} {{args}}
 
 # Re-lock celsius golden scene examples (PNGs + manifest.toml) from the current renderer. This should only be run after deliberate changes, of the scenes or how they are rendered.
 lock:
