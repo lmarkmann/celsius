@@ -45,3 +45,18 @@ celsius --bortle 7               # adjust visible stars + horizon glow for your 
 | `r` | retry weather fetch |
 | `?` | keybinding help |
 | `q` / `esc` | quit |
+
+## Scene development
+
+The unpublished Rust tool under `tools/celsius-lab/` scaffolds scenes from production astronomy, renders previews, compares reference photographs in Oklab, and builds a labeled contact sheet without maintaining a second renderer.
+
+```sh
+just lab --help
+just lab-render dawn
+just lab-contact
+just lab-diff dawn --against path/to/reference.jpg
+just lab-new harbor_dawn 53.5511 9.9937 2026-04-11T06:14Z --out path/to/drafts/harbor_dawn.toml
+just lab-new harbor_dawn 53.5511 9.9937 2026-04-11T06:14Z --visibility 18
+```
+
+See [the celsius-lab guide](tools/celsius-lab/README.md) for the scene and output layout.
