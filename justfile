@@ -17,11 +17,15 @@ check:
     cargo clippy --all-targets --features png -- -D warnings
     cargo clippy -p celsius-lab --all-targets -- -D warnings
 
-# Everything the CI test job runs, before pushing (audit still lives only in CI).
+# Everything the CI test job runs, before pushing (dependency policy is separate: `just policy`).
 ci: check
     cargo nextest run --features png
     cargo nextest run -p celsius-lab
     cargo bench --bench render -- --test
+
+# Dependency policy: advisories, licences, source registries, and the bans graph.
+policy:
+    cargo deny check
 
 fmt:
     cargo fmt
