@@ -16,7 +16,21 @@ exclude = [
   "tests/",
   "justfile",
   "prek.toml",
+  "tools/",
 ]
+
+[workspace]
+members = [".", "tools/celsius-lab"]
+default-members = ["."]
+resolver = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
@@ -33,13 +47,8 @@ default = []
 # TUI-only binary; the oracle path pulls it in via `--features png`.
 png = ["dep:image"]
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-todo = "warn"
-unimplemented = "warn"
-dbg_macro = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = "1"

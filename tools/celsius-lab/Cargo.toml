@@ -1,0 +1,20 @@
+[package]
+name = "celsius-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Scene authoring tools for celsius"
+
+[dependencies]
+anyhow = "1"
+celsius = { path = "../..", features = ["png"] }
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+font8x8 = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
