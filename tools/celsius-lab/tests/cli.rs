@@ -13,8 +13,30 @@ fn help_lists_the_authoring_commands() {
             && stdout.contains("new")
             && stdout.contains("render")
             && stdout.contains("diff")
+            && stdout.contains("sweep")
             && stdout.contains("contact"),
         "unexpected help output: {stdout}"
+    );
+}
+
+#[test]
+fn sweep_writes_a_sheet_for_the_requested_grid() {
+    let dir = tempfile::tempdir().unwrap();
+    let sheet = dir.path().join("sweep.png");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_celsius-lab"))
+        .args(["sweep", "--altitudes", "10,40", "--turbidities", "2"])
+        .arg("--scale")
+        .arg("1")
+        .arg("--out")
+        .arg(&sheet)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success() && sheet.exists(),
+        "unexpected sweep output: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

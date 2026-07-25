@@ -5,7 +5,8 @@ use anyhow::{Context, Result, bail, ensure};
 use celsius::analytic_sky::{AnalyticSky, prepare};
 use celsius::astro::{moon_state, sun_position, to_sky_fracs};
 use celsius::colorspace::{oklab_to_rgb, rgb_u8_to_oklab};
-use celsius::{load_scene, render};
+use celsius::scene::{Chrome, SkyState, Sun};
+use celsius::{Gradient, load_scene, render};
 use chrono::{DateTime, NaiveDateTime};
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 use image::imageops::{FilterType, overlay, resize};
@@ -252,11 +253,55 @@ pub fn scene_path(root: &Path, name_or_path: &str) -> PathBuf {
 
 pub fn render_scene(path: &Path) -> Result<RgbImage> {
     let scene = load_scene(path).with_context(|| format!("loading {}", path.display()))?;
-    let pixels = render(&scene, SKY_WIDTH, SKY_HEIGHT);
+    render_state(&scene, SKY_WIDTH, SKY_HEIGHT)
+}
+
+pub fn render_state(state: &SkyState, width: u32, height: u32) -> Result<RgbImage> {
+    let pixels = render(state, width, height);
     let png = celsius::terminal::encode_png(&pixels).context("encoding production PNG")?;
     Ok(image::load_from_memory_with_format(&png, ImageFormat::Png)
         .context("decoding production PNG")?
         .to_rgb8())
+}
+
+/// A bare analytic sky at one sun elevation and turbidity, for sweeping the Preetham model without a forecast. The gradient is black on purpose: every visible colour then provably comes from the analytic model rather than a palette underneath it.
+pub fn analytic_state(sun_alt: f64, turbidity: f64) -> SkyState {
+    let center_az = 180.0;
+    SkyState {
+        name: format!("alt{}_t{}", sun_alt as i32, turbidity as i32),
+        gradient: Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]),
+        sun: Sun {
+            x_frac: 0.5,
+            y_frac: (1.0 - sun_alt.to_radians().sin()).clamp(0.0, 1.0),
+            radius: 4.0,
+            visible: sun_alt > 0.0,
+        },
+        clouds: Vec::new(),
+        chrome: Chrome {
+            header_left: String::new(),
+            header_right: String::new(),
+            footer: String::new(),
+            keys: String::new(),
+            status: String::new(),
+            footer_tiers: Vec::new(),
+            keys_tiers: Vec::new(),
+        },
+        haze: None,
+        stars: None,
+        moon: None,
+        precipitation: None,
+        lightning: None,
+        horizon_glow: None,
+        analytic: Some(AnalyticSky {
+            sun_alt,
+            sun_az: center_az,
+            center_az,
+            turbidity,
+            blend: 1.0,
+        }),
+        wind_speed_kmh: 0.0,
+        unix_utc: 0,
+    }
 }
 
 pub fn load_reference(path: &Path) -> Result<RgbImage> {

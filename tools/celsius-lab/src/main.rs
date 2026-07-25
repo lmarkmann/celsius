@@ -5,8 +5,9 @@ use anyhow::{Context, Result, bail, ensure};
 use celsius::astro::{moon_state, sun_position, to_sky_fracs};
 use celsius::weather::turbidity_from_visibility;
 use celsius_lab::{
-    SceneSpec, compare_images, contact_sheet, load_reference, parse_at, render_scene, repo_root,
-    save_scaled, scene_path, scene_toml,
+    SKY_HEIGHT, SKY_WIDTH, SceneSpec, analytic_state, compare_images, contact_sheet,
+    load_reference, parse_at, render_scene, render_state, repo_root, save_scaled, scene_path,
+    scene_toml,
 };
 use clap::{Parser, Subcommand};
 
@@ -73,6 +74,17 @@ enum Command {
         #[arg(long, default_value_t = 6)]
         scale: u32,
     },
+    /// Render the analytic sky across sun elevations and turbidities.
+    Sweep {
+        #[arg(long, value_delimiter = ',', default_value = "3,10,25,55")]
+        altitudes: Vec<f64>,
+        #[arg(long, value_delimiter = ',', default_value = "2,4,8")]
+        turbidities: Vec<f64>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value_t = 3)]
+        scale: u32,
+    },
     /// Render every scene into a labeled contact sheet.
     Contact {
         #[arg(long, default_value_t = 3)]
@@ -126,6 +138,12 @@ fn main() -> Result<()> {
             out,
             scale,
         } => diff_command(&root, &scene, against.as_deref(), out.as_deref(), scale),
+        Command::Sweep {
+            altitudes,
+            turbidities,
+            out,
+            scale,
+        } => sweep_command(&root, &altitudes, &turbidities, out.as_deref(), scale),
         Command::Contact {
             columns,
             scale,
@@ -259,6 +277,46 @@ fn diff_command(
         metrics.mean_delta_e, metrics.p95_delta_e, metrics.max_delta_e
     );
     println!("heatmap:   {}", output.display());
+    Ok(())
+}
+
+fn sweep_command(
+    root: &Path,
+    altitudes: &[f64],
+    turbidities: &[f64],
+    out: Option<&Path>,
+    scale: u32,
+) -> Result<()> {
+    ensure!(
+        !altitudes.is_empty() && !turbidities.is_empty(),
+        "a sweep needs at least one altitude and one turbidity"
+    );
+    let mut tiles = Vec::with_capacity(altitudes.len() * turbidities.len());
+    for &altitude in altitudes {
+        for &turbidity in turbidities {
+            let state = analytic_state(altitude, turbidity);
+            let image = render_state(&state, SKY_WIDTH, SKY_HEIGHT)?;
+            tiles.push((state.name.clone(), image));
+        }
+    }
+    let sheet = contact_sheet(&tiles, turbidities.len(), scale)?;
+    let output = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("out/lab/sweep.png"));
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    sheet
+        .save(&output)
+        .with_context(|| format!("writing {}", output.display()))?;
+    println!(
+        "sweep: {} altitudes x {} turbidities -> {} ({}x{})",
+        altitudes.len(),
+        turbidities.len(),
+        output.display(),
+        sheet.width(),
+        sheet.height()
+    );
     Ok(())
 }
 

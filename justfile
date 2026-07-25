@@ -75,6 +75,10 @@ lab-diff name *args:
 lab-contact *args:
     cargo run -p celsius-lab -- contact {{args}}
 
+# Sweep the analytic sky across sun elevations and turbidities.
+lab-sweep *args:
+    cargo run -p celsius-lab -- sweep {{args}}
+
 # Scaffold a scene from production astronomy and render its first preview.
 lab-new name lat lon at *args:
     cargo run -p celsius-lab -- new {{name}} --lat {{lat}} --lon {{lon}} --at {{at}} {{args}}
