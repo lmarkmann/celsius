@@ -1,4 +1,6 @@
 use std::io::{BufWriter, ErrorKind, IsTerminal, Write, stdout};
+use std::path::Path;
+#[cfg(feature = "png")]
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -13,7 +15,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use celsius::config::{self, LocationPref};
 use celsius::tui::{RunOutcome, Timeline};
 use celsius::weather::{ComposeOpts, compose, compose_at, error_sky, forecast, location};
-use celsius::{SkyState, load_scene, tui};
+use celsius::{SkyState, builtin_names, load_builtin_scene, load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
 
@@ -30,8 +32,13 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
   \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
-  \x1b[1;36mcelsius --scene scenes/golden_hour_cumulus.toml\x1b[0m
-  \x1b[1;36mcelsius render --scene scene.toml --out scene.png\x1b[0m
+  \x1b[1;36mcelsius --scene golden_hour_cumulus\x1b[0m       a built-in sky, no network
+  \x1b[1;36mcelsius --scene ./my_sky.toml\x1b[0m             your own scene file
+  \x1b[1;36mcelsius render --scene high_noon_clear --out sky.png\x1b[0m
+
+\x1b[1;32mBuilt-in scenes:\x1b[0m
+  blue_hour_calm  golden_hour_cumulus  high_noon_clear  moonless_darksky
+  moonlit_clear_winter  overcast_night  stormy_afternoon_advancing
 ";
 
 #[cfg(not(feature = "png"))]
@@ -41,7 +48,12 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
   \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
-  \x1b[1;36mcelsius --scene scenes/golden_hour_cumulus.toml\x1b[0m
+  \x1b[1;36mcelsius --scene golden_hour_cumulus\x1b[0m       a built-in sky, no network
+  \x1b[1;36mcelsius --scene ./my_sky.toml\x1b[0m             your own scene file
+
+\x1b[1;32mBuilt-in scenes:\x1b[0m
+  blue_hour_calm  golden_hour_cumulus  high_noon_clear  moonless_darksky
+  moonlit_clear_winter  overcast_night  stormy_afternoon_advancing
 ";
 
 #[derive(Parser)]
@@ -69,9 +81,10 @@ struct Cli {
     #[arg(long, value_name = "TIME", global = true, allow_hyphen_values = true)]
     at: Option<String>,
 
-    /// Load a lab scene TOML directly instead of synthesizing from weather.
-    #[arg(long, value_name = "PATH", global = true)]
-    scene: Option<PathBuf>,
+    /// Show a fixed scene instead of synthesizing from live weather. Takes a
+    /// built-in name (see the list below) or a path to your own scene TOML.
+    #[arg(long, value_name = "NAME|PATH", global = true)]
+    scene: Option<String>,
 
     /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W. Default 180 (south) suits northern-hemisphere observers.
     #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
@@ -107,11 +120,11 @@ enum SkyModel {
 #[cfg(feature = "png")]
 #[derive(Subcommand)]
 enum Command {
-    /// Render a scene TOML to a PNG (oracle path, `png` feature).
+    /// Render a scene to a PNG (oracle path, `png` feature).
     Render {
-        /// Path to the scene TOML.
-        #[arg(short, long)]
-        scene: PathBuf,
+        /// Built-in scene name, or a path to a scene TOML.
+        #[arg(short, long, value_name = "NAME|PATH")]
+        scene: String,
         /// Output PNG path.
         #[arg(short, long)]
         out: PathBuf,
@@ -143,6 +156,26 @@ fn output_mode(cli: &Cli) -> OutputMode {
     }
 }
 
+/// Resolve `--scene`. A bare word is a built-in name; anything carrying a directory component is a path, so `./dawn.toml` always means the file even if a built-in ever takes that name. A bare word that matches nothing is the one place users learn which scenes exist, so the error lists them.
+fn resolve_scene(arg: &str) -> Result<SkyState> {
+    let has_directory = Path::new(arg)
+        .parent()
+        .is_some_and(|p| !p.as_os_str().is_empty());
+    if !has_directory {
+        let name = arg.strip_suffix(".toml").unwrap_or(arg);
+        if let Some(state) = load_builtin_scene(name) {
+            return state.with_context(|| format!("loading built-in scene {name}"));
+        }
+        if !Path::new(arg).is_file() {
+            bail!(
+                "unknown scene {arg:?}\nbuilt in: {}\npass a path to load your own scene TOML",
+                builtin_names().collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+    load_scene(arg).with_context(|| format!("loading scene {arg}"))
+}
+
 /// Write one state non-interactively and exit. A broken pipe (`celsius | head`) is a normal way to stop reading, not an error, so it maps to success.
 fn write_oneshot(state: &SkyState, mode: &OutputMode) -> Result<()> {
     let mut out = BufWriter::new(stdout().lock());
@@ -168,18 +201,16 @@ fn main() -> Result<()> {
         height,
     }) = cli.command
     {
-        let state =
-            load_scene(&scene).with_context(|| format!("loading scene {}", scene.display()))?;
+        let state = resolve_scene(&scene)?;
         let pixels = render(&state, width, height);
         terminal::write_png(&pixels, &out).with_context(|| format!("writing {}", out.display()))?;
         println!("{} -> {} ({}x{})", state.name, out.display(), width, height);
         return Ok(());
     }
 
-    // Scene-file path: single state, no retry loop needed.
-    if let Some(scene_path) = cli.scene.as_ref() {
-        let state = load_scene(scene_path)
-            .with_context(|| format!("loading scene {}", scene_path.display()))?;
+    // Fixed scene: single state, no retry loop needed.
+    if let Some(scene) = cli.scene.as_ref() {
+        let state = resolve_scene(scene)?;
         let mode = output_mode(&cli);
         if !matches!(mode, OutputMode::Tui) {
             return write_oneshot(&state, &mode);

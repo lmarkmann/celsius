@@ -83,7 +83,36 @@ fn lab_scenes_match_locked_goldens() -> Result<()> {
     Ok(())
 }
 
-/// Regenerate `tests/goldens/<NAME>.png` and `manifest.toml` for every scene in the space-separated `CELSIUS_SCENES`. Ignored by default; `just lock` runs it with the scene list from the justfile. This is the old write_manifest.py, moved into Rust so the repo carries no Python and the writer shares the renderer/hash path with the checker above.
+/// Three lists have to agree: the justfile `scenes` var that blesses goldens, the manifest those goldens land in, and the `include_str!` table compiled into the binary. `just lock` couples the first two; this couples the third, so a scene can never be locked without shipping or shipped without a golden.
+#[test]
+fn builtins_match_the_locked_manifest() -> Result<()> {
+    let manifest_path = repo_root().join("tests/goldens/manifest.toml");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: BTreeMap<String, Entry> = basic_toml::from_str(&manifest_text)?;
+
+    let locked: Vec<&str> = manifest.keys().map(String::as_str).collect();
+    let builtin: Vec<&str> = celsius::builtin_names().collect();
+    if locked != builtin {
+        bail!(
+            "built-in scenes and locked goldens disagree\n  locked  {locked:?}\n  built in {builtin:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Makes the unreachable `SceneError` arms in `load_builtin_scene` actually unreachable: a malformed embedded TOML fails here rather than at a user's terminal, where the error would name a path that does not exist.
+#[test]
+fn every_builtin_parses() -> Result<()> {
+    for name in celsius::builtin_names() {
+        celsius::load_builtin_scene(name)
+            .with_context(|| format!("{name} is not a built-in"))?
+            .with_context(|| format!("parsing built-in {name}"))?;
+    }
+    Ok(())
+}
+
+/// Regenerate `tests/goldens/<NAME>.png` and `manifest.toml` for every scene in the space-separated `CELSIUS_SCENES`. Ignored by default; `just lock` runs it with the scene list from the justfile. The writer shares the renderer and hash path with the checker above, so a locked manifest can never disagree with what the oracle verifies.
 #[test]
 #[ignore = "writes goldens; run via `just lock`"]
 fn bless_goldens() -> Result<()> {

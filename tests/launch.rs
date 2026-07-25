@@ -62,6 +62,44 @@ fn piped_stdout_defaults_to_plain() {
     assert!(!out.stdout.contains(&0x1b));
 }
 
+/// The installed-binary case: no repo checkout, no scenes/ directory in reach.
+/// Runs from the temp dir so a stray relative path cannot rescue the lookup.
+#[test]
+fn builtin_scene_renders_with_no_files_on_disk() {
+    let out = bin()
+        .current_dir(std::env::temp_dir())
+        .args(["--scene", "high_noon_clear", "--frame"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.contains(&0x1b));
+}
+
+#[test]
+fn unknown_scene_name_lists_the_builtins() {
+    bin()
+        .current_dir(std::env::temp_dir())
+        .args(["--scene", "golden_hour"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown scene"))
+        .stderr(predicate::str::contains("golden_hour_cumulus"));
+}
+
+/// dawn is a work-in-progress scene: reachable by path, deliberately not shipped.
+#[test]
+fn wip_scene_is_not_a_builtin_but_still_loads_by_path() {
+    bin()
+        .current_dir(std::env::temp_dir())
+        .args(["--scene", "dawn"])
+        .assert()
+        .failure();
+    bin()
+        .args(["--scene", &scene(), "--plain"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn frame_and_plain_conflict() {
     bin()

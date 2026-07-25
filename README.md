@@ -31,7 +31,11 @@ celsius --at 2026-06-21          # date alone, noon UTC
 celsius --at 2026-06-21T17:00Z   # full ISO 8601
 celsius --facing 0               # face north (default 180 = south)
 celsius --bortle 7               # adjust visible stars + horizon glow for your sky
+celsius --scene high_noon_clear  # a built-in sky, no network needed
+celsius --scene ./my_sky.toml    # your own scene file
 ```
+
+Seven scenes are compiled into the binary, so `--scene` works offline and on a fresh install: `blue_hour_calm`, `golden_hour_cumulus`, `high_noon_clear`, `moonless_darksky`, `moonlit_clear_winter`, `overcast_night`, `stormy_afternoon_advancing`. Pass a path instead of a name to render a scene TOML of your own.
 
 ## Keys
 

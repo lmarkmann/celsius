@@ -7,9 +7,13 @@ description = "Terminal weather TUI: first-person sky view of the weather at you
 repository = "https://github.com/lmarkmann/celsius"
 keywords = ["weather", "tui", "terminal", "sky", "cli"]
 categories = ["command-line-utilities", "visualization"]
+# scenes/ is packaged: src/scene.rs embeds the locked scenes with include_str!,
+# so excluding them would break the publish verification build.
 exclude = [
   "demos/",
-  "scenes/",
+  # dawn and cloudy_day are WIP: reachable by path in a checkout, deliberately not built in, so editing them stays a test: change that cuts no release.
+  "scenes/dawn.toml",
+  "scenes/cloudy_day.toml",
   "scripts/",
   ".github/",
   "benches/",

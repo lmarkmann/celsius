@@ -19,4 +19,4 @@ pub mod weather;
 pub use colorspace::{Oklab, PixelBuffer, Rgb};
 pub use gradient::Gradient;
 pub use render::render;
-pub use scene::{SkyState, load_scene};
+pub use scene::{SkyState, builtin_names, load_builtin_scene, load_scene};

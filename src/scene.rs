@@ -244,13 +244,64 @@ struct CloudsToml {
     layers: Vec<CloudLayer>,
 }
 
+/// The oracle-locked scenes, compiled in so `--scene <name>` works from an
+/// installed binary with no files on disk. These are the same bytes the golden
+/// oracle hashes; `tests/oracle.rs` asserts this list matches the manifest.
+static BUILTINS: &[(&str, &str)] = &[
+    (
+        "blue_hour_calm",
+        include_str!("../scenes/blue_hour_calm.toml"),
+    ),
+    (
+        "golden_hour_cumulus",
+        include_str!("../scenes/golden_hour_cumulus.toml"),
+    ),
+    (
+        "high_noon_clear",
+        include_str!("../scenes/high_noon_clear.toml"),
+    ),
+    (
+        "moonless_darksky",
+        include_str!("../scenes/moonless_darksky.toml"),
+    ),
+    (
+        "moonlit_clear_winter",
+        include_str!("../scenes/moonlit_clear_winter.toml"),
+    ),
+    (
+        "overcast_night",
+        include_str!("../scenes/overcast_night.toml"),
+    ),
+    (
+        "stormy_afternoon_advancing",
+        include_str!("../scenes/stormy_afternoon_advancing.toml"),
+    ),
+];
+
+/// Built-in scene names, sorted.
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTINS.iter().map(|(name, _)| *name)
+}
+
+/// Load a scene compiled into the binary. `None` if no built-in goes by that name.
+pub fn load_builtin_scene(name: &str) -> Option<Result<SkyState, SceneError>> {
+    BUILTINS
+        .iter()
+        .find(|(builtin, _)| *builtin == name)
+        .map(|(builtin, text)| parse_scene(Path::new(builtin), text))
+}
+
 pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
     let path = path.as_ref();
     let text = fs::read_to_string(path).map_err(|e| SceneError::Read {
         path: path.to_path_buf(),
         source: e,
     })?;
-    let raw: SceneToml = basic_toml::from_str(&text).map_err(|e| SceneError::Parse {
+    parse_scene(path, &text)
+}
+
+fn parse_scene(path: &Path, text: &str) -> Result<SkyState, SceneError> {
+    let raw: SceneToml = basic_toml::from_str(text).map_err(|e| SceneError::Parse {
         path: path.to_path_buf(),
         source: e,
     })?;
