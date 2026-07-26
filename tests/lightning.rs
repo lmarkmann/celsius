@@ -1,4 +1,4 @@
-// Fixture captured from the retired Python lightning prototype with seed=8177, intensity=1.0, duration=2.0, and default FlashParams.
+// Fixture captured with seed=8177, intensity=1.0, duration=2.0, and default FlashParams. These values are the lock: they are what the strike schedule must keep reproducing.
 
 use celsius::lightning::{FlashParams, schedule_strikes};
 

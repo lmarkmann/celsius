@@ -1,6 +1,6 @@
 //! Lightning flashes for thunderstorm scenes (WMO 95-99).
 //!
-//! Lives outside the render pipeline: composed once when SkyState is built, evaluated each TUI tick by `overlay()`. Strike scheduling remains locked to the retired Python prototype fixture in tests/lightning.rs.
+//! Lives outside the render pipeline: composed once when SkyState is built, evaluated each TUI tick by `overlay()`. Strike scheduling is pinned to a locked fixture, so the flash rhythm of a given seed never drifts.
 
 use std::sync::LazyLock;
 
