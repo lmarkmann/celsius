@@ -66,11 +66,17 @@ pub fn build_star_field(cfg: &Stars, width: u32, height: u32, gradient: &Gradien
 /// This replaces a flat `yf * 0.88` cap that simply refused to draw anything in the bottom eighth of the screen. Real stars do appear near the horizon; they are just dimmed, because a line of sight at five degrees passes through eleven times the air of one straight up. Extinction is about 0.2 magnitudes per airmass at a decent site, so the field now fades toward the horizon instead of stopping at an invisible line.
 fn extinction(sin_alt: f64) -> f64 {
     const PER_AIRMASS_MAG: f64 = 0.2;
+    /// How much of the physical falloff to actually apply.
+    ///
+    /// True extinction takes a star at five degrees down to a few percent, which is honest and, on a fifty-row sky, reads as the bottom third having simply been deleted. Softening it keeps the depth the fade gives the sky without hollowing it out. This is a legibility choice, not a physical one, and it is the number to turn if the horizon looks bald.
+    const STRENGTH: f64 = 0.4;
+
     // Plane-parallel airmass, floored so a star exactly on the horizon stays finite.
     let airmass = 1.0 / sin_alt.max(0.02);
     let transmission = 10f64.powf(-0.4 * PER_AIRMASS_MAG * airmass);
     let at_zenith = 10f64.powf(-0.4 * PER_AIRMASS_MAG);
-    (transmission / at_zenith).clamp(0.0, 1.0)
+    let full = (transmission / at_zenith).clamp(0.0, 1.0);
+    (1.0 - STRENGTH) + STRENGTH * full
 }
 
 fn paint(

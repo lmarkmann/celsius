@@ -272,8 +272,8 @@ fn build_sky(
         sun_az: sun_altaz.azimuth,
         center_az,
         turbidity: turbidity_from_visibility(sample.visibility_m),
-        // Ramp in over the first 8 degrees of solar elevation so the model crossfades out of the palette through twilight, no seam at sunrise.
-        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0),
+        // Two things hold the model back. It ramps in over the first 8 degrees of solar elevation, so it crossfades out of the palette through twilight with no seam at sunrise. And it fades out under cloud, because Preetham describes a *clear* sky: run at full strength under an overcast deck it paints a clean blue-to-pale gradient and calls it a grey day. The overcast palette exists precisely for the sky you can actually see when the clear one is hidden.
+        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0) * (1.0 - total_cover).clamp(0.0, 1.0),
     });
 
     SkyState {

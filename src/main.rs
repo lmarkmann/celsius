@@ -217,7 +217,7 @@ fn main() -> Result<()> {
         }
         let mut session = tui::Session::new();
         session
-            .run(&Timeline::single(state))
+            .run(&Timeline::scene(state))
             .context("running tui")?;
         return Ok(());
     }

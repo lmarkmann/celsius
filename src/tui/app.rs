@@ -50,6 +50,8 @@ pub struct Timeline {
     pub coords: Option<(f64, f64)>,
     /// The viewed location's UTC offset in seconds, so the local-time gate uses the sky's wall clock rather than the machine's. `0` when unknown.
     pub offset: i64,
+    /// A fixed scene loaded from a file, rather than a forecast. There is no timeline to scrub, no place to look up and nothing to retry, so the keys that do those things are inert and the chrome stops advertising them. An error sky is deliberately *not* fixed: it holds one state too, but retrying is the whole point of it.
+    pub fixed: bool,
 }
 
 impl Timeline {
@@ -59,6 +61,15 @@ impl Timeline {
             home: 0,
             coords: None,
             offset: 0,
+            fixed: false,
+        }
+    }
+
+    /// One sky from a scene file, with the interactive surface pared back to what a fixed scene can honour.
+    pub fn scene(state: SkyState) -> Self {
+        Self {
+            fixed: true,
+            ..Self::single(state)
         }
     }
 
@@ -74,6 +85,7 @@ impl Timeline {
             home,
             coords,
             offset,
+            fixed: false,
         }
     }
 
@@ -184,8 +196,12 @@ impl<'a> App<'a> {
         match key.code {
             KeyCode::Char(' ') => self.drift_paused = !self.drift_paused,
             KeyCode::Char('?') => self.overlay = Overlay::Help,
-            KeyCode::Char('l') => self.outcome = Some(RunOutcome::ChangeLocation),
-            KeyCode::Char('r') => self.outcome = Some(RunOutcome::Retry),
+            KeyCode::Char('l') if !self.timeline.fixed => {
+                self.outcome = Some(RunOutcome::ChangeLocation);
+            }
+            KeyCode::Char('r') if !self.timeline.fixed => {
+                self.outcome = Some(RunOutcome::Retry);
+            }
             _ => {
                 let new = scrub_index(&key, self.index, self.timeline);
                 if new != self.index {
@@ -622,7 +638,7 @@ pub fn draw_frame(buf: &mut Buffer, area: Rect, app: &mut App) {
     draw_sky(buf, area, app);
     if !too_small(area) {
         match &app.overlay {
-            Overlay::Help => draw_help_overlay(buf, area),
+            Overlay::Help => draw_help_overlay(buf, area, app.timeline.fixed),
             Overlay::None => {}
         }
     }
@@ -648,6 +664,12 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
     );
     let chrome = &app.display.chrome;
     let (foot_left, foot_keys) = fit_footer(footer.width, chrome);
+    // A scene's authored key line promises a timeline and a location lookup that a fixed scene does not have.
+    let foot_keys = if app.timeline.fixed {
+        SCENE_KEYS
+    } else {
+        foot_keys
+    };
     draw_chrome_bar(buf, footer, foot_left, foot_keys);
 
     // Read before the cache borrow below, which mutably borrows app.sky_cache.
@@ -771,12 +793,23 @@ const HELP_LINES: &[(&str, &str)] = &[
     ("q  esc", "quit"),
 ];
 
-fn draw_help_overlay(buf: &mut Buffer, area: Rect) {
-    let inner = draw_overlay_box(buf, area, 42, (HELP_LINES.len() as u16) + 4);
+/// What a fixed scene can actually honour. Scrubbing needs a forecast, and a scene file is one sky; the rest would be listed only to disappoint.
+const SCENE_HELP_LINES: &[(&str, &str)] = &[
+    ("space", "pause / resume drift"),
+    ("?", "this help"),
+    ("q  esc", "quit"),
+];
+
+/// The footer hint for a fixed scene. Scene files author their own `keys` line, and every one of them advertises scrubbing and location because they were written before scenes had their own mode.
+const SCENE_KEYS: &str = "space pause   ? help   q quit";
+
+fn draw_help_overlay(buf: &mut Buffer, area: Rect, fixed: bool) {
+    let lines = if fixed { SCENE_HELP_LINES } else { HELP_LINES };
+    let inner = draw_overlay_box(buf, area, 42, (lines.len() as u16) + 4);
     let mut row = inner.y;
     put_str(buf, inner.x, row, inner.width, "keybindings", OVERLAY_FG);
     row += 2;
-    for (key, desc) in HELP_LINES {
+    for (key, desc) in lines {
         let col_w = 18u16;
         put_str(buf, inner.x, row, col_w, key, OVERLAY_FG);
         put_str(
