@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::colorspace::{Oklab, PixelBuffer, Rgb, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
-use crate::haze;
 use crate::moon;
 use crate::noise::{Noise, smoothstep};
 use crate::precipitation;
@@ -24,6 +23,22 @@ const ALTITUDE_KNEE: f64 = 0.14;
 
 fn sun_disc_color() -> Oklab {
     rgb_u8_to_oklab(255, 242, 205)
+}
+
+/// How much the air itself whitens the sky at a given height on the altitude axis.
+///
+/// One exponential falloff from an onset height, standing in for the aerosol column you look through at low angles. The live weather layer derives `strength` from Open-Meteo visibility, so 2 km of fog and 30 km of clear air produce visibly different horizons from the same expression.
+fn haze_blend(alt_t: f64, haze: &crate::scene::Haze) -> f64 {
+    if alt_t <= haze.onset_t {
+        return 0.0;
+    }
+    let span = 1.0 - haze.onset_t;
+    let k = if span > 0.0 {
+        (alt_t - haze.onset_t) / span
+    } else {
+        1.0
+    };
+    (haze.strength * k.powf(haze.exponent)).min(1.0)
 }
 
 /// A screen row, as a position on the sky's altitude axis: `0` at the top of the frame, `1` at the horizon.
@@ -198,7 +213,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
             }
 
             if let (Some(hz), Some(hz_lab)) = (state.haze.as_ref(), haze_lab) {
-                let k = haze::blend_factor(alt_t, hz);
+                let k = haze_blend(alt_t, hz);
                 if k > 0.0 {
                     l += (hz_lab.l - l) * k;
                     a += (hz_lab.a - a) * k;
