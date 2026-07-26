@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -81,8 +82,9 @@ pub fn scene_toml(spec: &SceneSpec<'_>) -> Result<String> {
 
     let sun = sun_position(spec.lat, spec.lon, spec.unix_utc);
     let moon = moon_state(spec.lat, spec.lon, spec.unix_utc);
-    let (sun_x, sun_y) = to_sky_fracs(&sun, spec.facing);
-    let (moon_x, moon_y) = to_sky_fracs(&moon.altaz, spec.facing);
+    // A scaffolded scene still needs a number for the sun even when it is behind the viewer; park it off-frame and let the author move it.
+    let (sun_x, sun_y) = to_sky_fracs(&sun, spec.facing).unwrap_or((-1.0, -1.0));
+    let (moon_x, moon_y) = to_sky_fracs(&moon.altaz, spec.facing).unwrap_or((-1.0, -1.0));
     let fallback = celsius::weather::clear_sky_gradient(sun.altitude);
     let analytic = (sun.altitude > 0.0).then(|| {
         prepare(&AnalyticSky {
@@ -302,7 +304,6 @@ pub fn meteor_state(
         lon,
         facing,
         duration_s,
-        (SKY_WIDTH, SKY_HEIGHT),
     ));
     Ok(state)
 }
@@ -316,7 +317,90 @@ pub fn render_meteor_map(state: &SkyState, width: u32, height: u32) -> Result<(R
     for m in &meteors.meteors {
         celsius::meteors::overlay(&mut pixels, meteors, m.t_start + m.life * 0.5);
     }
+    if std::env::var_os("CELSIUS_LAB_METEOR_STATS").is_some() {
+        let n = meteors.meteors.len().max(1) as f64;
+        let (mut sx, mut sy, mut on) = (0.0, 0.0, 0usize);
+        for m in &meteors.meteors {
+            let (hx, hy) = (
+                (m.from.0 + m.dir.0 * m.travel * 0.5) * width as f64,
+                (m.from.1 + m.dir.1 * m.travel * 0.5) * height as f64,
+            );
+            sx += hx;
+            sy += hy;
+            if hx >= 0.0 && hx < width as f64 && hy >= 0.0 && hy < height as f64 {
+                on += 1;
+            }
+        }
+        eprintln!(
+            "  stats: mean head ({:.0}, {:.0}) of {}x{}   on-screen at mid-flight {on}/{}",
+            sx / n,
+            sy / n,
+            width,
+            height,
+            meteors.meteors.len()
+        );
+    }
     Ok((to_rgb(pixels)?, meteors.meteors.len()))
+}
+
+/// An animated GIF of the run's meteors, each played through its full flight.
+///
+/// A faithful recording is not worth watching: at twenty meteors an hour, better than 99 percent of the frames are an empty sky. This cuts straight to each meteor instead and steps across its lifetime, so what you see is the motion rather than the waiting. Every meteor active at that instant is drawn, so overlapping ones still overlap.
+pub fn meteor_gif(
+    state: &SkyState,
+    width: u32,
+    height: u32,
+    steps: u32,
+    max_frames: usize,
+    path: &Path,
+) -> Result<usize> {
+    let meteors = state
+        .meteors
+        .as_ref()
+        .context("state carries no meteors to animate")?;
+    ensure!(steps >= 2, "need at least two steps per meteor");
+    let base = render(state, width, height);
+
+    let mut frames = Vec::new();
+    'outer: for m in &meteors.meteors {
+        for step in 0..steps {
+            if frames.len() >= max_frames {
+                break 'outer;
+            }
+            let t = m.t_start + m.life * (step as f64 / (steps - 1) as f64);
+            let mut pixels = base.clone();
+            celsius::meteors::overlay(&mut pixels, meteors, t);
+            frames.push(image::Frame::from_parts(
+                to_rgba(&pixels),
+                0,
+                0,
+                // 25 fps, close enough to the TUI's 30 that the flight reads at its true speed.
+                image::Delay::from_numer_denom_ms(40, 1),
+            ));
+        }
+    }
+    ensure!(!frames.is_empty(), "no meteors in this run to animate");
+
+    let count = frames.len();
+    let file = fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
+    let mut encoder = image::codecs::gif::GifEncoder::new(BufWriter::new(file));
+    encoder
+        .set_repeat(image::codecs::gif::Repeat::Infinite)
+        .context("setting GIF loop")?;
+    encoder
+        .encode_frames(frames)
+        .with_context(|| format!("encoding {}", path.display()))?;
+    Ok(count)
+}
+
+fn to_rgba(pixels: &celsius::PixelBuffer) -> image::RgbaImage {
+    let mut out = image::RgbaImage::new(pixels.width as u32, pixels.height as u32);
+    for (i, px) in pixels.pixels.iter().enumerate() {
+        let x = (i % pixels.width) as u32;
+        let y = (i / pixels.width) as u32;
+        out.put_pixel(x, y, image::Rgba([px.r, px.g, px.b, 255]));
+    }
+    out
 }
 
 /// A stable seed for previews. The live path seeds from (place, day) so a sky is reproducible; a preview only needs the same instant to give the same meteors twice.
@@ -401,8 +485,9 @@ pub fn contact_sheet(
     ensure!(!scenes.is_empty(), "no scenes found");
     ensure!(columns > 0, "columns must be at least 1");
     ensure!(scale > 0, "scale must be at least 1");
-    let tile_width = SKY_WIDTH * scale;
-    let tile_height = SKY_HEIGHT * scale;
+    let (native_w, native_h) = scenes[0].1.dimensions();
+    let tile_width = native_w * scale;
+    let tile_height = native_h * scale;
     let (width, height) = contact_dimensions(scenes.len(), columns, tile_width, tile_height);
     let mut sheet = RgbImage::from_pixel(width, height, Rgb([8, 12, 20]));
     for (index, (name, image)) in scenes.iter().enumerate() {

@@ -7,9 +7,6 @@ use crate::colorspace::Oklab;
 /// Tone-map gain. Preetham radiance is in kcd/m^2 with enormous dynamic range; this is the one knob that decides how that maps into terminal brightness. Tuned by eye against a clear-noon zenith; this is the value to tweak.
 const EXPOSURE: f64 = 0.045;
 
-/// Horizontal field of view across the frame width, in radians (~140 deg). The frame is a horizon-facing window, not a fisheye, so azimuth maps rectilinearly across x and the whole frame is sky (no orthographic dome / dark corners).
-const FOV_H: f64 = 2.443;
-
 /// Parameters for one analytic sky, filled from live weather in `build_sky`.
 #[derive(Clone, Debug)]
 pub struct AnalyticSky {
@@ -136,13 +133,9 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
 
 impl Prepared {
     pub fn sample(&self, x_frac: f64, y_frac: f64) -> Oklab {
-        // Vertical position is altitude (orthographic up = sin(alt), matching the sun-disc placement); horizontal is a rectilinear azimuth sweep so the whole rectangular frame is sky.
-        let up = (1.0 - y_frac).clamp(0.0, 1.0);
-        let alt = up.asin();
-        let az_delta = (x_frac - 0.5) * FOV_H;
-        let ca = alt.cos();
-        let view = [ca * az_delta.sin(), up, ca * az_delta.cos()];
-        let cos_theta = up;
+        // The direction this pixel looks at, from the one projection the sun disc is also placed by. Deriving it here independently is what let the two drift apart: the radiance peak has to sit exactly where the disc is drawn, at every point in the frame and not just the middle.
+        let view = crate::astro::view_dir(x_frac, y_frac);
+        let cos_theta = view[1].clamp(0.0, 1.0);
         let dot = (view[0] * self.sun[0] + view[1] * self.sun[1] + view[2] * self.sun[2])
             .clamp(-1.0, 1.0);
         let gamma = dot.acos();

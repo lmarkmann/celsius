@@ -1,3 +1,11 @@
+//! Forecast plus coordinates in, [`SkyState`] out. The synthesis layer.
+//!
+//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; visibility drives both haze and the analytic sky's turbidity.
+//!
+//! The judgement calls worth knowing. Cloud seeds mix `(lat, lon, day)` so a sky reshapes once per UTC day rather than every hour, which stops clouds boiling as you scrub the timeline. `compose_at` interpolates between forecast hours for scalars but snaps weather codes to the nearer hour, because a code is categorical and half of "thunderstorm" is not a thing. Wind direction becomes a lateral offset from the facing bearing, so rain leans the way the wind is actually blowing relative to the viewer.
+//!
+//! Times are UTC everywhere inside. Open-Meteo returns local strings under `timezone=auto`, so they are converted in at the boundary and back out only for display.
+
 use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 
 use crate::analytic_sky::AnalyticSky;
@@ -312,9 +320,6 @@ fn lerp_angle_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
     }
 }
 
-const SKY_W: u32 = 104;
-const SKY_H: u32 = 50;
-
 fn build_lightning(
     weather_code: Option<u32>,
     precip_mm: Option<f64>,
@@ -332,9 +337,7 @@ fn build_lightning(
     let hour = unix_utc.div_euclid(3_600) as u64;
     let day_ordinal = unix_utc.div_euclid(86_400) as u64;
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, hour, 0x1167_8175]) as u32;
-    Some(Lightning::new(
-        seed, intensity, 3_600.0, with_bolts, SKY_W, SKY_H,
-    ))
+    Some(Lightning::new(seed, intensity, 3_600.0, with_bolts))
 }
 
 // Meteors show on a dark, clear-enough sky: sun well below the horizon and not overcast. Seeded per (place, day) like the clouds and lightning.
@@ -351,15 +354,7 @@ fn build_meteors(
     }
     let day_ordinal = unix_utc.div_euclid(86_400) as u64;
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, 0x3A9F_C217]) as u32;
-    Some(Meteors::new(
-        seed,
-        unix_utc,
-        lat,
-        lon,
-        center_az,
-        3_600.0,
-        (SKY_W, SKY_H),
-    ))
+    Some(Meteors::new(seed, unix_utc, lat, lon, center_az, 3_600.0))
 }
 
 // Open-Meteo returns its time strings already in the location's local zone (timezone=auto), so subtract the location's UTC offset to recover true UTC; the whole internal pipeline then runs in UTC.
@@ -434,8 +429,9 @@ fn format_sun_segment(sun_day: Option<&SunDay>, offset: i64) -> String {
 }
 
 fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
-    let (x_frac, y_frac) = astro::to_sky_fracs(altaz, center_az);
-    let in_view = lateral_offset_deg(altaz.azimuth, center_az).abs() < 90.0;
+    // Behind the viewing plane there is no screen position at all; park the disc off-frame and let `visible` do the hiding.
+    let (x_frac, y_frac) = astro::to_sky_fracs(altaz, center_az).unwrap_or((-1.0, -1.0));
+    let in_view = astro::in_view(altaz, center_az);
     Sun {
         x_frac,
         y_frac,
@@ -445,11 +441,11 @@ fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
 }
 
 fn build_moon(state: &astro::MoonState, center_az: f64) -> Option<Moon> {
-    let (x_frac, y_frac) = astro::to_sky_fracs(&state.altaz, center_az);
-    let in_view = lateral_offset_deg(state.altaz.azimuth, center_az).abs() < 90.0;
+    let in_view = astro::in_view(&state.altaz, center_az);
     if state.altaz.altitude <= 0.0 || !in_view {
         return None;
     }
+    let (x_frac, y_frac) = astro::to_sky_fracs(&state.altaz, center_az)?;
     Some(Moon {
         x_frac,
         y_frac,
@@ -476,7 +472,7 @@ fn build_horizon_glow(altaz: &AltAz, center_az: f64, total_cover: f64) -> Option
     if strength < 0.02 {
         return None;
     }
-    let (x_frac, _) = astro::to_sky_fracs(altaz, center_az);
+    let (x_frac, _) = astro::to_sky_fracs(altaz, center_az)?;
     Some(HorizonGlow {
         x_frac,
         rgb: [255, 138, 72],

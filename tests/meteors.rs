@@ -11,8 +11,8 @@ const GEMINIDS_NIGHT: i64 = 1_797_213_600; // 2026-12-14T02:00Z (day 348, peak)
 const QUIET_NIGHT: i64 = 1_781_920_800; // 2026-06-20T02:00Z (no major shower)
 
 fn build(seed: u32, unix: i64) -> Meteors {
-    // 50N, 0E, south-facing, one-hour schedule at the 104x50 reference size.
-    Meteors::new(seed, unix, 50.0, 0.0, 180.0, 3_600.0, (104, 50))
+    // 50N, 0E, south-facing, one-hour schedule. Geometry is in frame fractions, so no buffer size is involved.
+    Meteors::new(seed, unix, 50.0, 0.0, 180.0, 3_600.0)
 }
 
 #[test]
@@ -53,11 +53,51 @@ fn meteor_geometry_is_well_formed() {
         let len = (dx * dx + dy * dy).sqrt();
         assert!((len - 1.0).abs() < 1e-9, "direction must be a unit vector");
         assert!(met.life > 0.0, "life must be positive");
-        assert!(met.travel_px > 0.0, "travel must be positive");
+        assert!(met.travel > 0.0, "travel must be positive");
+        assert!(met.streak > 0.0, "streak must be positive");
+        assert!(
+            (0.0..=1.0).contains(&met.from.0) && (0.0..=1.0).contains(&met.from.1),
+            "start position must be a frame fraction, got {:?}",
+            met.from
+        );
         assert!(
             (0.0..=1.0).contains(&met.peak_l),
             "peak_l in 0..=1, got {}",
             met.peak_l
         );
     }
+}
+
+/// The bug this geometry is stored in fractions to prevent: a schedule built once was drawn into whatever buffer the terminal happened to be, so on a wide terminal every meteor landed in the top-left corner. Rendering the same schedule at two sizes must now cover both frames alike.
+#[test]
+fn meteors_fill_the_frame_at_any_buffer_size() {
+    use celsius::PixelBuffer;
+    use celsius::colorspace::Rgb;
+
+    let m = build(4242, GEMINIDS_NIGHT);
+    let lit_extent = |w: usize, h: usize| {
+        let mut pixels = PixelBuffer::filled(w, h, Rgb::new(0, 0, 0));
+        for met in &m.meteors {
+            celsius::meteors::overlay(&mut pixels, &m, met.t_start + met.life * 0.5);
+        }
+        let (mut max_x, mut max_y) = (0usize, 0usize);
+        for (i, px) in pixels.pixels.iter().enumerate() {
+            if px.r > 8 || px.g > 8 || px.b > 8 {
+                max_x = max_x.max(i % w);
+                max_y = max_y.max(i / w);
+            }
+        }
+        (max_x as f64 / w as f64, max_y as f64 / h as f64)
+    };
+
+    let (small_x, small_y) = lit_extent(104, 50);
+    let (large_x, large_y) = lit_extent(312, 150);
+    assert!(
+        small_x > 0.8 && small_y > 0.8,
+        "meteors should reach the far edges at the reference size, got ({small_x:.2}, {small_y:.2})"
+    );
+    assert!(
+        large_x > 0.8 && large_y > 0.8,
+        "a wider buffer must not strand meteors in the corner, got ({large_x:.2}, {large_y:.2})"
+    );
 }

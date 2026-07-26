@@ -1,3 +1,9 @@
+//! Where the sun and moon are, from Meeus, and how to put them on screen.
+//!
+//! Solar and lunar position follow Meeus, *Astronomical Algorithms*: the sun to arcminute accuracy, the moon through the principal periodic terms, with apparent sidereal time corrected for nutation. Everything takes `(lat, lon, unix_utc)` and nothing else. That is deliberate: no place names, no timezones, no ambiguity about which "Springfield" was meant. Resolving a location into coordinates happens upstream, so this layer is pure and directly testable against published almanac values.
+//!
+//! [`to_sky_fracs`] is the bridge to the renderer, projecting an alt/az pair onto the 0..1 screen fractions a scene uses. It takes the compass bearing the viewer faces, because a first-person sky depends on which way you are looking: the same moon sits on the left in Hamburg and the right in Santiago.
+
 use std::f64::consts::PI;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -212,14 +218,69 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
 }
 
 // Orthographic projection of the sky dome onto the view plane facing `center_az`. The object's unit direction has an eastward and an upward component (the depth component, toward the look direction, is dropped). This foreshortens azimuth as altitude rises, so a star near the zenith barely shifts sideways while one near the horizon swings the full width, and it bows the solar arc the way the real sky does instead of the old anamorphic linear map. Horizon stays at the frame bottom (y=1), zenith at the top (y=0).
-pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> (f64, f64) {
+/// Horizontal field of view of the frame, in degrees. Wide, because standing outside you take in far more sky than a camera does, but bounded: a rectilinear projection stretches without limit as it approaches 180, and the whole point of bounding it is that the upper sky stops being crushed into the top few rows.
+pub const HFOV_DEG: f64 = 110.0;
+
+/// The reference buffer the vertical field of view is derived from. Every scene constant is tuned against this size, so the framing has to come from it too.
+const REF_WIDTH: f64 = 104.0;
+const REF_HEIGHT: f64 = 50.0;
+
+fn tan_half_h() -> f64 {
+    (HFOV_DEG.to_radians() / 2.0).tan()
+}
+
+fn tan_half_v() -> f64 {
+    tan_half_h() * (REF_HEIGHT / REF_WIDTH)
+}
+
+/// How far the view is tilted up from the horizontal, in radians. Chosen so the horizon lands exactly on the bottom edge, which is what makes this a view of the sky rather than of the ground.
+fn pitch() -> f64 {
+    tan_half_v().atan()
+}
+
+/// The direction a screen position looks at, as a unit vector in (east, up, forward) relative to the facing bearing.
+///
+/// This is the inverse of [`to_sky_fracs`] and the two must stay exact inverses of each other. The analytic sky samples radiance per pixel and needs the direction that pixel points; the renderer places the sun disc from a direction. When those disagree the sun's brightest point drifts away from the drawn disc, which is a bug that only shows at the edges of the frame and is easy to miss.
+pub fn view_dir(x_frac: f64, y_frac: f64) -> [f64; 3] {
+    let ndc_x = (x_frac - 0.5) * 2.0 * tan_half_h();
+    let ndc_y = (0.5 - y_frac) * 2.0 * tan_half_v();
+    let (sin_p, cos_p) = pitch().sin_cos();
+    // Camera basis: right is due east of the facing bearing, up and forward are tilted by the pitch.
+    let east = ndc_x;
+    let up = ndc_y * cos_p + sin_p;
+    let forward = -ndc_y * sin_p + cos_p;
+    let len = (east * east + up * up + forward * forward).sqrt();
+    [east / len, up / len, forward / len]
+}
+
+/// Project a sky position onto the frame, as fractions where (0, 0) is the top left and (1, 1) the bottom right.
+///
+/// Rectilinear, like a camera and unlike the eye: straight lines stay straight and the sky is not compressed toward the zenith.
+///
+/// `None` means the position is behind the viewing plane, where a rectilinear projection is not merely off-frame but undefined. Returning a sentinel instead would put an infinity into whatever arithmetic came next. In front of the plane the result is deliberately **not** clamped, so a caller can distinguish an object at the frame edge from one outside it, and so a meteor radiant off the left of the screen still aims its meteors correctly; ask [`in_view`] whether it actually lands on screen.
+pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> Option<(f64, f64)> {
     let alt = altaz.altitude.to_radians();
     let az_delta = (norm(altaz.azimuth - center_az + 180.0) - 180.0).to_radians();
     let east = alt.cos() * az_delta.sin();
     let up = alt.sin();
-    let x_frac = 0.5 + east * 0.5;
-    let y_frac = 1.0 - up;
-    (x_frac.clamp(0.0, 1.0), y_frac.clamp(0.0, 1.0))
+    let forward = alt.cos() * az_delta.cos();
+
+    let (sin_p, cos_p) = pitch().sin_cos();
+    let cam_up = up * cos_p - forward * sin_p;
+    let cam_forward = up * sin_p + forward * cos_p;
+
+    if cam_forward <= 1e-6 {
+        return None;
+    }
+    let x_frac = 0.5 + 0.5 * (east / cam_forward) / tan_half_h();
+    let y_frac = 0.5 - 0.5 * (cam_up / cam_forward) / tan_half_v();
+    Some((x_frac, y_frac))
+}
+
+/// Whether a sky position falls inside the frame. The honest replacement for testing the azimuth alone, which called a body overhead "behind you" purely because of where its azimuth pointed, even though azimuth means almost nothing near the zenith.
+pub fn in_view(altaz: &AltAz, center_az: f64) -> bool {
+    to_sky_fracs(altaz, center_az)
+        .is_some_and(|(x, y)| (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y))
 }
 
 #[cfg(test)]
@@ -351,34 +412,84 @@ mod tests {
             altitude: 0.0,
             azimuth: 180.0,
         };
-        let (x, y) = to_sky_fracs(&altaz, 180.0);
+        let (x, y) = to_sky_fracs(&altaz, 180.0).expect("due south is in front of the viewer");
         assert!((x - 0.5).abs() < 1e-9, "x_frac should be 0.5 for due south");
         assert!((y - 1.0).abs() < 1e-9, "y_frac should be 1.0 at horizon");
     }
 
+    /// The frame is a bounded window, not the whole hemisphere. Something directly overhead is above the top edge: you would have to look up, and the projection says so instead of pinning it to the first row.
     #[test]
-    fn sky_fracs_sun_at_zenith() {
+    fn sky_fracs_puts_the_zenith_above_the_frame() {
         let altaz = AltAz {
             altitude: 90.0,
             azimuth: 180.0,
         };
-        let (x, y) = to_sky_fracs(&altaz, 180.0);
-        assert!((x - 0.5).abs() < 1e-9);
-        assert!((y - 0.0).abs() < 1e-9, "y_frac should be 0.0 at zenith");
+        let (x, y) = to_sky_fracs(&altaz, 180.0).expect("the zenith is above, not behind");
+        assert!((x - 0.5).abs() < 1e-9, "zenith stays centered, got {x}");
+        assert!(y < 0.0, "zenith should sit above the top edge, got {y}");
+        assert!(!in_view(&altaz, 180.0));
     }
 
+    /// The bug this projection exists to kill: `sin` is symmetric about 90 degrees, so the old map put something 158 degrees behind the viewer at dead centre of the frame.
     #[test]
-    fn sky_fracs_foreshortens_high_objects() {
-        // 60deg up, 60deg east of the south-facing center. Orthographic projection pulls it toward the middle (x ~ 0.72), well short of the old linear map's 0.83, and seats it high (y from sin(60)).
-        let altaz = AltAz {
-            altitude: 60.0,
-            azimuth: 240.0,
+    fn objects_behind_the_viewer_are_not_folded_into_frame() {
+        let behind = AltAz {
+            altitude: 20.0,
+            azimuth: 22.0,
         };
-        let (x, y) = to_sky_fracs(&altaz, 180.0);
-        assert!((y - (1.0 - 60f64.to_radians().sin())).abs() < 1e-9);
         assert!(
-            x > 0.5 && x < 0.75,
-            "high eastward object should foreshorten toward center, got {x}"
+            !in_view(&behind, 180.0),
+            "az 22 is behind a south-facing view"
         );
+        assert!(
+            to_sky_fracs(&behind, 180.0).is_none(),
+            "behind the viewing plane there is no projection to return"
+        );
+    }
+
+    /// Equal slabs of sky get roughly equal pixels. Under the old `1 - sin(alt)` map the lowest 30 degrees took half the frame while the top 30 took 13 percent, which is what crushed every high radiant into the top rows.
+    #[test]
+    fn vertical_mapping_does_not_crush_the_upper_sky() {
+        let y_at = |alt: f64| {
+            to_sky_fracs(
+                &AltAz {
+                    altitude: alt,
+                    azimuth: 180.0,
+                },
+                180.0,
+            )
+            .expect("due south is in front of the viewer")
+            .1
+        };
+        let low_band = y_at(0.0) - y_at(20.0);
+        let high_band = y_at(40.0) - y_at(60.0);
+        let ratio = low_band / high_band;
+        assert!(
+            ratio < 2.0,
+            "low sky takes {ratio:.2}x the pixels of an equal high band; was ~4x before"
+        );
+    }
+
+    /// `view_dir` is the inverse of `to_sky_fracs`, and the analytic sky depends on it exactly: it samples radiance per pixel while the renderer places the sun disc by projection, so any drift separates the bright spot from the disc.
+    #[test]
+    fn view_dir_inverts_the_projection() {
+        for (alt, az) in [(10.0, 180.0), (35.0, 210.0), (55.0, 150.0), (5.0, 140.0)] {
+            let altaz = AltAz {
+                altitude: alt,
+                azimuth: az,
+            };
+            let (x, y) = to_sky_fracs(&altaz, 180.0).expect("test points face the viewer");
+            let dir = view_dir(x, y);
+            let back_alt = dir[1].asin().to_degrees();
+            let back_az = 180.0 + deg(f64::atan2(dir[0], dir[2]));
+            assert!(
+                (back_alt - alt).abs() < 1e-6,
+                "altitude round trip {alt} -> {back_alt}"
+            );
+            assert!(
+                (back_az - az).abs() < 1e-6,
+                "azimuth round trip {az} -> {back_az}"
+            );
+        }
     }
 }

@@ -48,16 +48,21 @@ const SPORADIC_HR: f64 = 10.0;
 const VMIN: f64 = 12.0;
 const VMAX: f64 = 75.0;
 
-/// One scheduled meteor. The head travels from `from` along unit `dir` for
-/// `travel_px` over `life` seconds; the glowing streak trails it by `streak_px`.
+/// One scheduled meteor, in frame fractions rather than pixels.
+///
+/// Everything here is 0..1 across the frame, so the same meteor lands in the same place whatever size the terminal is. Storing pixels instead meant a schedule built for the 104x50 reference drew into the top-left corner of any larger buffer, and stopped matching the sky after a resize. Mapping fractions to pixels is linear, so the fan still converges exactly on its radiant.
 #[derive(Clone, Debug)]
 pub struct Meteor {
     pub t_start: f64,
     pub life: f64,
+    /// Where the head starts, as a fraction of the frame.
     pub from: (f64, f64),
+    /// Travel direction, a unit vector in frame fractions.
     pub dir: (f64, f64),
-    pub travel_px: f64,
-    pub streak_px: f64,
+    /// How far the head travels over its life, in frame fractions.
+    pub travel: f64,
+    /// Length of the glowing trail behind the head, in frame fractions.
+    pub streak: f64,
     pub peak_l: f64,
     pub color: Oklab,
     pub train: bool,
@@ -83,11 +88,8 @@ impl Meteors {
         lon: f64,
         center_az: f64,
         duration_s: f64,
-        size: (u32, u32),
     ) -> Self {
         let mut rng = Mt19937::init_by_array(&[seed]);
-        let w = size.0 as f64;
-        let h = size.1 as f64;
 
         // Active showers: tapered by proximity to peak, scaled by radiant
         // altitude (rate folds to zero as the radiant sets), projected to screen.
@@ -102,10 +104,13 @@ impl Meteors {
             if altaz.altitude <= 0.0 {
                 continue;
             }
-            let (fx, fy) = astro::to_sky_fracs(&altaz, center_az);
+            // A radiant off the edge of the frame is normal and still sets the direction meteors travel, so keep it rather than culling; only a radiant behind the viewing plane has no usable position. Bound it so a grazing angle cannot throw the fan geometry to infinity.
+            let Some((fx, fy)) = astro::to_sky_fracs(&altaz, center_az) else {
+                continue;
+            };
             active.push(ActiveShower {
                 rate_hr: sh.zhr * taper * altaz.altitude.to_radians().sin(),
-                radiant: (fx * (w - 1.0), fy * (h - 1.0)),
+                radiant: (fx.clamp(-3.0, 4.0), fy.clamp(-3.0, 4.0)),
                 v_kms: sh.v_kms,
             });
         }
@@ -133,7 +138,7 @@ impl Meteors {
                 (Some(chosen.radiant), chosen.v_kms)
             };
 
-            meteors.push(spawn(&mut rng, t, radiant, v_kms, w, h));
+            meteors.push(spawn(&mut rng, t, radiant, v_kms));
             t += expovariate(&mut rng, rate_s);
         }
 
@@ -141,20 +146,13 @@ impl Meteors {
     }
 }
 
-fn spawn(
-    rng: &mut Mt19937,
-    t_start: f64,
-    radiant: Option<(f64, f64)>,
-    v_kms: f64,
-    w: f64,
-    h: f64,
-) -> Meteor {
-    let from = (uniform(rng, 0.0, w), uniform(rng, 0.0, h));
+fn spawn(rng: &mut Mt19937, t_start: f64, radiant: Option<(f64, f64)>, v_kms: f64) -> Meteor {
+    let from = (uniform(rng, 0.0, 1.0), uniform(rng, 0.0, 1.0));
     let dir = match radiant {
         Some((rx, ry)) => {
             let (dx, dy) = (from.0 - rx, from.1 - ry);
             let len = (dx * dx + dy * dy).sqrt();
-            if len < 1.0 {
+            if len < 1e-3 {
                 let ang = uniform(rng, 0.0, TAU);
                 (ang.cos(), ang.sin())
             } else {
@@ -169,8 +167,9 @@ fn spawn(
 
     let vf = ((v_kms - VMIN) / (VMAX - VMIN)).clamp(0.0, 1.0);
     let life = uniform(rng, 0.35, 0.9) * (1.0 - 0.35 * vf);
-    let travel_px = w * (0.12 + 0.30 * vf) * uniform(rng, 0.7, 1.2);
-    let streak_px = 2.5 + 6.0 * vf;
+    let travel = (0.12 + 0.30 * vf) * uniform(rng, 0.7, 1.2);
+    // Streak length as a fraction of the frame, from the pixel lengths this was tuned at against the 104-wide reference.
+    let streak = (2.5 + 6.0 * vf) / 104.0;
     // Brightness skewed faint: most meteors are dim, the odd one flares.
     let u = rng.next_f64();
     let peak_l = 0.22 + 0.6 * u * u;
@@ -181,8 +180,8 @@ fn spawn(
         life,
         from,
         dir,
-        travel_px,
-        streak_px,
+        travel,
+        streak,
         peak_l,
         color: meteor_color(vf),
         train,
@@ -229,6 +228,9 @@ fn uniform(rng: &mut Mt19937, a: f64, b: f64) -> f64 {
 }
 
 pub fn overlay(pixels: &mut PixelBuffer, meteors: &Meteors, t: f64) {
+    // Fractions become pixels here and nowhere else, so a resize moves the meteors with the sky instead of stranding them in a corner.
+    let w = pixels.width as f64;
+    let h = pixels.height as f64;
     for m in &meteors.meteors {
         let dt = t - m.t_start;
         if dt < 0.0 || dt > m.life {
@@ -239,18 +241,26 @@ pub fn overlay(pixels: &mut PixelBuffer, meteors: &Meteors, t: f64) {
         if brightness <= 0.001 {
             continue;
         }
-        let hx = m.from.0 + m.dir.0 * m.travel_px * p;
-        let hy = m.from.1 + m.dir.1 * m.travel_px * p;
+        // Head position in pixels, and the travel direction measured in this buffer's pixels so the trail is drawn one pixel at a time however wide the terminal is.
+        let (fx, fy) = (m.from.0 * w, m.from.1 * h);
+        let (px_dx, px_dy) = (m.dir.0 * w, m.dir.1 * h);
+        let px_len = (px_dx * px_dx + px_dy * px_dy).sqrt().max(1e-9);
+        let (ux, uy) = (px_dx / px_len, px_dy / px_len);
+        let travel_px = m.travel * px_len;
+        let streak_px = (m.streak * w).max(1.0);
+
+        let hx = fx + ux * travel_px * p;
+        let hy = fy + uy * travel_px * p;
 
         // Glowing streak: from the head back toward the radiant, fading.
-        let steps = m.streak_px.ceil() as i32;
+        let steps = streak_px.ceil() as i32;
         for s in 0..=steps {
             let f = s as f64;
-            let falloff = (1.0 - f / m.streak_px.max(1.0)).max(0.0);
+            let falloff = (1.0 - f / streak_px).max(0.0);
             add_glow(
                 pixels,
-                (hx - m.dir.0 * f).round() as i32,
-                (hy - m.dir.1 * f).round() as i32,
+                (hx - ux * f).round() as i32,
+                (hy - uy * f).round() as i32,
                 brightness * falloff,
                 m.color,
             );
@@ -258,13 +268,13 @@ pub fn overlay(pixels: &mut PixelBuffer, meteors: &Meteors, t: f64) {
 
         // Bright meteors leave a faint persistent train along the flown path.
         if m.train {
-            let flown = (m.travel_px * p) as i32;
+            let flown = (travel_px * p) as i32;
             for s in 0..flown {
                 let f = s as f64;
                 add_glow(
                     pixels,
-                    (m.from.0 + m.dir.0 * f).round() as i32,
-                    (m.from.1 + m.dir.1 * f).round() as i32,
+                    (fx + ux * f).round() as i32,
+                    (fy + uy * f).round() as i32,
                     0.05 * brightness,
                     m.color,
                 );

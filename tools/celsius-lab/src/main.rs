@@ -104,9 +104,24 @@ enum Command {
         span: f64,
         #[arg(long, default_value_t = 180.0)]
         facing: f64,
+        /// Sky width in pixels. Defaults to 3x the 104x50 reference so streaks have room to read.
+        #[arg(long, default_value_t = SKY_WIDTH * 3)]
+        width: u32,
+        /// Sky height in pixels.
+        #[arg(long, default_value_t = SKY_HEIGHT * 3)]
+        height: u32,
+        /// Also write an animated GIF per shower, playing each meteor's flight.
+        #[arg(long)]
+        gif: bool,
+        /// Frames per meteor in the GIF.
+        #[arg(long, default_value_t = 10)]
+        steps: u32,
+        /// Cap on GIF frames, so a Geminid run stays a reasonable file.
+        #[arg(long, default_value_t = 300)]
+        max_frames: usize,
         #[arg(long, default_value_t = 3)]
         columns: usize,
-        #[arg(long, default_value_t = 3)]
+        #[arg(long, default_value_t = 2)]
         scale: u32,
         #[arg(long)]
         out: Option<PathBuf>,
@@ -178,22 +193,32 @@ fn main() -> Result<()> {
             year,
             span,
             facing,
+            width,
+            height,
+            gif,
+            steps,
+            max_frames,
             columns,
             scale,
             out,
-        } => meteors_command(
-            &root,
-            &shower,
+        } => meteors_command(MeteorsArgs {
+            root: &root,
+            shower: &shower,
             lat,
             lon,
             hour,
             year,
             span,
             facing,
+            width,
+            height,
+            gif,
+            steps,
+            max_frames,
             columns,
             scale,
-            out.as_deref(),
-        ),
+            out: out.as_deref(),
+        }),
         Command::Contact {
             columns,
             scale,
@@ -206,15 +231,25 @@ fn place(lat: f64, lon: f64, at: &str, facing: f64) -> Result<()> {
     let unix_utc = parse_at(at)?;
     let sun = sun_position(lat, lon, unix_utc);
     let moon = moon_state(lat, lon, unix_utc);
-    let (sun_x, sun_y) = to_sky_fracs(&sun, facing);
-    let (moon_x, moon_y) = to_sky_fracs(&moon.altaz, facing);
+    let sun_screen = to_sky_fracs(&sun, facing);
+    let moon_screen = to_sky_fracs(&moon.altaz, facing);
+    let show = |p: Option<(f64, f64)>| match p {
+        Some((x, y)) => format!("x={x:.3}  y={y:.3}"),
+        None => "behind the viewer".to_string(),
+    };
     println!(
-        "sun  alt={:.2} deg  az={:.2} deg  x={sun_x:.3}  y={sun_y:.3}",
-        sun.altitude, sun.azimuth
+        "sun  alt={:.2} deg  az={:.2} deg  {}",
+        sun.altitude,
+        sun.azimuth,
+        show(sun_screen)
     );
     println!(
-        "moon alt={:.2} deg  az={:.2} deg  x={moon_x:.3}  y={moon_y:.3}  phase={:.3}  illumination={:.3}",
-        moon.altaz.altitude, moon.altaz.azimuth, moon.phase, moon.illumination
+        "moon alt={:.2} deg  az={:.2} deg  {}  phase={:.3}  illumination={:.3}",
+        moon.altaz.altitude,
+        moon.altaz.azimuth,
+        show(moon_screen),
+        moon.phase,
+        moon.illumination
     );
     Ok(())
 }
@@ -370,32 +405,40 @@ fn sweep_command(
     Ok(())
 }
 
-/// One tile per shower, each rendered at its own peak date so the whole year is visible at once. Without this the only way to see a Geminid is to wait until December, because meteors are built from the live forecast and that reaches seven days.
-#[allow(clippy::too_many_arguments)]
-fn meteors_command(
-    root: &Path,
-    shower: &str,
+/// Everything `meteors` needs. A struct rather than sixteen positional parameters, which is the point at which an argument list stops being readable.
+struct MeteorsArgs<'a> {
+    root: &'a Path,
+    shower: &'a str,
     lat: f64,
     lon: f64,
     hour: u32,
     year: i32,
     span: f64,
     facing: f64,
+    width: u32,
+    height: u32,
+    gif: bool,
+    steps: u32,
+    max_frames: usize,
     columns: usize,
     scale: u32,
-    out: Option<&Path>,
-) -> Result<()> {
-    let wanted: Vec<&celsius::meteors::Shower> = if shower.eq_ignore_ascii_case("all") {
+    out: Option<&'a Path>,
+}
+
+/// One tile per shower, each rendered at its own peak date so the whole year is visible at once. Without this the only way to see a Geminid is to wait until December, because meteors are built from the live forecast and that reaches seven days.
+fn meteors_command(args: MeteorsArgs<'_>) -> Result<()> {
+    let wanted: Vec<&celsius::meteors::Shower> = if args.shower.eq_ignore_ascii_case("all") {
         celsius::meteors::SHOWERS.iter().collect()
     } else {
-        let key = shower.replace(['_', '-'], " ");
+        let key = args.shower.replace(['_', '-'], " ").to_lowercase();
         let found: Vec<_> = celsius::meteors::SHOWERS
             .iter()
-            .filter(|s| s.name.to_lowercase().contains(&key.to_lowercase()))
+            .filter(|s| s.name.to_lowercase().contains(&key))
             .collect();
         ensure!(
             !found.is_empty(),
-            "no shower matches {shower:?}; known: {}",
+            "no shower matches {:?}; known: {}",
+            args.shower,
             celsius::meteors::SHOWERS
                 .iter()
                 .map(|s| s.name)
@@ -405,38 +448,81 @@ fn meteors_command(
         found
     };
 
+    let dir = args
+        .out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| args.root.join("out/lab/showers"));
+    fs::create_dir_all(&dir)?;
+
     let mut tiles = Vec::with_capacity(wanted.len());
     for sh in &wanted {
-        let unix_utc = peak_instant(year, sh.peak_yday, hour)?;
-        let state = celsius_lab::meteor_state(root, sh.name, unix_utc, lat, lon, facing, span)?;
-        let (image, count) = celsius_lab::render_meteor_map(&state, SKY_WIDTH, SKY_HEIGHT)?;
-        let altaz = celsius::astro::equatorial_to_altaz(sh.ra_deg, sh.dec_deg, lat, lon, unix_utc);
+        let unix_utc = peak_instant(args.year, sh.peak_yday, args.hour)?;
+        let state = celsius_lab::meteor_state(
+            args.root,
+            sh.name,
+            unix_utc,
+            args.lat,
+            args.lon,
+            args.facing,
+            args.span,
+        )?;
+        let (image, count) = celsius_lab::render_meteor_map(&state, args.width, args.height)?;
+        let altaz = celsius::astro::equatorial_to_altaz(
+            sh.ra_deg, sh.dec_deg, args.lat, args.lon, unix_utc,
+        );
+        // Split on anything that is not alphanumeric rather than substituting each separator, so "S. delta Aquariids" gives s-delta-aquariids and not s--delta-aquariids.
+        let slug = sh
+            .name
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+            .join("-");
+
+        let still = dir.join(format!("{slug}.png"));
+        image
+            .save(&still)
+            .with_context(|| format!("writing {}", still.display()))?;
+
+        let mut gif_note = String::new();
+        if args.gif && count > 0 {
+            let path = dir.join(format!("{slug}.gif"));
+            let frames = celsius_lab::meteor_gif(
+                &state,
+                args.width,
+                args.height,
+                args.steps,
+                args.max_frames,
+                &path,
+            )?;
+            gif_note = format!("  gif {frames} frames");
+        }
+
+        let radiant = match celsius::astro::to_sky_fracs(&altaz, args.facing) {
+            Some((rx, ry)) => format!("screen x={rx:+.2} y={ry:+.2}"),
+            None => "behind the viewer".to_string(),
+        };
+        println!(
+            "{:<20} zhr {:>5.0}  v {:>2.0}  radiant alt {:>+6.1} az {:>5.1}  {radiant:<26} meteors {:>3}{}",
+            sh.name, sh.zhr, sh.v_kms, altaz.altitude, altaz.azimuth, count, gif_note
+        );
         tiles.push((
             format!("{} r{:+.0} n{}", sh.name, altaz.altitude, count),
             image,
         ));
-        println!(
-            "{:<20} zhr {:>5.0}  v {:>2.0} km/s  radiant alt {:>+6.1} deg  meteors {}",
-            sh.name, sh.zhr, sh.v_kms, altaz.altitude, count
-        );
     }
 
-    let sheet = contact_sheet(&tiles, columns.min(tiles.len().max(1)), scale)?;
-    let output = out
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| root.join("out/lab/meteors.png"));
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let sheet = contact_sheet(&tiles, args.columns.min(tiles.len().max(1)), args.scale)?;
+    let sheet_path = dir.join("_sheet.png");
     sheet
-        .save(&output)
-        .with_context(|| format!("writing {}", output.display()))?;
+        .save(&sheet_path)
+        .with_context(|| format!("writing {}", sheet_path.display()))?;
     println!(
-        "\nmeteors: {} showers -> {} ({}x{})",
+        "\n{} showers at {}x{} -> {}",
         tiles.len(),
-        output.display(),
-        sheet.width(),
-        sheet.height()
+        args.width,
+        args.height,
+        dir.display()
     );
     Ok(())
 }

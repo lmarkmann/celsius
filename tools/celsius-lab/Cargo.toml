@@ -11,7 +11,7 @@ celsius = { path = "../..", features = ["png"] }
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 font8x8 = "0.3"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 
 [dev-dependencies]
 tempfile = "3"

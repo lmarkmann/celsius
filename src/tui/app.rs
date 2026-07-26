@@ -1,3 +1,11 @@
+//! The interactive app: state, event loop, and every drawn surface.
+//!
+//! `App` holds the whole interactive state and is deliberately terminal-free, so key handling and ticking can be tested without a real terminal. `Session` owns the terminal itself, entering the alternate screen once and leaving on drop, which is what stops the view flashing the shell between the sky, the location search and the loading box.
+//!
+//! Two things keep frames cheap. A rendered sky is cached and only rebuilt when something actually invalidates it, so a still sky sits idle instead of repainting thirty times a second. And `tick` reports whether the visible frame changed at all, letting the loop skip the draw entirely. Time-varying overlays composite onto a *copy* of the cache, so lightning and meteors animate without discarding the expensive base render every frame.
+//!
+//! Frames are wrapped in DEC 2026 synchronized-update markers, so a resize repaints atomically rather than tearing.
+
 use std::io::{self, stdout};
 use std::sync::mpsc;
 use std::thread;
@@ -1321,9 +1329,7 @@ mod tests {
         assert!(!app.tick(Duration::from_millis(100)));
 
         // ...until a lightning scene, whose flash is recomputed every tick.
-        app.display.lightning = Some(crate::lightning::Lightning::new(
-            101, 0.5, 1.0, false, 104, 50,
-        ));
+        app.display.lightning = Some(crate::lightning::Lightning::new(101, 0.5, 1.0, false));
         assert!(app.tick(Duration::from_millis(100)));
     }
 
