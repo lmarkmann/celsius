@@ -4,7 +4,7 @@
 
 [gradient]
 stops = [
-  { t = 0.00, rgb = [36, 42, 48] },   # dark greenish-gray zenith
+  { t = 0.00, rgb = [36, 42, 48] },   # dark greenish-gray high sky
   { t = 0.18, rgb = [62, 66, 72] },   # heavy mid ceiling
   { t = 0.42, rgb = [96, 94, 90] },
   { t = 0.62, rgb = [134, 128, 118] },

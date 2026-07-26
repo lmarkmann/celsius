@@ -26,6 +26,16 @@ fn sun_disc_color() -> Oklab {
     rgb_u8_to_oklab(255, 242, 205)
 }
 
+/// A screen row, as a position on the sky's altitude axis: `0` at the top of the frame, `1` at the horizon.
+///
+/// Everything authored against height uses this, not the raw row: gradient stops, a cloud layer's `altitude_t`, `haze.onset_t`, the horizon-glow band, and the sky-brightness test that decides whether a star survives. The projection from row to viewing angle is nonlinear and stops short of the zenith, so placing a palette by row would squash it into whatever slice of sky the field of view happens to cover, and would move every stop the moment that field of view changed. Both ends are measured from the frame, so no stop is ever wasted off the top.
+pub fn altitude_t(tv: f64) -> f64 {
+    let alt_at = |v: f64| crate::astro::view_dir(0.5, v)[1].clamp(-1.0, 1.0).asin();
+    let top = alt_at(0.0);
+    let span = (top - alt_at(1.0)).abs().max(1e-9);
+    ((top - alt_at(tv)) / span).clamp(0.0, 1.0)
+}
+
 thread_local! {
     // A noise grid depends only on its seed, so animated re-renders (the TUI redraws on every drift tick) reuse grids instead of rebuilding one per layer per frame. Realistic workloads see a few dozen seeds at ~24KB each.
     static NOISE_CACHE: RefCell<HashMap<u64, Rc<Noise>>> = RefCell::new(HashMap::new());
@@ -104,9 +114,10 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
 
     for py in 0..height {
         let tv = py as f64 / (height - 1) as f64;
-        let grad_row = state.gradient.sample(tv);
+        let alt_t = altitude_t(tv);
+        let grad_row = state.gradient.sample(alt_t);
         for ((layer, lr), slot) in state.clouds.iter().zip(&cloud_layers).zip(&mut row_clouds) {
-            let diff = tv - layer.altitude_t;
+            let diff = alt_t - layer.altitude_t;
             let alt = (-(diff * diff) / lr.two_sigma_sq).exp();
             let ny = py as f64 / height as f64 * layer.scale_y + layer.offset_y;
             *slot = (alt, ny);
@@ -187,7 +198,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
             }
 
             if let (Some(hz), Some(hz_lab)) = (state.haze.as_ref(), haze_lab) {
-                let k = haze::blend_factor(tv, hz);
+                let k = haze::blend_factor(alt_t, hz);
                 if k > 0.0 {
                     l += (hz_lab.l - l) * k;
                     a += (hz_lab.a - a) * k;
@@ -198,7 +209,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
             if let Some((gx_frac, glow, strength)) = horizon_glow {
                 let dx = fx - gx_frac;
                 let horiz = (1.0 - dx.abs() / 0.6).max(0.0);
-                let band = ((tv - 0.45) / 0.55).clamp(0.0, 1.0);
+                let band = ((alt_t - 0.45) / 0.55).clamp(0.0, 1.0);
                 let k = strength * horiz * horiz * band * band * 0.6;
                 if k > 0.0 {
                     l += (glow.l - l) * k;
@@ -238,4 +249,37 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     }
 
     pixels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The axis scene files are authored against has to be linear in viewing angle, or a palette tuned in degrees lands somewhere else. Sampling by screen row instead made the lowest 30 degrees of sky occupy half the frame, and moved every stop whenever the field of view changed.
+    #[test]
+    fn the_gradient_axis_is_linear_in_altitude() {
+        let alt_of = |tv: f64| crate::astro::view_dir(0.5, tv)[1].clamp(-1.0, 1.0).asin();
+        let samples: Vec<(f64, f64)> = (0..=10)
+            .map(|i| {
+                let tv = f64::from(i) / 10.0;
+                (altitude_t(tv), alt_of(tv))
+            })
+            .collect();
+
+        // Rows are not evenly spaced in angle, and are not meant to be. What has to hold is that a step along the axis is always the same number of degrees, wherever in the frame it is taken.
+        let slope = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) / (b.1 - a.1);
+        let reference = slope(samples[0], samples[10]);
+        for pair in samples.windows(2) {
+            let local = slope(pair[0], pair[1]);
+            assert!(
+                (local - reference).abs() < 1e-9,
+                "axis moves {local} per radian here but {reference} overall; it is not linear in angle"
+            );
+        }
+        assert!(samples[0].0.abs() < 1e-9, "top of frame must be t = 0");
+        assert!(
+            (samples[10].0 - 1.0).abs() < 1e-9,
+            "the horizon must be t = 1, so no stop is wasted off the top"
+        );
+    }
 }

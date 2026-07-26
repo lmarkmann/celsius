@@ -22,7 +22,8 @@ pub fn build_star_field(cfg: &Stars, width: u32, height: u32, gradient: &Gradien
         let mag = rng.next_f64().powf(0.38);
         let hue = -0.018 + 0.036 * rng.next_f64();
 
-        let sky_l = gradient.sample(yf).l;
+        // Ask the gradient how bright the sky is on the same altitude axis the renderer paints it on, not on the screen row. Sampling by row would test a star against a colour that is drawn somewhere else.
+        let sky_l = gradient.sample(crate::render::altitude_t(yf)).l;
         let vis = ((cfg.sky_threshold - sky_l) / cfg.sky_threshold).max(0.0);
         let effective = mag * vis * cfg.brightness;
         if effective < 0.04 {

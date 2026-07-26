@@ -7,7 +7,7 @@
 
 [gradient]
 stops = [
-  { t = 0.00, rgb = [10, 12, 22] },   # near-black zenith
+  { t = 0.00, rgb = [10, 12, 22] },   # near-black top of frame
   { t = 0.35, rgb = [16, 17, 28] },
   { t = 0.62, rgb = [26, 24, 34] },
   { t = 0.82, rgb = [40, 32, 36] },
