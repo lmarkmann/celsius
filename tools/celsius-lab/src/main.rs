@@ -80,6 +80,9 @@ enum Command {
         altitudes: Vec<f64>,
         #[arg(long, value_delimiter = ',', default_value = "2,4,8")]
         turbidities: Vec<f64>,
+        /// Sun azimuth offsets from frame centre, in degrees. The radiance field and the drawn disc only disagree off-centre, so a sweep at 0 alone cannot catch them drifting apart.
+        #[arg(long, value_delimiter = ',', default_value = "0")]
+        sun_az: Vec<f64>,
         #[arg(long)]
         out: Option<PathBuf>,
         #[arg(long, default_value_t = 3)]
@@ -182,9 +185,17 @@ fn main() -> Result<()> {
         Command::Sweep {
             altitudes,
             turbidities,
+            sun_az,
             out,
             scale,
-        } => sweep_command(&root, &altitudes, &turbidities, out.as_deref(), scale),
+        } => sweep_command(
+            &root,
+            &altitudes,
+            &turbidities,
+            &sun_az,
+            out.as_deref(),
+            scale,
+        ),
         Command::Meteors {
             shower,
             lat,
@@ -369,19 +380,22 @@ fn sweep_command(
     root: &Path,
     altitudes: &[f64],
     turbidities: &[f64],
+    sun_az: &[f64],
     out: Option<&Path>,
     scale: u32,
 ) -> Result<()> {
     ensure!(
-        !altitudes.is_empty() && !turbidities.is_empty(),
-        "a sweep needs at least one altitude and one turbidity"
+        !altitudes.is_empty() && !turbidities.is_empty() && !sun_az.is_empty(),
+        "a sweep needs at least one altitude, turbidity and azimuth"
     );
-    let mut tiles = Vec::with_capacity(altitudes.len() * turbidities.len());
+    let mut tiles = Vec::with_capacity(altitudes.len() * turbidities.len() * sun_az.len());
     for &altitude in altitudes {
-        for &turbidity in turbidities {
-            let state = analytic_state(altitude, turbidity);
-            let image = render_state(&state, SKY_WIDTH, SKY_HEIGHT)?;
-            tiles.push((state.name.clone(), image));
+        for &offset in sun_az {
+            for &turbidity in turbidities {
+                let state = analytic_state(altitude, turbidity, offset);
+                let image = render_state(&state, SKY_WIDTH, SKY_HEIGHT)?;
+                tiles.push((state.name.clone(), image));
+            }
         }
     }
     let sheet = contact_sheet(&tiles, turbidities.len(), scale)?;
@@ -395,9 +409,10 @@ fn sweep_command(
         .save(&output)
         .with_context(|| format!("writing {}", output.display()))?;
     println!(
-        "sweep: {} altitudes x {} turbidities -> {} ({}x{})",
+        "sweep: {} altitudes x {} turbidities x {} azimuths -> {} ({}x{})",
         altitudes.len(),
         turbidities.len(),
+        sun_az.len(),
         output.display(),
         sheet.width(),
         sheet.height()

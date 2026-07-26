@@ -410,15 +410,32 @@ fn mix_preview_seed(unix_utc: i64, lat: f64, lon: f64) -> u32 {
     day ^ place.rotate_left(8)
 }
 
-/// A bare analytic sky at one sun elevation and turbidity, for sweeping the Preetham model without a forecast. The gradient is black on purpose: every visible colour then provably comes from the analytic model rather than a palette underneath it.
-pub fn analytic_state(sun_alt: f64, turbidity: f64) -> SkyState {
+/// A bare analytic sky at one sun elevation, turbidity and azimuth offset, for sweeping the Preetham model without a forecast. The gradient is black on purpose: every visible colour then provably comes from the analytic model rather than a palette underneath it. `sun_az_offset` moves the sun off the frame centre, which matters because the radiance field and the drawn disc are derived through the same projection and can only disagree away from the middle.
+pub fn analytic_state(sun_alt: f64, turbidity: f64, sun_az_offset: f64) -> SkyState {
     let center_az = 180.0;
+    let sun_az = center_az + sun_az_offset;
+    // Place the disc through the same projection that produces the radiance. Deriving it here from `1 - sin(alt)` was left over from the orthographic mapping, and put the drawn sun several pixels away from the brightest point of the sky it is supposed to be the source of.
+    let (sun_x, sun_y) = to_sky_fracs(
+        &celsius::astro::AltAz {
+            altitude: sun_alt,
+            azimuth: sun_az,
+        },
+        center_az,
+    )
+    .unwrap_or((-1.0, -1.0));
     SkyState {
-        name: format!("alt{}_t{}", sun_alt as i32, turbidity as i32),
+        name: if sun_az_offset == 0.0 {
+            format!("alt{}_t{}", sun_alt as i32, turbidity as i32)
+        } else {
+            format!(
+                "alt{}_t{}_az{:+}",
+                sun_alt as i32, turbidity as i32, sun_az_offset as i32
+            )
+        },
         gradient: Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]),
         sun: Sun {
-            x_frac: 0.5,
-            y_frac: (1.0 - sun_alt.to_radians().sin()).clamp(0.0, 1.0),
+            x_frac: sun_x,
+            y_frac: sun_y,
             radius: 4.0,
             visible: sun_alt > 0.0,
         },
@@ -441,7 +458,7 @@ pub fn analytic_state(sun_alt: f64, turbidity: f64) -> SkyState {
         horizon_glow: None,
         analytic: Some(AnalyticSky {
             sun_alt,
-            sun_az: center_az,
+            sun_az,
             center_az,
             turbidity,
             blend: 1.0,

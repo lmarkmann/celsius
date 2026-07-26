@@ -4,8 +4,13 @@ use std::f64::consts::PI;
 
 use crate::colorspace::Oklab;
 
-/// Tone-map gain. Preetham radiance is in kcd/m^2 with enormous dynamic range; this is the one knob that decides how that maps into terminal brightness. Tuned by eye against a clear-noon zenith; this is the value to tweak.
-const EXPOSURE: f64 = 0.045;
+/// Where a sky's own mean luminance is placed on the tone curve.
+///
+/// Preetham radiance is in kcd/m^2 and spans orders of magnitude between a low sun and a high one, so a fixed gain can only be correct at one solar elevation. It was tuned against a clear noon zenith, which meant every low sun came out under-exposed and muddy, and that is what forced the crossfade to hand twilight back to a hand-tuned palette. Exposure is now derived per sky from a coarse survey of the frame, and this constant is the target that survey is mapped onto. Its value is the old gain times the mean luminance of the sky it was tuned on, so a clear noon still lands where it always did.
+const ADAPT_KEY: f64 = 0.045 * 2.35;
+
+/// How many samples across the frame the luminance survey takes, per axis.
+const ADAPT_GRID: u32 = 5;
 
 /// Parameters for one analytic sky, filled from live weather in `build_sky`.
 #[derive(Clone, Debug)]
@@ -87,6 +92,7 @@ pub struct Prepared {
     cx: Coeffs,
     cy: Coeffs,
     lum_z: f64,
+    exposure: f64,
     cx_z: f64,
     cy_z: f64,
     denom_lum: f64,
@@ -116,9 +122,12 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
     let denom_lum = perez(1.0, theta_sun, &lum);
     let denom_cx = perez(1.0, theta_sun, &cx);
     let denom_cy = perez(1.0, theta_sun, &cy);
+    let sun = dir_from_altaz(sky.sun_alt, sky.sun_az, sky.center_az);
+    let lum_z = zenith_luminance(t, theta_sun);
     Prepared {
-        sun: dir_from_altaz(sky.sun_alt, sky.sun_az, sky.center_az),
-        lum_z: zenith_luminance(t, theta_sun),
+        exposure: adapted_exposure(&sun, lum_z, &lum, denom_lum),
+        sun,
+        lum_z,
         cx_z: zenith_cx(t, theta_sun),
         cy_z: zenith_cy(t, theta_sun),
         lum,
@@ -129,6 +138,25 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
         denom_cy,
         blend: sky.blend.clamp(0.0, 1.0),
     }
+}
+
+/// Survey the frame's luminance so the tone curve can be placed against the sky actually being drawn rather than against one remembered clear noon. A coarse grid is enough: this decides an exposure, not a pixel, and it runs once per sky rather than once per pixel.
+fn adapted_exposure(sun: &[f64; 3], lum_z: f64, lum: &Coeffs, denom_lum: f64) -> f64 {
+    let mut total = 0.0;
+    for iy in 0..ADAPT_GRID {
+        for ix in 0..ADAPT_GRID {
+            let x = (f64::from(ix) + 0.5) / f64::from(ADAPT_GRID);
+            let y = (f64::from(iy) + 0.5) / f64::from(ADAPT_GRID);
+            let view = crate::astro::view_dir(x, y);
+            let cos_theta = view[1].clamp(0.0, 1.0);
+            let dot = (view[0] * sun[0] + view[1] * sun[1] + view[2] * sun[2]).clamp(-1.0, 1.0);
+            let sample = lum_z * perez(cos_theta, dot.acos(), lum) / denom_lum;
+            // Log-average, not arithmetic: the sun is in frame and orders of magnitude brighter than the sky around it, so a plain mean measures the sun and calls it the sky. The log-average is what the sky reads as.
+            total += (sample.max(0.0) + 1e-4).ln();
+        }
+    }
+    let mean = (total / f64::from(ADAPT_GRID * ADAPT_GRID)).exp().max(1e-6);
+    ADAPT_KEY / mean
 }
 
 impl Prepared {
@@ -143,11 +171,11 @@ impl Prepared {
         let lum = self.lum_z * perez(cos_theta, gamma, &self.lum) / self.denom_lum;
         let cx = self.cx_z * perez(cos_theta, gamma, &self.cx) / self.denom_cx;
         let cy = self.cy_z * perez(cos_theta, gamma, &self.cy) / self.denom_cy;
-        xyy_to_oklab(cx, cy, lum.max(0.0))
+        xyy_to_oklab(cx, cy, lum.max(0.0), self.exposure)
     }
 }
 
-fn xyy_to_oklab(cx: f64, cy: f64, lum: f64) -> Oklab {
+fn xyy_to_oklab(cx: f64, cy: f64, lum: f64, exposure: f64) -> Oklab {
     let cy = cy.max(1e-4);
     let big_x = (cx / cy) * lum;
     let big_z = ((1.0 - cx - cy) / cy) * lum;
@@ -156,9 +184,9 @@ fn xyy_to_oklab(cx: f64, cy: f64, lum: f64) -> Oklab {
     let g = (-0.9692660 * big_x + 1.8760108 * lum + 0.0415560 * big_z).max(0.0);
     let b = (0.0556434 * big_x - 0.2040259 * lum + 1.0572252 * big_z).max(0.0);
     // Exposure tone-map: 1 - exp(-c*E) keeps the huge near-sun range in gamut.
-    let r = 1.0 - (-r * EXPOSURE).exp();
-    let g = 1.0 - (-g * EXPOSURE).exp();
-    let b = 1.0 - (-b * EXPOSURE).exp();
+    let r = 1.0 - (-r * exposure).exp();
+    let g = 1.0 - (-g * exposure).exp();
+    let b = 1.0 - (-b * exposure).exp();
     lin_rgb_to_oklab(r, g, b)
 }
 
