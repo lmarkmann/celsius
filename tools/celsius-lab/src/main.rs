@@ -85,6 +85,32 @@ enum Command {
         #[arg(long, default_value_t = 3)]
         scale: u32,
     },
+    /// Preview meteor showers at their peaks, off-season, as a labeled sheet.
+    Meteors {
+        /// Shower name, or `all` for every shower in the IMO table.
+        #[arg(default_value = "all")]
+        shower: String,
+        #[arg(long, default_value_t = 53.55)]
+        lat: f64,
+        #[arg(long, default_value_t = 9.99)]
+        lon: f64,
+        /// Local hour to sample, in UTC. Radiants climb through the night, so 02:00 shows most of them up.
+        #[arg(long, default_value_t = 2)]
+        hour: u32,
+        #[arg(long, default_value_t = 2026)]
+        year: i32,
+        /// Exposure in seconds. Longer collects more meteors onto the frame.
+        #[arg(long, default_value_t = 3600.0)]
+        span: f64,
+        #[arg(long, default_value_t = 180.0)]
+        facing: f64,
+        #[arg(long, default_value_t = 3)]
+        columns: usize,
+        #[arg(long, default_value_t = 3)]
+        scale: u32,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Render every scene into a labeled contact sheet.
     Contact {
         #[arg(long, default_value_t = 3)]
@@ -144,6 +170,30 @@ fn main() -> Result<()> {
             out,
             scale,
         } => sweep_command(&root, &altitudes, &turbidities, out.as_deref(), scale),
+        Command::Meteors {
+            shower,
+            lat,
+            lon,
+            hour,
+            year,
+            span,
+            facing,
+            columns,
+            scale,
+            out,
+        } => meteors_command(
+            &root,
+            &shower,
+            lat,
+            lon,
+            hour,
+            year,
+            span,
+            facing,
+            columns,
+            scale,
+            out.as_deref(),
+        ),
         Command::Contact {
             columns,
             scale,
@@ -318,6 +368,87 @@ fn sweep_command(
         sheet.height()
     );
     Ok(())
+}
+
+/// One tile per shower, each rendered at its own peak date so the whole year is visible at once. Without this the only way to see a Geminid is to wait until December, because meteors are built from the live forecast and that reaches seven days.
+#[allow(clippy::too_many_arguments)]
+fn meteors_command(
+    root: &Path,
+    shower: &str,
+    lat: f64,
+    lon: f64,
+    hour: u32,
+    year: i32,
+    span: f64,
+    facing: f64,
+    columns: usize,
+    scale: u32,
+    out: Option<&Path>,
+) -> Result<()> {
+    let wanted: Vec<&celsius::meteors::Shower> = if shower.eq_ignore_ascii_case("all") {
+        celsius::meteors::SHOWERS.iter().collect()
+    } else {
+        let key = shower.replace(['_', '-'], " ");
+        let found: Vec<_> = celsius::meteors::SHOWERS
+            .iter()
+            .filter(|s| s.name.to_lowercase().contains(&key.to_lowercase()))
+            .collect();
+        ensure!(
+            !found.is_empty(),
+            "no shower matches {shower:?}; known: {}",
+            celsius::meteors::SHOWERS
+                .iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        found
+    };
+
+    let mut tiles = Vec::with_capacity(wanted.len());
+    for sh in &wanted {
+        let unix_utc = peak_instant(year, sh.peak_yday, hour)?;
+        let state = celsius_lab::meteor_state(root, sh.name, unix_utc, lat, lon, facing, span)?;
+        let (image, count) = celsius_lab::render_meteor_map(&state, SKY_WIDTH, SKY_HEIGHT)?;
+        let altaz = celsius::astro::equatorial_to_altaz(sh.ra_deg, sh.dec_deg, lat, lon, unix_utc);
+        tiles.push((
+            format!("{} r{:+.0} n{}", sh.name, altaz.altitude, count),
+            image,
+        ));
+        println!(
+            "{:<20} zhr {:>5.0}  v {:>2.0} km/s  radiant alt {:>+6.1} deg  meteors {}",
+            sh.name, sh.zhr, sh.v_kms, altaz.altitude, count
+        );
+    }
+
+    let sheet = contact_sheet(&tiles, columns.min(tiles.len().max(1)), scale)?;
+    let output = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("out/lab/meteors.png"));
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    sheet
+        .save(&output)
+        .with_context(|| format!("writing {}", output.display()))?;
+    println!(
+        "\nmeteors: {} showers -> {} ({}x{})",
+        tiles.len(),
+        output.display(),
+        sheet.width(),
+        sheet.height()
+    );
+    Ok(())
+}
+
+/// A shower's peak day-of-year resolved to a UTC instant in `year`.
+fn peak_instant(year: i32, peak_yday: f64, hour: u32) -> Result<i64> {
+    let date = chrono::NaiveDate::from_yo_opt(year, peak_yday as u32)
+        .with_context(|| format!("day {peak_yday} is not a date in {year}"))?;
+    let naive = date
+        .and_hms_opt(hour, 0, 0)
+        .with_context(|| format!("hour {hour} is not a time"))?;
+    Ok(naive.and_utc().timestamp())
 }
 
 fn contact_command(root: &Path, columns: usize, scale: u32, out: Option<&Path>) -> Result<()> {

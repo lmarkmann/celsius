@@ -258,10 +258,72 @@ pub fn render_scene(path: &Path) -> Result<RgbImage> {
 
 pub fn render_state(state: &SkyState, width: u32, height: u32) -> Result<RgbImage> {
     let pixels = render(state, width, height);
+    to_rgb(pixels)
+}
+
+/// Render a state and then apply the tick overlays at `t` seconds, the way the TUI composites a frame. `render()` alone can never show a meteor or a flash: both live outside the pixel pipeline and are driven by the app clock, so a still PNG of a thunderstorm is always between strikes. This is the only way to see them without a terminal.
+pub fn render_state_at(state: &SkyState, width: u32, height: u32, t: f64) -> Result<RgbImage> {
+    let mut pixels = render(state, width, height);
+    if let Some(lightning) = state.lightning.as_ref() {
+        celsius::lightning::overlay(&mut pixels, lightning, t);
+    }
+    if let Some(meteors) = state.meteors.as_ref() {
+        celsius::meteors::overlay(&mut pixels, meteors, t);
+    }
+    to_rgb(pixels)
+}
+
+fn to_rgb(pixels: celsius::PixelBuffer) -> Result<RgbImage> {
     let png = celsius::terminal::encode_png(&pixels).context("encoding production PNG")?;
     Ok(image::load_from_memory_with_format(&png, ImageFormat::Png)
         .context("decoding production PNG")?
         .to_rgb8())
+}
+
+/// A dark, clear night with one shower's meteors attached, for previewing radiant geometry off-season. The backdrop is the locked `moonless_darksky` scene so the stars and gradient are production values, and `Meteors::new` is the same constructor the live forecast path calls.
+pub fn meteor_state(
+    root: &Path,
+    name: &str,
+    unix_utc: i64,
+    lat: f64,
+    lon: f64,
+    facing: f64,
+    duration_s: f64,
+) -> Result<SkyState> {
+    let backdrop = root.join("scenes/moonless_darksky.toml");
+    let mut state =
+        load_scene(&backdrop).with_context(|| format!("loading {}", backdrop.display()))?;
+    state.name = name.to_string();
+    state.unix_utc = unix_utc;
+    state.meteors = Some(celsius::meteors::Meteors::new(
+        mix_preview_seed(unix_utc, lat, lon),
+        unix_utc,
+        lat,
+        lon,
+        facing,
+        duration_s,
+        (SKY_WIDTH, SKY_HEIGHT),
+    ));
+    Ok(state)
+}
+
+/// Every meteor of the run composited onto one frame, each at its own moment of peak brightness. Physically this is a long exposure, not an instant: a single frame of a ZHR-100 shower usually holds zero meteors, so a still preview of the real thing shows an empty sky. Replaying every peak is what makes the radiant legible, because the streaks all point away from one spot.
+pub fn render_meteor_map(state: &SkyState, width: u32, height: u32) -> Result<(RgbImage, usize)> {
+    let mut pixels = render(state, width, height);
+    let Some(meteors) = state.meteors.as_ref() else {
+        return Ok((to_rgb(pixels)?, 0));
+    };
+    for m in &meteors.meteors {
+        celsius::meteors::overlay(&mut pixels, meteors, m.t_start + m.life * 0.5);
+    }
+    Ok((to_rgb(pixels)?, meteors.meteors.len()))
+}
+
+/// A stable seed for previews. The live path seeds from (place, day) so a sky is reproducible; a preview only needs the same instant to give the same meteors twice.
+fn mix_preview_seed(unix_utc: i64, lat: f64, lon: f64) -> u32 {
+    let day = unix_utc.div_euclid(86_400) as u32;
+    let place = ((lat * 1000.0) as i32 as u32) ^ ((lon * 1000.0) as i32 as u32).rotate_left(16);
+    day ^ place.rotate_left(8)
 }
 
 /// A bare analytic sky at one sun elevation and turbidity, for sweeping the Preetham model without a forecast. The gradient is black on purpose: every visible colour then provably comes from the analytic model rather than a palette underneath it.
