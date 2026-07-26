@@ -119,6 +119,53 @@ mod arithmetic_tests {
         assert!((g.sample(2.0).l - g.sample(1.0).l).abs() < 1e-12);
     }
 
+    /// `blend` is what crossfades one palette into the next as the sun moves, and it had no test at all: seven mutants lived in it and `tint_toward_horizon`.
+    #[test]
+    fn blend_crosses_from_one_gradient_to_the_other() {
+        let dark = Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]);
+        let light = Gradient::from_rgb_stops(&[(0.0, [255, 255, 255]), (1.0, [255, 255, 255])]);
+
+        assert!(
+            dark.blend(&light, 0.0).sample(0.5).l < 0.01,
+            "k=0 is the left gradient"
+        );
+        assert!(
+            dark.blend(&light, 1.0).sample(0.5).l > 0.99,
+            "k=1 is the right one"
+        );
+
+        let half = dark.blend(&light, 0.5).sample(0.5).l;
+        let quarter = dark.blend(&light, 0.25).sample(0.5).l;
+        assert!(
+            quarter < half && half < 1.0,
+            "the crossfade must be monotonic in k, got {quarter} then {half}"
+        );
+    }
+
+    /// The light-pollution glow leans a palette toward a colour, and has to lean it harder toward the horizon than the top, or a city sky glows from the wrong end.
+    #[test]
+    fn tint_toward_horizon_weights_by_height() {
+        let mut g = Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]);
+        let before_top = g.sample(0.0).l;
+        g.tint_toward_horizon(rgb_u8_to_oklab(255, 255, 255), 1.0);
+        assert!(
+            (g.sample(0.0).l - before_top).abs() < 1e-9,
+            "the top of the sky must be untouched"
+        );
+        assert!(
+            g.sample(1.0).l > 0.5,
+            "the horizon must take the full tint, got {}",
+            g.sample(1.0).l
+        );
+
+        let mut none = Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]);
+        none.tint_toward_horizon(rgb_u8_to_oklab(255, 255, 255), 0.0);
+        assert!(
+            none.sample(1.0).l < 0.01,
+            "zero strength must change nothing"
+        );
+    }
+
     #[test]
     fn a_single_stop_is_that_colour_everywhere() {
         let g = Gradient::from_rgb_stops(&[(0.0, [120, 60, 30])]);
