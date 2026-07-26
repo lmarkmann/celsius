@@ -35,6 +35,18 @@ fn detail_octaves(width: u32) -> u32 {
 const ALTITUDE_FLOOR: f64 = 0.02;
 const ALTITUDE_KNEE: f64 = 0.14;
 
+/// How fast optical depth turns into opacity.
+///
+/// Cloud thickness used to become opacity through `min(1.0)`, which meant the interior of every cloud clipped to exactly 1 and painted flat: with `edge` around 3.6 and `cover` around 1.5, density saturates once the noise passes its threshold by 0.19, and most of a cloud is past that. All the structure inside was computed and then discarded one line later, which is why more octaves did nothing for it.
+///
+/// Beer-Lambert instead. Opacity approaches 1 without reaching it, so thickness keeps modulating through the dense middle and a deck reads as cloud rather than as a grey shape. Tuned so a typical cloud keeps roughly the opacity it had at the edges.
+const OPACITY_K: f64 = 1.7;
+
+/// How much depth darkens a cloud toward its shadow tone.
+///
+/// Light reaching deep into a cloud has been scattered away, so thickness should shade it as well as hide what is behind it. Without this the tone comes only from distance to the sun, so every pixel of one deck is the same colour, and at night, where the sun term is zero outright, the whole deck is a single flat grey.
+const DEPTH_SHADE: f64 = 0.45;
+
 fn sun_disc_color() -> Oklab {
     rgb_u8_to_oklab(255, 242, 205)
 }
@@ -204,15 +216,18 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                 );
                 let nx = fx * layer.scale_x + layer.offset_x;
                 let n = lr.noise.warped_fbm_oct(nx, ny, lr.octaves);
-                let noise_density = ((n - layer.threshold).max(0.0) * lr.edge) * alt * layer.cover;
+                let noise_thickness =
+                    ((n - layer.threshold).max(0.0) * lr.edge) * alt * layer.cover;
                 // A flat deck ignores the noise gate and fills the altitude band solidly; flatten blends between the two.
-                let flat_density = (alt * layer.cover).min(1.0);
-                let mut density =
-                    (noise_density * (1.0 - lr.flatten) + flat_density * lr.flatten) * edge_fade;
-                if density <= 0.0 {
+                let flat_thickness = alt * layer.cover;
+                let thickness = (noise_thickness * (1.0 - lr.flatten)
+                    + flat_thickness * lr.flatten)
+                    * edge_fade;
+                if thickness <= 0.0 {
                     continue;
                 }
-                density = density.min(1.0);
+                // Optical depth to opacity, so the dense middle of a cloud still varies instead of clipping flat.
+                let density = 1.0 - (-thickness * OPACITY_K).exp();
 
                 let lit = *sun_lit.get_or_insert_with(|| {
                     let sdx = (sun_px - px as f64) / width as f64;
@@ -220,7 +235,13 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
                     let sun_dist = (sdx * sdx + sdy * sdy).sqrt();
                     (1.0 - sun_dist * 1.6).clamp(0.0, 1.0)
                 });
-                let cl = lerp_oklab(lr.shadow, lr.lit, lit);
+                // Thickness shades the cloud as well as hiding the sky: a wispy edge keeps its lit tone, a deep part darkens toward shadow. This is what gives an interior any structure at all once it is opaque.
+                let depth = 1.0 - (-thickness * DEPTH_SHADE).exp();
+                let cl = lerp_oklab(
+                    lr.shadow,
+                    lr.lit,
+                    lit * (1.0 - depth) + (1.0 - depth) * 0.35,
+                );
                 let inv = 1.0 - density;
                 l = l * inv + cl.l * density;
                 a = a * inv + cl.a * density;
