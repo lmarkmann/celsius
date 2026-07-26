@@ -60,7 +60,7 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
 #[command(
     name = "celsius",
     version,
-    about = "a sky in your terminal",
+    about = "The sky in your terminal.",
     styles = STYLES,
     after_help = AFTER_HELP,
 )]
