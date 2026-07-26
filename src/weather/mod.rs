@@ -1,3 +1,9 @@
+//! Live weather: fetch a forecast, resolve a place, synthesize a sky.
+//!
+//! Three stages, each its own module. `location` turns a place name into coordinates, `forecast` fetches a seven-day hourly window from Open-Meteo, and `state` composes those into a `SkyState` for any instant in that window. `gradients` and `bortle` supply the palettes and the light-pollution model the composer draws on.
+//!
+//! `WeatherError` distinguishes network, HTTP and decode failures, because the caller's response differs: a network blip is worth retrying, a schema change is not. Nothing here panics on bad input; a failed fetch becomes a dark sky carrying the error message in its footer.
+
 pub mod bortle;
 pub mod forecast;
 mod gradients;

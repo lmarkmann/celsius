@@ -1,3 +1,9 @@
+//! A vertical sky gradient: colour stops sampled by height.
+//!
+//! Stops are given at `t` values where 0 is the zenith and 1 the horizon, and [`Gradient::sample`] interpolates between the bracketing pair in Oklab. Stops are stored pre-converted, so the per-row sample in the render loop is a lerp and not a colour-space conversion.
+//!
+//! Sampling also serves a second purpose: the star builder reads the gradient's lightness at a star's height to decide whether it would be washed out, which is why a dawn scene keeps only its brightest stars without anyone hand-placing them.
+
 use crate::colorspace::{Oklab, lerp_oklab, rgb_u8_to_oklab};
 
 #[derive(Copy, Clone, Debug)]

@@ -1,3 +1,7 @@
+//! The persisted location preference at `~/.config/celsius/config.toml`.
+//!
+//! Only what has to survive between runs: the last location, stored either as a name to geocode or as coordinates. Coordinates are preferred once known, since they skip a network round trip and cannot re-resolve to a different city later.
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};

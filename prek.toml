@@ -1,5 +1,3 @@
-# git pre-commit / pre-push gates for celsius.
-# Hooks call the just recipes so there is one source of truth for "checked".
 default_install_hook_types = ["pre-commit", "pre-push"]
 
 [[repos]]

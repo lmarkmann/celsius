@@ -1,3 +1,9 @@
+//! Place name to coordinates, via Open-Meteo geocoding.
+//!
+//! Resolving a name is ambiguous by nature: there are dozens of Springfields and several Hamburgs. Results are ranked so the most populous match wins, which is almost always what someone typing a bare city name meant, and the full list stays available for the location picker to show.
+//!
+//! Everything downstream takes coordinates only, so this is the single place where a human place name exists at all.
+
 use serde::Deserialize;
 
 use super::WeatherError;

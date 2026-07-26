@@ -1,3 +1,7 @@
+//! The PNG sink, behind the `png` feature.
+//!
+//! Encoding exists for the golden-image oracle and the `render` subcommand, not for everyday use: the TUI is the intended surface. Keeping it feature-gated is what holds the default binary near 3.6 MB.
+
 #[cfg(feature = "png")]
 use std::io::Cursor;
 #[cfg(feature = "png")]

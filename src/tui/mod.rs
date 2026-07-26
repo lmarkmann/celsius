@@ -1,3 +1,9 @@
+//! The terminal surface: the live app, and the two non-interactive fallbacks.
+//!
+//! Three ways out of the same [`SkyState`]. The full-screen app is the intended one. `write_frame` prints a single 104x50 ANSI half-block frame, which is what `--frame` pipes into a file. `write_plain` prints one line of ASCII with no escape codes at all, which is what a pipe, `NO_COLOR`, or a screen reader gets.
+//!
+//! The fallbacks are not a lesser mode bolted on; they are the reason `celsius | head` and `celsius > log` behave like ordinary Unix tools.
+
 mod app;
 mod widget;
 

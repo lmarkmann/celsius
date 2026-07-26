@@ -1,3 +1,11 @@
+//! The pixel pipeline: a [`SkyState`] in, a [`PixelBuffer`] out.
+//!
+//! Compositing order is the physics and cannot be shuffled. Per pixel: the base sky (analytic radiance when the sun is up, otherwise the gradient), then additive stars, sun glow and moon glow, then each cloud layer blended by its density, then haze toward the horizon, and finally the sun and moon discs on top. Precipitation runs afterwards as a full-buffer pass, because a streak crosses many pixels.
+//!
+//! Everything that can be hoisted out of the per-pixel loop already has been: noise grids are cached per seed, the gradient is sampled once per row, and each cloud layer's altitude mask is a row term rather than a pixel term. That is what keeps a 104x50 frame in the hundreds of microseconds.
+//!
+//! Note what is *absent*: no time parameter. Animation is expressed by mutating the `SkyState` between calls (cloud drift) or by compositing overlays onto the result (lightning, meteors), never by rendering a different frame for a different instant.
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;

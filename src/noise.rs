@@ -1,3 +1,9 @@
+//! MT19937 and the value noise the clouds are made of.
+//!
+//! The PRNG is a from-scratch Mersenne Twister that matches CPython's `random.Random` bit for bit: `init_by_array` for seeding, `genrand_res53` for `next_f64`, and rejection sampling for `randbelow`. That parity is load-bearing rather than nostalgic. The golden-image tests assert a SHA256 per scene, so the same seed has to yield the same noise, the same stars and the same raindrops on every platform and every release. Changing the generator changes every locked hash.
+//!
+//! On top of it sits value noise on a fixed 96x32 grid, smoothstep-interpolated, plus fractal Brownian motion and a domain-warped variant. Warped FBM is what gives clouds their billow: the noise is sampled at coordinates that are themselves offset by noise, so edges curl instead of running straight.
+
 pub const NOISE_WIDTH: usize = 96;
 pub const NOISE_HEIGHT: usize = 32;
 

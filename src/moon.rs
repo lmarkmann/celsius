@@ -1,3 +1,9 @@
+//! The moon: its glow, its disc, and the phase terminator.
+//!
+//! Two contributions, kept separate because they composite at different stages. The glow is additive and lands early, before clouds, so a cloud deck can pass in front of it. The disc composites last, on top of everything, since nothing in this scene is in front of the moon.
+//!
+//! Phase is a 0..1 value where 0.5 is full, and the terminator is evaluated per pixel across the disc rather than drawn as a shape, which is what gives a gibbous moon its curved edge for free. The disc is deliberately flat: the real moon shows no limb darkening, so a uniform face is the accurate choice as well as the cheap one.
+
 use std::f64::consts::TAU;
 use std::sync::LazyLock;
 

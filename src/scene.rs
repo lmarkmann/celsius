@@ -1,3 +1,11 @@
+//! [`SkyState`], the complete description of one sky, and the TOML that authors it.
+//!
+//! Everything the renderer needs is here and nothing it does not: a gradient, sun and moon placement, cloud layers, and optional haze, stars, precipitation. A `SkyState` carries no notion of *when* it is being drawn, only which instant it depicts, which is why the same struct serves a fixed scene file and a synthesized forecast hour alike.
+//!
+//! The TOML surface is a separate private type rather than `Deserialize` on `SkyState` itself. That split is what lets fields exist that no scene file can set: `lightning`, `meteors`, `horizon_glow` and `analytic` are built by the weather layer, never authored by hand. It also keeps parsing strict, so a typo like `kind = "Rain"` is rejected instead of silently rendering as snow.
+//!
+//! The seven oracle-locked scenes are compiled in via `include_str!`, so `--scene high_noon_clear` resolves from an installed binary with no files on disk.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

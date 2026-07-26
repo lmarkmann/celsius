@@ -1,3 +1,9 @@
+//! Seven hand-tuned sky palettes, chosen by sun altitude and cloud cover.
+//!
+//! Day, GoldenHour, Dawn, BlueHour and Night form a sequence down the sun's altitude; CloudyDay and Overcast override that sequence when cover is high enough, because a thick deck flattens the sky regardless of where the sun is.
+//!
+//! These stay useful even though a physical daytime model exists. The analytic sky is only valid while the sun is above the horizon, so twilight and night are still painted from these palettes, and the two crossfade rather than switching. They are also the fallback for `--sky palette` and the base for every authored scene.
+
 use crate::gradient::Gradient;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

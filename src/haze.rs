@@ -1,3 +1,7 @@
+//! Horizon haze: how much the air itself whitens the sky toward the ground.
+//!
+//! One exponential falloff from an onset height, standing in for the aerosol column you look through at low angles. The live weather layer derives its strength from Open-Meteo visibility, so 2 km of fog and 30 km of clear air produce visibly different horizons from the same code path.
+
 use crate::scene::Haze;
 
 pub fn blend_factor(tv: f64, haze: &Haze) -> f64 {

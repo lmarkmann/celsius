@@ -1,3 +1,9 @@
+//! A procedural star field, built once per render into a flat lookup.
+//!
+//! Stars are drawn from the seeded MT19937, given a magnitude from a power-law draw and a slight warm or cool tint, then painted into a row-major array the render loop can index directly. A hash map would be the obvious structure and the wrong one: this is read once per pixel per frame, so it has to be an array load.
+//!
+//! Visibility is decided against the gradient rather than a flag. A star's contribution scales by how much darker the sky behind it is than the scene's `sky_threshold`, so the same field thins out naturally from midnight through dawn. The brightest stars get a four-neighbour halo, which is what makes them read as bright rather than merely lighter.
+
 use crate::colorspace::Oklab;
 use crate::gradient::Gradient;
 use crate::noise::Mt19937;

@@ -1,3 +1,9 @@
+//! Rain and snow, drawn as angled streaks over a finished sky.
+//!
+//! A streak is not a drop, it is a drop's motion blur over an exposure, which is why length is a parameter rather than a physical fall distance. Rain draws long, cool, near-vertical streaks that fade with height; snow draws short bright flakes. Positions come from the seeded MT19937, so a given scene always produces the same fall.
+//!
+//! This runs as a full-buffer pass after per-pixel compositing, because one streak spans many pixels and the loop is per streak, not per pixel.
+
 use crate::colorspace::{Oklab, PixelBuffer, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::noise::Mt19937;
 use crate::scene::{PrecipKind, Precipitation};

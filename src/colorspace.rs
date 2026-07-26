@@ -1,3 +1,11 @@
+//! Color types and the sRGB/Oklab conversions everything else blends through.
+//!
+//! [`Rgb`] is what a terminal cell wants; [`Oklab`] is where all the arithmetic happens. Oklab is perceptually uniform, so a straight linear interpolation between two stops reads as an even ramp. The alternatives both fail visibly here: lerping in sRGB swings the hue through grey on a dawn gradient, and CIELAB puts a purple cast in the blues.
+//!
+//! Conversion is not free, so the rule is to enter Oklab once, do every blend there, and convert back only at the final pixel write. Gamma uses the IEC 61966-2-1 transfer function with its 0.04045 threshold rather than a plain 2.2 power, since the linear toe matters in the near-black of a night sky.
+//!
+//! [`PixelBuffer`] is flat and row-major because the render loop indexes it once per pixel.
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Rgb {
     pub r: u8,

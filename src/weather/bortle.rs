@@ -1,3 +1,9 @@
+//! Light pollution: the Bortle scale to star count and horizon glow.
+//!
+//! Bortle runs 1 for a pristine dark-sky site to 9 for an inner city. Star count scales along the naked-eye limiting-magnitude curve, roughly a factor of ten fewer stars every three classes, so the difference between a mountaintop and a suburb is dramatic rather than cosmetic.
+//!
+//! From class 3 upward a warm sodium-and-LED tint is added at the horizon. That glow is what actually makes an urban sky read as urban; simply removing stars leaves it looking like a clear night with fewer stars rather than a city.
+
 use crate::colorspace::rgb_u8_to_oklab;
 use crate::gradient::Gradient;
 
