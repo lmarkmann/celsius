@@ -16,16 +16,30 @@ pub fn build_star_field(cfg: &Stars, width: u32, height: u32, gradient: &Gradien
     let mut rng = Mt19937::init_by_array(&[cfg.seed as u32]);
     let mut field: StarField = vec![None; (width * height) as usize];
 
-    for _ in 0..cfg.count {
+    // The frame is a rectilinear projection, where a pixel at the edge covers less sky than one at the centre by cos^3 of its angle off the axis. Scattering stars uniformly across the screen therefore crowds them into the corners by about six to one. Keeping the draw in screen space and rejecting against that ratio puts them back on the sky instead, and costs one extra random number per candidate.
+    let axis = crate::astro::view_dir(0.5, 0.5);
+    let mut placed = 0u32;
+    // Corners are rejected around 85 percent of the time, so the budget has to be generous; it exists only so a pathological field cannot spin forever.
+    let mut budget = cfg.count.saturating_mul(50);
+
+    while placed < cfg.count && budget > 0 {
+        budget -= 1;
         let xf = rng.next_f64();
-        let yf = rng.next_f64() * 0.88;
+        let yf = rng.next_f64();
+        let dir = crate::astro::view_dir(xf, yf);
+        let cos_off_axis = (dir[0] * axis[0] + dir[1] * axis[1] + dir[2] * axis[2]).clamp(0.0, 1.0);
+        if rng.next_f64() > cos_off_axis.powi(3) {
+            continue;
+        }
+        placed += 1;
+
         let mag = rng.next_f64().powf(0.38);
         let hue = -0.018 + 0.036 * rng.next_f64();
 
         // Ask the gradient how bright the sky is on the same altitude axis the renderer paints it on, not on the screen row. Sampling by row would test a star against a colour that is drawn somewhere else.
         let sky_l = gradient.sample(crate::render::altitude_t(yf)).l;
         let vis = ((cfg.sky_threshold - sky_l) / cfg.sky_threshold).max(0.0);
-        let effective = mag * vis * cfg.brightness;
+        let effective = mag * vis * cfg.brightness * extinction(dir[1]);
         if effective < 0.04 {
             continue;
         }
@@ -45,6 +59,18 @@ pub fn build_star_field(cfg: &Stars, width: u32, height: u32, gradient: &Gradien
     }
 
     field
+}
+
+/// How much of a star's light survives the air it is seen through, normalised so the zenith is unchanged.
+///
+/// This replaces a flat `yf * 0.88` cap that simply refused to draw anything in the bottom eighth of the screen. Real stars do appear near the horizon; they are just dimmed, because a line of sight at five degrees passes through eleven times the air of one straight up. Extinction is about 0.2 magnitudes per airmass at a decent site, so the field now fades toward the horizon instead of stopping at an invisible line.
+fn extinction(sin_alt: f64) -> f64 {
+    const PER_AIRMASS_MAG: f64 = 0.2;
+    // Plane-parallel airmass, floored so a star exactly on the horizon stays finite.
+    let airmass = 1.0 / sin_alt.max(0.02);
+    let transmission = 10f64.powf(-0.4 * PER_AIRMASS_MAG * airmass);
+    let at_zenith = 10f64.powf(-0.4 * PER_AIRMASS_MAG);
+    (transmission / at_zenith).clamp(0.0, 1.0)
 }
 
 fn paint(
