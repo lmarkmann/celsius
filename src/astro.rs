@@ -277,6 +277,14 @@ pub fn to_sky_fracs(altaz: &AltAz, center_az: f64) -> Option<(f64, f64)> {
     Some((x_frac, y_frac))
 }
 
+/// What fraction of the visible hemisphere the frame holds.
+///
+/// The frame is a symmetric rectangular pyramid, so its solid angle is `4 asin(sin(h/2) sin(v/2))`, and the pitch is chosen to put the horizon on the bottom edge, so none of it falls below the horizon and no clipping term is needed. Rates quoted for the whole sky have to be multiplied by this before they mean anything on screen: a meteor shower's ZHR counts the entire hemisphere, and you are looking at roughly a third of it.
+pub fn frame_solid_angle_fraction() -> f64 {
+    let omega = 4.0 * (tan_half_h().atan().sin() * tan_half_v().atan().sin()).asin();
+    omega / (2.0 * PI)
+}
+
 /// Whether a sky position falls inside the frame. The honest replacement for testing the azimuth alone, which called a body overhead "behind you" purely because of where its azimuth pointed, even though azimuth means almost nothing near the zenith.
 pub fn in_view(altaz: &AltAz, center_az: f64) -> bool {
     to_sky_fracs(altaz, center_az)

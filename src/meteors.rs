@@ -88,6 +88,7 @@ impl Meteors {
         lon: f64,
         center_az: f64,
         duration_s: f64,
+        rate_scale: f64,
     ) -> Self {
         let mut rng = Mt19937::init_by_array(&[seed]);
 
@@ -115,8 +116,9 @@ impl Meteors {
             });
         }
 
-        let total_hr = SPORADIC_HR + active.iter().map(|a| a.rate_hr).sum::<f64>();
-        let rate_s = total_hr / 3600.0;
+        // Published rates count the whole hemisphere at a dark-sky limiting magnitude; `rate_scale` brings them down to the slice of sky on screen and the sky the observer actually has. Every meteor is then placed inside the frame, so without it the visible rate would be several times too high.
+        let total_hr = (SPORADIC_HR + active.iter().map(|a| a.rate_hr).sum::<f64>()) * rate_scale;
+        let rate_s = (total_hr / 3600.0).max(1e-9);
 
         let mut meteors = Vec::new();
         let mut t = expovariate(&mut rng, rate_s);

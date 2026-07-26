@@ -255,6 +255,7 @@ fn build_sky(
         lon,
         unix_utc,
         center_az,
+        opts.bortle,
     );
 
     let date_iso = utc_date_iso(unix_utc + offset);
@@ -348,13 +349,18 @@ fn build_meteors(
     lon: f64,
     unix_utc: i64,
     center_az: f64,
+    bortle: Option<u8>,
 ) -> Option<Meteors> {
     if sun_alt > -3.0 || total_cover > 0.6 {
         return None;
     }
     let day_ordinal = unix_utc.div_euclid(86_400) as u64;
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, 0x3A9F_C217]) as u32;
-    Some(Meteors::new(seed, unix_utc, lat, lon, center_az, 3_600.0))
+    // ZHR counts the whole hemisphere; the frame holds about a third of it, and light pollution takes its share on top.
+    let rate_scale = astro::frame_solid_angle_fraction() * bortle::meteor_factor(bortle);
+    Some(Meteors::new(
+        seed, unix_utc, lat, lon, center_az, 3_600.0, rate_scale,
+    ))
 }
 
 // Open-Meteo returns its time strings already in the location's local zone (timezone=auto), so subtract the location's UTC offset to recover true UTC; the whole internal pipeline then runs in UTC.

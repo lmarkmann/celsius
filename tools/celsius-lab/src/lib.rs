@@ -304,6 +304,8 @@ pub fn meteor_state(
         lon,
         facing,
         duration_s,
+        // The same correction the live path applies: the frame holds about a third of the sky, and a preview that ignored that would show a rate no observer ever sees.
+        celsius::astro::frame_solid_angle_fraction(),
     ));
     Ok(state)
 }

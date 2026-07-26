@@ -11,8 +11,8 @@ const GEMINIDS_NIGHT: i64 = 1_797_213_600; // 2026-12-14T02:00Z (day 348, peak)
 const QUIET_NIGHT: i64 = 1_781_920_800; // 2026-06-20T02:00Z (no major shower)
 
 fn build(seed: u32, unix: i64) -> Meteors {
-    // 50N, 0E, south-facing, one-hour schedule. Geometry is in frame fractions, so no buffer size is involved.
-    Meteors::new(seed, unix, 50.0, 0.0, 180.0, 3_600.0)
+    // 50N, 0E, south-facing, one-hour schedule at an unscaled rate, so the counts these tests compare are the model's own and not the frame's share of them.
+    Meteors::new(seed, unix, 50.0, 0.0, 180.0, 3_600.0, 1.0)
 }
 
 #[test]
@@ -99,5 +99,27 @@ fn meteors_fill_the_frame_at_any_buffer_size() {
     assert!(
         large_x > 0.8 && large_y > 0.8,
         "a wider buffer must not strand meteors in the corner, got ({large_x:.2}, {large_y:.2})"
+    );
+}
+
+/// ZHR counts the whole hemisphere at a dark-sky limiting magnitude, and every meteor is then placed inside the frame. Without scaling the rate down to the sky actually on screen, and down again for light pollution, the visible rate is several times what an observer would see.
+#[test]
+fn rate_scale_thins_the_schedule() {
+    let full = build(31, GEMINIDS_NIGHT);
+    let framed = Meteors::new(31, GEMINIDS_NIGHT, 50.0, 0.0, 180.0, 3_600.0, 0.3);
+    assert!(
+        framed.meteors.len() < full.meteors.len(),
+        "the frame holds a fraction of the sky, so it must hold fewer meteors: {} vs {}",
+        framed.meteors.len(),
+        full.meteors.len()
+    );
+    let city = Meteors::new(31, GEMINIDS_NIGHT, 50.0, 0.0, 180.0, 3_600.0, 0.3 * 0.084);
+    assert!(
+        city.meteors.len() < framed.meteors.len(),
+        "an inner-city sky must show fewer still"
+    );
+    assert!(
+        !city.meteors.is_empty(),
+        "but not none: a city sky still shows the occasional meteor"
     );
 }
