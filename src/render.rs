@@ -17,6 +17,20 @@ use crate::precipitation;
 use crate::scene::SkyState;
 use crate::stars::build_star_field;
 
+/// The buffer width the cloud frequencies were tuned against.
+const REF_WIDTH: f64 = 104.0;
+
+/// How many extra octaves of cloud detail a buffer of this width earns.
+///
+/// A cloud subtends a fixed angle, so its size on screen should not change with the terminal: a wider window is not a wider sky. What should change is how much structure resolves inside it, the way a larger print of the same photograph shows more grain rather than more subject.
+///
+/// The noise is sampled in frame units, so `fbm` produces a fixed *count* of features regardless of resolution, and every extra pixel went into making the same blobs bigger. That is the smudge. Each doubling of width now buys one more octave, which holds the finest structure near the pixel scale instead of stretching it.
+///
+/// Zero at the reference width, so the golden renders are untouched. Capped at two because the value-noise grid wraps at `NOISE_WIDTH`, and an octave whose sample span passes that starts tiling rather than adding detail.
+fn detail_octaves(width: u32) -> u32 {
+    ((f64::from(width) / REF_WIDTH).log2().max(0.0).round() as u32).min(2)
+}
+
 // A cloud layer's gaussian altitude mask is feathered to zero across this band instead of switching off in one row. Below the floor the layer contributes nothing and is skipped; from floor to knee its density ramps in via smoothstep so a near-uniform high-cover deck fades at its edge rather than leaving a hard horizontal seam where the mask crossed an abrupt cutoff.
 const ALTITUDE_FLOOR: f64 = 0.02;
 const ALTITUDE_KNEE: f64 = 0.14;
@@ -83,6 +97,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let h = height as usize;
     let mut pixels = PixelBuffer::filled(w, h, Rgb::BLACK);
 
+    let extra_detail = detail_octaves(width);
     let cloud_layers: Vec<LayerRender> = state
         .clouds
         .iter()
@@ -90,7 +105,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
             let m = l.kind.morphology();
             LayerRender {
                 noise: noise_for(l.seed),
-                octaves: m.octaves,
+                octaves: m.octaves + extra_detail,
                 edge: m.edge,
                 flatten: l.flatten,
                 shadow: rgb_u8_to_oklab(m.shadow_rgb[0], m.shadow_rgb[1], m.shadow_rgb[2]),

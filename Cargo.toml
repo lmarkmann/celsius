@@ -62,9 +62,9 @@ anyhow = "1"
 chrono = "0.4"
 dirs = "6"
 clap = { version = "4", features = ["derive"] }
-crossterm = "0.28"
+crossterm = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_28", "layout-cache"] }
+ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 basic-toml = "0.1"
