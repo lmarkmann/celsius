@@ -89,3 +89,41 @@ impl Gradient {
         }
     }
 }
+
+#[cfg(test)]
+mod arithmetic_tests {
+    use super::*;
+
+    fn ramp() -> Gradient {
+        Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [255, 255, 255])])
+    }
+
+    /// Nine mutants survived here against 94.5 percent line coverage: the stops were being sampled but never checked against a known answer, so the interpolation arithmetic could change freely.
+    #[test]
+    fn sample_interpolates_between_the_bracketing_stops() {
+        let g = ramp();
+        let bottom = g.sample(0.0).l;
+        let middle = g.sample(0.5).l;
+        let top = g.sample(1.0).l;
+        assert!(bottom < middle && middle < top, "sample must be monotonic");
+        assert!(
+            (middle - (bottom + top) / 2.0).abs() < 0.02,
+            "the midpoint must land between its neighbours, got {middle}"
+        );
+    }
+
+    #[test]
+    fn sample_clamps_outside_the_stop_range() {
+        let g = ramp();
+        assert!((g.sample(-1.0).l - g.sample(0.0).l).abs() < 1e-12);
+        assert!((g.sample(2.0).l - g.sample(1.0).l).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_single_stop_is_that_colour_everywhere() {
+        let g = Gradient::from_rgb_stops(&[(0.0, [120, 60, 30])]);
+        let a = g.sample(0.0);
+        let b = g.sample(1.0);
+        assert!((a.l - b.l).abs() < 1e-12 && (a.a - b.a).abs() < 1e-12);
+    }
+}
