@@ -248,7 +248,8 @@ pub fn overlay(pixels: &mut PixelBuffer, meteors: &Meteors, t: f64) {
         let (px_dx, px_dy) = (m.dir.0 * w, m.dir.1 * h);
         let px_len = (px_dx * px_dx + px_dy * px_dy).sqrt().max(1e-9);
         let (ux, uy) = (px_dx / px_len, px_dy / px_len);
-        let travel_px = m.travel * px_len;
+        // Travel and streak are both fractions of the frame width. Scaling travel by the direction-dependent diagonal instead, as this used to, made a meteor's path length depend on which way it flew and left the streak trailing it at a ratio that changed with its angle. The projection keeps pixels square, so a pixel is the same angle either way and one scalar is the honest conversion.
+        let travel_px = m.travel * w;
         let streak_px = (m.streak * w).max(1.0);
 
         let hx = fx + ux * travel_px * p;

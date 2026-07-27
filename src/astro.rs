@@ -217,7 +217,7 @@ pub fn moon_state(lat: f64, lon: f64, unix_utc: i64) -> MoonState {
     }
 }
 
-// Orthographic projection of the sky dome onto the view plane facing `center_az`. The object's unit direction has an eastward and an upward component (the depth component, toward the look direction, is dropped). This foreshortens azimuth as altitude rises, so a star near the zenith barely shifts sideways while one near the horizon swings the full width, and it bows the solar arc the way the real sky does instead of the old anamorphic linear map. Horizon stays at the frame bottom (y=1), zenith at the top (y=0).
+// Rectilinear projection of the sky onto a view plane facing `center_az`: the direction's eastward and upward components are divided by its forward component. Being gnomonic, it maps great circles to straight lines, which is what lets a meteor shower's fan be drawn as straight rays from its radiant. The frame is pitched up so the horizon lands on the bottom edge; the top edge is about 69 degrees of altitude and not the zenith, which is the whole reason `render::altitude_t` exists. The obvious alternative, dropping the forward component for an orthographic map, is not what this does: it would compress the upper sky into the top few rows.
 /// Horizontal field of view of the frame, in degrees. Wide, because standing outside you take in far more sky than a camera does, but bounded: a rectilinear projection stretches without limit as it approaches 180, and the whole point of bounding it is that the upper sky stops being crushed into the top few rows.
 pub const HFOV_DEG: f64 = 110.0;
 
