@@ -27,6 +27,10 @@ ci: check
 policy:
     cargo deny check
 
+# The API-compatibility gate release-plz runs, reproduced locally so a breaking change is found before the release PR rather than in it. On 0.x an incompatible change forces 0.x.0 whatever the commit type.
+semver:
+    cargo semver-checks --baseline-rev main
+
 fmt:
     cargo fmt
 
@@ -89,3 +93,8 @@ lock:
 
 bench:
     cargo bench --bench render
+
+# Build and run the benches under cargo-codspeed. Reports no timings off Linux; real numbers come from the CodSpeed job on the PR.
+codspeed:
+    cargo codspeed build -m simulation -m memory
+    cargo codspeed run
