@@ -138,7 +138,7 @@ pub struct Haze {
     pub exponent: f64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Stars {
     pub count: u32,
     pub seed: u64,

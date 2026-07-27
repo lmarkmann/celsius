@@ -428,6 +428,20 @@ fn bench_micro(c: &mut Criterion) {
         b.iter(|| PixelBuffer::filled(black_box(104), black_box(50), Rgb::BLACK))
     });
 
+    // The star field is rebuilt inside every render, and placing stars on the sky rather than on the screen made each candidate cost a projection and a rejection draw. This is what says whether that rebuild is worth caching or is already noise against the pixel loop.
+    let dark = load_scene(scene_path("moonless_darksky")).unwrap();
+    let stars = dark.stars.clone().unwrap();
+    g.bench_function("star_field_460", |b| {
+        b.iter(|| {
+            celsius::stars::build_star_field(
+                black_box(&stars),
+                black_box(104),
+                black_box(50),
+                &dark.gradient,
+            )
+        })
+    });
+
     g.finish();
 }
 

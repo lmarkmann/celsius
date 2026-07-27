@@ -9,13 +9,15 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::colorspace::{Oklab, PixelBuffer, Rgb, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
+use crate::gradient::Gradient;
 use crate::moon;
 use crate::noise::{Noise, smoothstep};
 use crate::precipitation;
-use crate::scene::SkyState;
-use crate::stars::build_star_field;
+use crate::scene::{SkyState, Stars};
+use crate::stars::{StarField, build_star_field};
 
 /// The buffer width the cloud frequencies were tuned against.
 const REF_WIDTH: f64 = 104.0;
@@ -71,11 +73,19 @@ fn haze_blend(alt_t: f64, haze: &crate::scene::Haze) -> f64 {
 ///
 /// Everything authored against height uses this, not the raw row: gradient stops, a cloud layer's `altitude_t`, `haze.onset_t`, the horizon-glow band, and the sky-brightness test that decides whether a star survives. The projection from row to viewing angle is nonlinear and stops short of the zenith, so placing a palette by row would squash it into whatever slice of sky the field of view happens to cover, and would move every stop the moment that field of view changed. Both ends are measured from the frame, so no stop is ever wasted off the top.
 pub fn altitude_t(tv: f64) -> f64 {
-    let alt_at = |v: f64| crate::astro::view_dir(0.5, v)[1].clamp(-1.0, 1.0).asin();
-    let top = alt_at(0.0);
-    let span = (top - alt_at(1.0)).abs().max(1e-9);
-    ((top - alt_at(tv)) / span).clamp(0.0, 1.0)
+    let (top, span) = *FRAME_ALTITUDE_SPAN.get_or_init(|| {
+        let top = frame_altitude(0.0);
+        (top, (top - frame_altitude(1.0)).abs().max(1e-9))
+    });
+    ((top - frame_altitude(tv)) / span).clamp(0.0, 1.0)
 }
+
+fn frame_altitude(tv: f64) -> f64 {
+    crate::astro::view_dir(0.5, tv)[1].clamp(-1.0, 1.0).asin()
+}
+
+// Both ends of the axis are fixed by the field of view, but `altitude_t` is called once per row and once per candidate star, so deriving them on every call put four inverse trig evaluations where one belongs.
+static FRAME_ALTITUDE_SPAN: OnceLock<(f64, f64)> = OnceLock::new();
 
 thread_local! {
     // A noise grid depends only on its seed, so animated re-renders (the TUI redraws on every drift tick) reuse grids instead of rebuilding one per layer per frame. Realistic workloads see a few dozen seeds at ~24KB each.
@@ -90,6 +100,39 @@ fn noise_for(seed: u64) -> Rc<Noise> {
                 .entry(seed)
                 .or_insert_with(|| Rc::new(Noise::new(seed))),
         )
+    })
+}
+
+thread_local! {
+    // Placing stars on the sky rather than on the screen means rejecting most candidates, which made the rebuild a quarter of a night frame. Nothing about it varies between the frames the TUI draws while clouds drift, so one entry is enough: consecutive frames share a sky and only a scrub or a resize misses.
+    static STAR_CACHE: RefCell<Option<StarCacheEntry>> = const { RefCell::new(None) };
+}
+
+struct StarCacheEntry {
+    stars: Stars,
+    gradient: Gradient,
+    width: u32,
+    height: u32,
+    field: Rc<StarField>,
+}
+
+fn star_field_for(stars: &Stars, gradient: &Gradient, width: u32, height: u32) -> Rc<StarField> {
+    STAR_CACHE.with(|cache| {
+        let mut slot = cache.borrow_mut();
+        if let Some(hit) = slot.as_ref().filter(|e| {
+            e.width == width && e.height == height && &e.stars == stars && &e.gradient == gradient
+        }) {
+            return Rc::clone(&hit.field);
+        }
+        let field = Rc::new(build_star_field(stars, width, height, gradient));
+        *slot = Some(StarCacheEntry {
+            stars: stars.clone(),
+            gradient: gradient.clone(),
+            width,
+            height,
+            field: Rc::clone(&field),
+        });
+        field
     })
 }
 
@@ -140,7 +183,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let star_field = state
         .stars
         .as_ref()
-        .map(|s| build_star_field(s, width, height, &state.gradient));
+        .map(|s| star_field_for(s, &state.gradient, width, height));
 
     let sun = &state.sun;
     let sun_px = sun.x_frac * width as f64;
