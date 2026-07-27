@@ -24,9 +24,14 @@ pr_body = """
 {% for release in releases %}{% if release.changelog %}{{ release.changelog }}{% endif %}{% endfor -%}
 """
 
+# `release = false` alone is not enough: it suppresses the tag and the GitHub release, while
+# `publish` keeps release-plz's own default of true. release-plz refuses to start when that
+# disagrees with a workspace member carrying `publish = false` in its Cargo.toml, so the whole
+# release step aborts before it reaches celsius. Both keys have to say the same thing.
 [[package]]
 name = "celsius-lab"
 release = false
+publish = false
 
 [changelog]
 header = """# Changelog
