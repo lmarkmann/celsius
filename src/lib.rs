@@ -21,7 +21,8 @@ pub mod lightning;
 pub mod meteors;
 pub mod moon;
 pub mod noise;
-pub mod pigs;
+// Crate-private: the module documents where and when the egg appears, and a `pub` module publishes that to docs.rs. Only `tui::app` needs it.
+pub(crate) mod pigs;
 pub mod precipitation;
 pub mod render;
 pub mod scene;

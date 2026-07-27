@@ -17,9 +17,12 @@ pub enum ConfigError {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Config {
-    // bortle is a scalar and must serialize before `location`, which becomes a [location] table; TOML requires every bare key before the first table.
+    // bortle and facing are scalars and must serialize before `location`, which becomes a [location] table; TOML requires every bare key before the first table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bortle: Option<u8>,
+    /// Compass bearing to face, when the hemisphere default is not what the viewer wants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facing: Option<f64>,
     pub location: Option<LocationPref>,
 }
 
@@ -84,6 +87,7 @@ mod tests {
                 name: "Hamburg".into(),
             }),
             bortle: None,
+            facing: None,
         };
         let back = roundtrip(&cfg);
         assert!(matches!(
@@ -102,6 +106,7 @@ mod tests {
                 name: Some("Hamburg, Germany".into()),
             }),
             bortle: None,
+            facing: None,
         };
         let back = roundtrip(&cfg);
         match back.location {
@@ -137,16 +142,18 @@ mod tests {
     }
 
     #[test]
-    fn bortle_and_location_together_roundtrip() {
-        // Regression: `location` serializes to a [location] table, so `bortle` (a bare key) must come first or basic_toml rejects it with "values must be emitted before tables" and save() fails.
+    fn bortle_facing_and_location_together_roundtrip() {
+        // Regression: `location` serializes to a [location] table, so every bare key must come first or basic_toml rejects it with "values must be emitted before tables" and save() fails.
         let cfg = Config {
             bortle: Some(5),
+            facing: Some(0.0),
             location: Some(LocationPref::Name {
                 name: "Hamburg".into(),
             }),
         };
         let back = roundtrip(&cfg);
         assert_eq!(back.bortle, Some(5));
+        assert_eq!(back.facing, Some(0.0));
         assert!(matches!(
             back.location,
             Some(LocationPref::Name { name }) if name == "Hamburg"

@@ -86,9 +86,9 @@ struct Cli {
     #[arg(long, value_name = "NAME|PATH", global = true)]
     scene: Option<String>,
 
-    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W. Default 180 (south) suits northern-hemisphere observers.
-    #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
-    facing: f64,
+    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W. Defaults to the side of the sky the sun crosses: south in the northern hemisphere, north in the southern. Falls back to config.
+    #[arg(long, value_name = "DEG", global = true)]
+    facing: Option<f64>,
 
     /// Bortle dark-sky class for your location: 1 (pristine) to 9 (inner city). Scales visible star count and tints the horizon with light-pollution glow. Default: unset (treat as Bortle 1, today's behavior). Falls back to config.
     #[arg(long, value_name = "1..9", global = true, value_parser = clap::value_parser!(u8).range(1..=9))]
@@ -277,7 +277,7 @@ fn run_tui(session: &mut tui::Session, cli: &Cli, params: &FetchParams) -> Resul
 #[derive(Clone)]
 struct FetchParams {
     at: Option<String>,
-    facing: f64,
+    facing: Option<f64>,
     bortle: Option<u8>,
     analytic: bool,
 }
@@ -317,6 +317,11 @@ fn timeline_or_error(params: &FetchParams, location: location::GeoResult) -> Tim
     }
 }
 
+/// Which way to look when nobody has said. The sun, moon and planets all cross the southern sky seen from the northern hemisphere and the northern sky seen from the southern one, so facing the equator is what puts them in frame at all. A fixed 180 put every southern-hemisphere viewer at the back of their own sky, watching the half where nothing happens, and the latitude needed to know better was already in hand.
+fn default_facing(lat: f64) -> f64 {
+    if lat < 0.0 { 0.0 } else { 180.0 }
+}
+
 fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> Result<Timeline> {
     let now_unix = Utc::now().timestamp();
     let at_unix = match params.at.as_deref() {
@@ -331,9 +336,13 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
         bail!("forecast returned zero hours for {}", location.label());
     }
 
+    let saved = config::load();
     let opts = ComposeOpts {
-        center_az: params.facing,
-        bortle: params.bortle.or_else(|| config::load().bortle),
+        center_az: params
+            .facing
+            .or(saved.facing)
+            .unwrap_or_else(|| default_facing(location.latitude)),
+        bortle: params.bortle.or(saved.bortle),
         analytic: params.analytic,
     };
     let mut states: Vec<_> = (0..hours)
@@ -537,6 +546,14 @@ fn nearest_hour_index(forecast: &forecast::Forecast, target_unix: i64) -> usize 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_facing_follows_the_hemisphere() {
+        assert_eq!(default_facing(53.55), 180.0, "Hamburg faces south");
+        assert_eq!(default_facing(-33.45), 0.0, "Santiago faces north");
+        assert_eq!(default_facing(-22.9), 0.0, "the Atacama faces north");
+        assert_eq!(default_facing(0.0), 180.0, "the equator has to pick one");
+    }
 
     fn ymd_hms(y: i32, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> i64 {
         NaiveDate::from_ymd_opt(y, m, d)
