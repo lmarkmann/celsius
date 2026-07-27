@@ -2,6 +2,9 @@
 name = "celsius"
 version = "0.4.7"
 edition = "2024"
+# Confirmed by bisect, not copied from a dependency: ratatui 0.30.1 and instability 0.3.12
+# both floor at 1.88. Edition 2024 alone would only need 1.85.
+rust-version = "1.88"
 license = "MIT"
 description = "Terminal weather TUI: first-person sky view of the weather at your location, rendered as a truecolor half-block scene"
 repository = "https://github.com/lmarkmann/celsius"
