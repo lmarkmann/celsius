@@ -2,6 +2,12 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-27
+
+### Added
+
+- Atmospheric fidelity, coverage, and the 0.5.0 API ([#68](https://github.com/lmarkmann/celsius/pull/68))
+
 ## [0.4.7] - 2026-07-15
 
 ### Security
