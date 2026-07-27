@@ -73,11 +73,9 @@ fn phase_lit(xn: f64, yn: f64, phase: f64) -> f64 {
     let term_x = scale * x_lim;
     let soft_band = x_lim * 0.08 + 0.01;
 
-    let raw = if phase <= 0.5 {
-        (xn - term_x) / soft_band
-    } else {
-        (term_x - xn) / soft_band
-    };
+    // Waxing lights the right limb and waning the left, so the waning half is the same terminator mirrored in x. Negating the whole expression instead, which is what this did, swaps lit for dark as well as left for right: it drew a waning gibbous as a dark face inside a bright rim and a waning crescent as an almost fully lit disc. Only the quarters escaped it, where `term_x` is zero and the two forms agree, which is exactly where the one test pointed.
+    let lit_x = if phase <= 0.5 { xn } else { -xn };
+    let raw = (lit_x - term_x) / soft_band;
 
     (0.5 + raw * 0.5).clamp(0.0, 1.0)
 }
@@ -162,6 +160,83 @@ mod tests {
         );
     }
 
+    /// The relative phase assertions above still let the terminator arithmetic change freely: five mutants lived on inside `phase_lit` because nothing pinned either end of its range. A full moon's face is fully lit and a new moon's is fully dark, and those are absolutes, not comparisons.
+    #[test]
+    fn the_terminator_reaches_both_of_its_limits() {
+        let (full, _) = disc_sample(&moon_at(0.5), 50, 50, 100, 100).unwrap();
+        assert!(
+            (full.l - LIT.l).abs() < 1e-9,
+            "the middle of a full moon is the lit tone itself, got {} against {}",
+            full.l,
+            LIT.l
+        );
+
+        let (new, _) = disc_sample(&moon_at(0.0), 50, 50, 100, 100).unwrap();
+        assert!(
+            (new.l - SHADOW.l).abs() < 1e-9,
+            "the middle of a new moon is the shadow tone itself, got {} against {}",
+            new.l,
+            SHADOW.l
+        );
+    }
+
+    /// The waning half had no absolute assertion anywhere, and the one test that touched it used last quarter, the single phase at which the correct and the inverted terminator agree. A gibbous moon is mostly lit and a crescent mostly dark whichever way the cycle is running, so state that on both sides of full.
+    #[test]
+    fn waning_gibbous_is_lit_and_waning_crescent_is_not() {
+        let (gibbous, _) = disc_sample(&moon_at(0.6), 50, 50, 100, 100).unwrap();
+        assert!(
+            (gibbous.l - LIT.l).abs() < 1e-9,
+            "a waning gibbous shows a lit face, got {} against {}",
+            gibbous.l,
+            LIT.l
+        );
+
+        let (crescent, _) = disc_sample(&moon_at(0.9), 50, 50, 100, 100).unwrap();
+        assert!(
+            (crescent.l - SHADOW.l).abs() < 1e-9,
+            "a waning crescent is dark across the middle, got {} against {}",
+            crescent.l,
+            SHADOW.l
+        );
+    }
+
+    /// Waxing lights the right limb, waning the left. Nothing else distinguishes the two halves of the cycle, so a mirror that goes the wrong way is invisible at the centre of the disc.
+    #[test]
+    fn the_lit_limb_swaps_sides_across_full() {
+        // Waxing crescent: a sliver on the right.
+        let waxing = moon_at(0.1);
+        let (waxing_right, _) = disc_sample(&waxing, 59, 50, 100, 100).unwrap();
+        let (waxing_left, _) = disc_sample(&waxing, 41, 50, 100, 100).unwrap();
+        assert!(
+            waxing_right.l > waxing_left.l,
+            "a waxing crescent is lit on the right, got {} against {}",
+            waxing_right.l,
+            waxing_left.l
+        );
+
+        // Waning crescent: the same sliver, on the other limb.
+        let waning = moon_at(0.9);
+        let (waning_right, _) = disc_sample(&waning, 59, 50, 100, 100).unwrap();
+        let (waning_left, _) = disc_sample(&waning, 41, 50, 100, 100).unwrap();
+        assert!(
+            waning_left.l > waning_right.l,
+            "a waning crescent is lit on the left, got {} against {}",
+            waning_left.l,
+            waning_right.l
+        );
+    }
+
+    /// Exactly on the radius is the last pixel of disc, not the first pixel of sky. Nothing else in the module distinguishes the two, so the boundary comparison could be loosened without any test objecting.
+    #[test]
+    fn the_radius_itself_is_still_disc() {
+        let m = moon_at(0.5);
+        // x_frac 0.5 of 100 puts the centre on 50.0 exactly, so this pixel sits at a distance of precisely `radius`.
+        assert!(
+            disc_sample(&m, 60, 50, 100, 100).is_some(),
+            "a pixel exactly one radius out belongs to the disc"
+        );
+    }
+
     /// The glow is a separate contribution that lands before the clouds, so it has to reach beyond the disc and fall to nothing.
     #[test]
     fn the_glow_falls_off_with_distance() {
@@ -172,5 +247,16 @@ mod tests {
         assert!(near > far, "glow must decrease outward: {near} then {far}");
         assert!(far > 0.0, "glow must reach past the disc itself");
         assert!(gone == 0.0, "and must reach zero, got {gone}");
+    }
+
+    /// The zero case returns negative zeros so the caller's additive blend stays bit-identical to the powf path it short-circuits. Plain zeros compare equal to these, so only the sign bit can tell the shortcut from a regression.
+    #[test]
+    fn the_glow_shortcut_keeps_the_signs_of_the_path_it_replaces() {
+        let (l, a, b) = glow_contribution(&moon_at(0.5), 99, 50, 100, 100);
+        assert_eq!(l, 0.0);
+        assert!(
+            a.is_sign_negative() && b.is_sign_negative(),
+            "the chroma terms must stay negative zero, got {a} and {b}"
+        );
     }
 }
