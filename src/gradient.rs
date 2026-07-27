@@ -1,18 +1,19 @@
 //! A vertical sky gradient: colour stops sampled by height.
 //!
-//! Stops are given at `t` values where 0 is the zenith and 1 the horizon, and [`Gradient::sample`] interpolates between the bracketing pair in Oklab. Stops are stored pre-converted, so the per-row sample in the render loop is a lerp and not a colour-space conversion.
+//! Stops are given at `t` values where 0 is the top of the frame and 1 the horizon, on the altitude axis `render::altitude_t` defines rather than on screen rows, and [`Gradient::sample`] interpolates between the bracketing pair in Oklab. Stops are stored pre-converted, so the per-row sample in the render loop is a lerp and not a colour-space conversion.
 //!
 //! Sampling also serves a second purpose: the star builder reads the gradient's lightness at a star's height to decide whether it would be washed out, which is why a dawn scene keeps only its brightest stars without anyone hand-placing them.
 
 use crate::colorspace::{Oklab, lerp_oklab, rgb_u8_to_oklab};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Stop {
     pub t: f64,
     pub color: Oklab,
 }
 
-#[derive(Clone, Debug)]
+// Equality is exact rather than approximate on purpose: it exists so the render loop can tell whether the star field it cached was built against this same gradient, and there anything short of identical stops has to count as a different sky.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Gradient {
     stops: Vec<Stop>,
 }
@@ -163,6 +164,56 @@ mod arithmetic_tests {
         assert!(
             none.sample(1.0).l < 0.01,
             "zero strength must change nothing"
+        );
+    }
+
+    /// Two stops at the same `t` are a hard edge, not a division by zero. `sample` guards the span before dividing by it, and the guard is only reachable when the repeated pair is the *first* one: for any later pair the loop has already established that `t` is past both of them, so it never stops there. A duplicate in the middle of a gradient therefore proves nothing, which is why this puts one at the front and samples below it.
+    #[test]
+    fn a_zero_width_span_does_not_divide_by_itself() {
+        let edge = Gradient::from_rgb_stops(&[
+            (0.5, [0, 0, 0]),
+            (0.5, [255, 255, 255]),
+            (1.0, [255, 255, 255]),
+        ]);
+        let above = edge.sample(0.2);
+        assert!(
+            above.l.is_finite() && above.a.is_finite() && above.b.is_finite(),
+            "a zero-width span produced {above:?}"
+        );
+        assert!(
+            above.l < 0.01,
+            "with no width to interpolate across, the first stop of the pair wins, got {}",
+            above.l
+        );
+    }
+
+    /// `blend` samples both gradients at the union of their stop positions, so the same `t` appearing in each must collapse to one stop. Left undeduplicated the result carries a doubled keyframe at every shared position, which is invisible in any single sample and shows up only in the count.
+    #[test]
+    fn blend_collapses_stops_the_two_gradients_share() {
+        let dark = Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]);
+        let light = Gradient::from_rgb_stops(&[(0.0, [255, 255, 255]), (1.0, [255, 255, 255])]);
+        let blended = dark.blend(&light, 0.5);
+        assert_eq!(
+            blended.stops.len(),
+            2,
+            "two gradients sharing both stop positions must blend to two stops, got {:?}",
+            blended.stops.iter().map(|s| s.t).collect::<Vec<_>>()
+        );
+    }
+
+    /// Strength scales the tint, and the weight it produces is the product of the two rather than any other combination of them. Half strength at the horizon is exactly the halfway colour, which is the one statement that pins the arithmetic rather than its direction.
+    #[test]
+    fn half_strength_tints_the_horizon_exactly_halfway() {
+        let target = rgb_u8_to_oklab(255, 255, 255);
+        let mut g = Gradient::from_rgb_stops(&[(0.0, [0, 0, 0]), (1.0, [0, 0, 0])]);
+        let before = g.sample(1.0);
+        g.tint_toward_horizon(target, 0.5);
+        let expected = lerp_oklab(before, target, 0.5);
+        assert!(
+            (g.sample(1.0).l - expected.l).abs() < 1e-9,
+            "half strength gave {} where the midpoint is {}",
+            g.sample(1.0).l,
+            expected.l
         );
     }
 
