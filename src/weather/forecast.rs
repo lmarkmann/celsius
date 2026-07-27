@@ -1,3 +1,9 @@
+//! The Open-Meteo forecast client and its response types.
+//!
+//! One request fetches a seven-day, 168-hour window: temperature, the three cloud-cover bands, precipitation, wind, visibility and WMO weather code hourly, plus sunrise, sunset and the day's high and low. That window is also the hard limit on `--at`, since a sky can only be synthesized for an hour the forecast actually covers.
+//!
+//! Every hourly field is `Option`, because Open-Meteo genuinely returns nulls for some variables at some locations rather than omitting them, and treating a missing visibility as zero would render fog on a clear day.
+
 use serde::Deserialize;
 
 use super::WeatherError;

@@ -1,0 +1,8 @@
+# MD044 (proper-names) and MD061 (forbidden terms) mirror a second spell-correction list. I left them off, so that typos owns every spelling question.
+
+[global]
+respect-gitignore = true
+disable = [
+  "MD044",
+  "MD061",
+]

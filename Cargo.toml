@@ -2,19 +2,45 @@
 name = "celsius"
 version = "0.4.7"
 edition = "2024"
+# Confirmed by bisect, not copied from a dependency: ratatui 0.30.1 and instability 0.3.12
+# both floor at 1.88. Edition 2024 alone would only need 1.85.
+rust-version = "1.88"
 license = "MIT"
 description = "Terminal weather TUI: first-person sky view of the weather at your location, rendered as a truecolor half-block scene"
 repository = "https://github.com/lmarkmann/celsius"
 keywords = ["weather", "tui", "terminal", "sky", "cli"]
 categories = ["command-line-utilities", "visualization"]
+# scenes/ is packaged: src/scene.rs embeds the locked scenes with include_str!,
+# so excluding them would break the publish verification build.
 exclude = [
   "demos/",
-  "scenes/",
+  # dawn and cloudy_day are WIP: reachable by path in a checkout, deliberately not built in, so editing them stays a test: change that cuts no release.
+  "scenes/dawn.toml",
+  "scenes/cloudy_day.toml",
   "scripts/",
   ".github/",
   "benches/",
   "tests/",
+  "justfile",
+  "prek.toml",
+  "tools/",
+  "deny.toml",
+  "release-plz.toml",
+  ".rumdl.toml",
 ]
+
+[workspace]
+members = [".", "tools/celsius-lab"]
+default-members = ["."]
+resolver = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
@@ -31,14 +57,17 @@ default = []
 # TUI-only binary; the oracle path pulls it in via `--features png`.
 png = ["dep:image"]
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
 dirs = "6"
 clap = { version = "4", features = ["derive"] }
-crossterm = "0.28"
+crossterm = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_28", "layout-cache"] }
+ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 basic-toml = "0.1"
@@ -54,10 +83,6 @@ sha2 = "0.10"
 
 [[test]]
 name = "oracle"
-required-features = ["png"]
-
-[[example]]
-name = "analytic_demo"
 required-features = ["png"]
 
 [[bench]]

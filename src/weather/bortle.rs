@@ -1,3 +1,9 @@
+//! Light pollution: the Bortle scale to star count and horizon glow.
+//!
+//! Bortle runs 1 for a pristine dark-sky site to 9 for an inner city. Star count scales along the naked-eye limiting-magnitude curve, roughly a factor of ten fewer stars every three classes, so the difference between a mountaintop and a suburb is dramatic rather than cosmetic.
+//!
+//! From class 3 upward a warm sodium-and-LED tint is added at the horizon. That glow is what actually makes an urban sky read as urban; simply removing stars leaves it looking like a clear night with fewer stars rather than a city.
+
 use crate::colorspace::rgb_u8_to_oklab;
 use crate::gradient::Gradient;
 
@@ -118,6 +124,52 @@ mod tests {
         assert!(
             after.l > before.l,
             "horizon L should rise: {before:?} -> {after:?}"
+        );
+    }
+}
+
+/// How many of a shower's meteors survive light pollution.
+///
+/// ZHR is quoted at a limiting magnitude of 6.5. Meteor counts fall with the population index, `r^(NELM - 6.5)` with `r` near 2.5, and naked-eye limiting magnitude runs about `8.3 - 0.5 * bortle`. Capped at 1, because a darker-than-reference site should not invent meteors that the quoted rate never promised.
+///
+/// This deliberately does not reuse `count_factor`. That curve is for stars, and it is far steeper: applied here it would leave an inner-city sky with under one meteor an hour, when the honest answer is closer to one in twelve minutes.
+pub fn meteor_factor(bortle: Option<u8>) -> f64 {
+    let Some(b) = bortle else {
+        return 1.0;
+    };
+    let nelm = 8.3 - 0.5 * f64::from(b);
+    2.5f64.powf(nelm - 6.5).min(1.0)
+}
+
+#[cfg(test)]
+mod meteor_tests {
+    use super::*;
+
+    #[test]
+    fn meteor_factor_is_capped_and_monotonic() {
+        assert!((meteor_factor(None) - 1.0).abs() < 1e-12);
+        assert!(
+            (meteor_factor(Some(1)) - 1.0).abs() < 1e-12,
+            "a dark site cannot exceed the quoted rate"
+        );
+        // The cap binds through bortle 3, where the sky is still darker than the
+        // magnitude ZHR is quoted at, so those classes share a factor of 1.
+        for b in 1..9u8 {
+            assert!(
+                meteor_factor(Some(b)) >= meteor_factor(Some(b + 1)),
+                "more light pollution must never mean more meteors, failed at bortle {b}"
+            );
+        }
+        for b in 3..9u8 {
+            assert!(
+                meteor_factor(Some(b)) > meteor_factor(Some(b + 1)),
+                "past the cap the rate must actually fall, failed at bortle {b}"
+            );
+        }
+        let city = meteor_factor(Some(9));
+        assert!(
+            (0.05..0.15).contains(&city),
+            "an inner-city sky should keep a tenth of the meteors, not none: got {city}"
         );
     }
 }

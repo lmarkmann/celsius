@@ -1,25 +1,16 @@
-//! Prototype: an analytic daytime sky (Preetham et al. 1999), the closed-form
-//! member of the Hosek-Wilkie family. Sky radiance is computed per pixel from
-//! the sun's position and an atmospheric turbidity via the Perez function, so
-//! the zenith-to-horizon falloff and the sun-side brightening fall out of one
-//! physical model instead of hand-tuned palettes. Daytime only: `build_sky`
-//! attaches this only when the sun is above the horizon, and `render` falls
-//! back to the gradient otherwise (Preetham's zenith formula is undefined once
-//! the solar zenith angle passes 90 degrees).
+//! Prototype: an analytic daytime sky (Preetham et al. 1999), the closed-form member of the Hosek-Wilkie family. Sky radiance is computed per pixel from the sun's position and an atmospheric turbidity via the Perez function, so the zenith-to-horizon falloff and the sun-side brightening fall out of one physical model instead of hand-tuned palettes. Daytime only: `build_sky` attaches this only when the sun is above the horizon, and `render` falls back to the gradient otherwise (Preetham's zenith formula is undefined once the solar zenith angle passes 90 degrees).
 
 use std::f64::consts::PI;
 
 use crate::colorspace::Oklab;
 
-/// Tone-map gain. Preetham radiance is in kcd/m^2 with enormous dynamic range;
-/// this is the one knob that decides how that maps into terminal brightness.
-/// Tuned by eye against a clear-noon zenith; this is the value to tweak.
-const EXPOSURE: f64 = 0.045;
+/// Where a sky's own mean luminance is placed on the tone curve.
+///
+/// Preetham radiance is in kcd/m^2 and spans orders of magnitude between a low sun and a high one, so a fixed gain can only be correct at one solar elevation. It was tuned against a clear noon zenith, which meant every low sun came out under-exposed and muddy, and that is what forced the crossfade to hand twilight back to a hand-tuned palette. Exposure is now derived per sky from a coarse survey of the frame, and this constant is the target that survey is mapped onto. Its value is the old gain times the mean luminance of the sky it was tuned on, so a clear noon still lands where it always did.
+const ADAPT_KEY: f64 = 0.045 * 2.35;
 
-/// Horizontal field of view across the frame width, in radians (~140 deg). The
-/// frame is a horizon-facing window, not a fisheye, so azimuth maps rectilinearly
-/// across x and the whole frame is sky (no orthographic dome / dark corners).
-const FOV_H: f64 = 2.443;
+/// How many samples across the frame the luminance survey takes, per axis.
+const ADAPT_GRID: u32 = 5;
 
 /// Parameters for one analytic sky, filled from live weather in `build_sky`.
 #[derive(Clone, Debug)]
@@ -28,10 +19,7 @@ pub struct AnalyticSky {
     pub sun_az: f64,
     pub center_az: f64,
     pub turbidity: f64,
-    /// Crossfade weight toward the analytic sky, 0..1. Ramps up from 0 at the
-    /// horizon to 1 a few degrees above it, so the model fades into the palette
-    /// through twilight instead of popping in at sunrise. render lerps the
-    /// palette gradient toward `sample()` by this amount.
+    /// Crossfade weight toward the analytic sky, 0..1. Ramps up from 0 at the horizon to 1 a few degrees above it, so the model fades into the palette through twilight instead of popping in at sunrise. render lerps the palette gradient toward `sample()` by this amount.
     pub blend: f64,
 }
 
@@ -72,8 +60,7 @@ fn cy_coeffs(t: f64) -> Coeffs {
     }
 }
 
-// Perez F(theta, gamma): theta enters through its cosine (the view ray's zenith
-// angle), gamma is the angle between the view ray and the sun.
+// Perez F(theta, gamma): theta enters through its cosine (the view ray's zenith angle), gamma is the angle between the view ray and the sun.
 fn perez(cos_theta: f64, gamma: f64, k: &Coeffs) -> f64 {
     let cos_theta = cos_theta.max(0.001); // guard the secant at the horizon
     let cg = gamma.cos();
@@ -98,14 +85,14 @@ fn zenith_cy(t: f64, ts: f64) -> f64 {
         + (0.15346 * ts3 - 0.26756 * ts2 + 0.06670 * ts + 0.26688)
 }
 
-/// Per-sky constants computed once, so the per-pixel loop only does the Perez
-/// ratio and the color conversion.
+/// Per-sky constants computed once, so the per-pixel loop only does the Perez ratio and the color conversion.
 pub struct Prepared {
     sun: [f64; 3],
     lum: Coeffs,
     cx: Coeffs,
     cy: Coeffs,
     lum_z: f64,
+    exposure: f64,
     cx_z: f64,
     cy_z: f64,
     denom_lum: f64,
@@ -114,8 +101,7 @@ pub struct Prepared {
     pub blend: f64,
 }
 
-// View / sun direction as a unit vector in (east, up, forward), matching
-// astro::to_sky_fracs so the analytic sun lines up with the drawn sun disc.
+// View / sun direction as a unit vector in (east, up, forward), matching astro::to_sky_fracs so the analytic sun lines up with the drawn sun disc.
 fn dir_from_altaz(alt_deg: f64, az_deg: f64, center_az: f64) -> [f64; 3] {
     let alt = alt_deg.to_radians();
     let az_delta = (((az_deg - center_az + 180.0).rem_euclid(360.0)) - 180.0).to_radians();
@@ -132,14 +118,16 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
     let lum = lum_coeffs(t);
     let cx = cx_coeffs(t);
     let cy = cy_coeffs(t);
-    // Normalize so the zenith value equals the analytic zenith (Preetham's
-    // value(theta,gamma) = Z * perez(theta,gamma) / perez(0, theta_sun)).
+    // Normalize so the zenith value equals the analytic zenith (Preetham's value(theta,gamma) = Z * perez(theta,gamma) / perez(0, theta_sun)).
     let denom_lum = perez(1.0, theta_sun, &lum);
     let denom_cx = perez(1.0, theta_sun, &cx);
     let denom_cy = perez(1.0, theta_sun, &cy);
+    let sun = dir_from_altaz(sky.sun_alt, sky.sun_az, sky.center_az);
+    let lum_z = zenith_luminance(t, theta_sun);
     Prepared {
-        sun: dir_from_altaz(sky.sun_alt, sky.sun_az, sky.center_az),
-        lum_z: zenith_luminance(t, theta_sun),
+        exposure: adapted_exposure(&sun, lum_z, &lum, denom_lum),
+        sun,
+        lum_z,
         cx_z: zenith_cx(t, theta_sun),
         cy_z: zenith_cy(t, theta_sun),
         lum,
@@ -152,17 +140,30 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
     }
 }
 
+/// Survey the frame's luminance so the tone curve can be placed against the sky actually being drawn rather than against one remembered clear noon. A coarse grid is enough: this decides an exposure, not a pixel, and it runs once per sky rather than once per pixel.
+fn adapted_exposure(sun: &[f64; 3], lum_z: f64, lum: &Coeffs, denom_lum: f64) -> f64 {
+    let mut total = 0.0;
+    for iy in 0..ADAPT_GRID {
+        for ix in 0..ADAPT_GRID {
+            let x = (f64::from(ix) + 0.5) / f64::from(ADAPT_GRID);
+            let y = (f64::from(iy) + 0.5) / f64::from(ADAPT_GRID);
+            let view = crate::astro::view_dir(x, y);
+            let cos_theta = view[1].clamp(0.0, 1.0);
+            let dot = (view[0] * sun[0] + view[1] * sun[1] + view[2] * sun[2]).clamp(-1.0, 1.0);
+            let sample = lum_z * perez(cos_theta, dot.acos(), lum) / denom_lum;
+            // Log-average, not arithmetic: the sun is in frame and orders of magnitude brighter than the sky around it, so a plain mean measures the sun and calls it the sky. The log-average is what the sky reads as.
+            total += (sample.max(0.0) + 1e-4).ln();
+        }
+    }
+    let mean = (total / f64::from(ADAPT_GRID * ADAPT_GRID)).exp().max(1e-6);
+    ADAPT_KEY / mean
+}
+
 impl Prepared {
     pub fn sample(&self, x_frac: f64, y_frac: f64) -> Oklab {
-        // Vertical position is altitude (orthographic up = sin(alt), matching the
-        // sun-disc placement); horizontal is a rectilinear azimuth sweep so the
-        // whole rectangular frame is sky.
-        let up = (1.0 - y_frac).clamp(0.0, 1.0);
-        let alt = up.asin();
-        let az_delta = (x_frac - 0.5) * FOV_H;
-        let ca = alt.cos();
-        let view = [ca * az_delta.sin(), up, ca * az_delta.cos()];
-        let cos_theta = up;
+        // The direction this pixel looks at, from the one projection the sun disc is also placed by. Deriving it here independently is what let the two drift apart: the radiance peak has to sit exactly where the disc is drawn, at every point in the frame and not just the middle.
+        let view = crate::astro::view_dir(x_frac, y_frac);
+        let cos_theta = view[1].clamp(0.0, 1.0);
         let dot = (view[0] * self.sun[0] + view[1] * self.sun[1] + view[2] * self.sun[2])
             .clamp(-1.0, 1.0);
         let gamma = dot.acos();
@@ -170,11 +171,11 @@ impl Prepared {
         let lum = self.lum_z * perez(cos_theta, gamma, &self.lum) / self.denom_lum;
         let cx = self.cx_z * perez(cos_theta, gamma, &self.cx) / self.denom_cx;
         let cy = self.cy_z * perez(cos_theta, gamma, &self.cy) / self.denom_cy;
-        xyy_to_oklab(cx, cy, lum.max(0.0))
+        xyy_to_oklab(cx, cy, lum.max(0.0), self.exposure)
     }
 }
 
-fn xyy_to_oklab(cx: f64, cy: f64, lum: f64) -> Oklab {
+fn xyy_to_oklab(cx: f64, cy: f64, lum: f64, exposure: f64) -> Oklab {
     let cy = cy.max(1e-4);
     let big_x = (cx / cy) * lum;
     let big_z = ((1.0 - cx - cy) / cy) * lum;
@@ -183,14 +184,13 @@ fn xyy_to_oklab(cx: f64, cy: f64, lum: f64) -> Oklab {
     let g = (-0.9692660 * big_x + 1.8760108 * lum + 0.0415560 * big_z).max(0.0);
     let b = (0.0556434 * big_x - 0.2040259 * lum + 1.0572252 * big_z).max(0.0);
     // Exposure tone-map: 1 - exp(-c*E) keeps the huge near-sun range in gamut.
-    let r = 1.0 - (-r * EXPOSURE).exp();
-    let g = 1.0 - (-g * EXPOSURE).exp();
-    let b = 1.0 - (-b * EXPOSURE).exp();
+    let r = 1.0 - (-r * exposure).exp();
+    let g = 1.0 - (-g * exposure).exp();
+    let b = 1.0 - (-b * exposure).exp();
     lin_rgb_to_oklab(r, g, b)
 }
 
-// Linear sRGB -> Oklab. colorspace::rgb_to_oklab gamma-decodes first; our input
-// is already linear, so apply the LMS matrix directly.
+// Linear sRGB -> Oklab. colorspace::rgb_to_oklab gamma-decodes first; our input is already linear, so apply the LMS matrix directly.
 fn lin_rgb_to_oklab(lr: f64, lg: f64, lb: f64) -> Oklab {
     let l = 0.412_221_470_8 * lr + 0.536_332_536_3 * lg + 0.051_445_992_9 * lb;
     let m = 0.211_903_498_2 * lr + 0.680_699_545_1 * lg + 0.107_396_956_6 * lb;

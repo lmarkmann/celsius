@@ -1,3 +1,9 @@
+//! MT19937 and the value noise the clouds are made of.
+//!
+//! The PRNG is a from-scratch Mersenne Twister that matches CPython's `random.Random` bit for bit: `init_by_array` for seeding, `genrand_res53` for `next_f64`, and rejection sampling for `randbelow`. That parity is load-bearing rather than nostalgic. The golden-image tests assert a SHA256 per scene, so the same seed has to yield the same noise, the same stars and the same raindrops on every platform and every release. Changing the generator changes every locked hash.
+//!
+//! On top of it sits value noise on a fixed 96x32 grid, smoothstep-interpolated, plus fractal Brownian motion and a domain-warped variant. Warped FBM is what gives clouds their billow: the noise is sampled at coordinates that are themselves offset by noise, so edges curl instead of running straight.
+
 pub const NOISE_WIDTH: usize = 96;
 pub const NOISE_HEIGHT: usize = 32;
 
@@ -13,9 +19,7 @@ impl Noise {
     }
 
     pub fn with_size(seed: u64, width: usize, height: usize) -> Self {
-        // `seed as u32` drops the high 32 bits of the u64. Intentional: the lab's
-        // Python reference seeds via init_by_array(&[seed as u32]), and bit parity
-        // with it is what the oracle relies on. Keep seeds inside u32 to be safe.
+        // `seed as u32` drops the high 32 bits of the u64. Intentional: the locked test vectors seed via init_by_array(&[seed as u32]), and bit parity with them is what the oracle relies on. Keep seeds inside u32 to be safe.
         let mut rng = Mt19937::init_by_array(&[seed as u32]);
         let grid = (0..width * height).map(|_| rng.next_f64()).collect();
         Self {
@@ -66,9 +70,7 @@ impl Noise {
         self.warped_fbm_oct(x, y, 4)
     }
 
-    // Same domain warp as warped_fbm, with the final fbm octave count exposed so
-    // cloud kinds can dial detail (cirrus wispy = more octaves, stratus smooth =
-    // fewer). octaves == 4 is bit-identical to warped_fbm.
+    // Same domain warp as warped_fbm, with the final fbm octave count exposed so cloud kinds can dial detail (cirrus wispy = more octaves, stratus smooth = fewer). octaves == 4 is bit-identical to warped_fbm.
     pub fn warped_fbm_oct(&self, x: f64, y: f64, octaves: u32) -> f64 {
         let wx = self.fbm(x + 1.7, y + 3.2, 3);
         let wy = self.fbm(x + 5.8, y + 0.9, 3);
@@ -80,8 +82,7 @@ pub(crate) fn smoothstep(x: f64) -> f64 {
     x * x * (3.0 - 2.0 * x)
 }
 
-// MT19937 seeded via init_by_array, matching Python's random.Random(seed).
-// genrand_res53 matches Python's random.random() output exactly.
+// MT19937 seeded via init_by_array, matching Python's random.Random(seed). genrand_res53 matches Python's random.random() output exactly.
 const MT_N: usize = 624;
 const MT_M: usize = 397;
 const MATRIX_A: u32 = 0x9908_b0df;
@@ -179,8 +180,7 @@ impl Mt19937 {
         (a * 67_108_864.0 + b) * (1.0 / 9_007_199_254_740_992.0)
     }
 
-    // Matches Python's random._randbelow for n > 0 (k <= 32 fast path).
-    // n.bit_length() bits drawn from genrand_uint32, rejection-sampled.
+    // Matches Python's random._randbelow for n > 0 (k <= 32 fast path). n.bit_length() bits drawn from genrand_uint32, rejection-sampled.
     pub fn randbelow(&mut self, n: u32) -> u32 {
         debug_assert!(n > 0);
         let k = 32 - n.leading_zeros();
@@ -221,17 +221,12 @@ mod tests {
         }
     }
 
-    // Python reference: import random; rng = random.Random(101);
-    // vals = [rng.getrandbits(32) for _ in range(1280)]
-    // 1280 draws cross the 624-word refill boundary twice, so generate()
-    // runs on twisted state and every state word is observed; the 5-value
-    // tests above only ever read mt[0..10] of the first twist.
+    // Python reference: import random; rng = random.Random(101); vals = [rng.getrandbits(32) for _ in range(1280)] 1280 draws cross the 624-word refill boundary twice, so generate() runs on twisted state and every state word is observed; the 5-value tests above only ever read mt[0..10] of the first twist.
     #[test]
     fn mt19937_generate_refill_matches_python() {
         let mut rng = Mt19937::init_by_array(&[101]);
         let vals: Vec<u32> = (0..1280).map(|_| rng.next_u32()).collect();
-        // First refill boundary: tail of twist 1 (including the wrap-around
-        // word at 623) into the head of twist 2.
+        // First refill boundary: tail of twist 1 (including the wrap-around word at 623) into the head of twist 2.
         let expected_618 = [
             3720980164u32,
             3245653950,
@@ -259,8 +254,7 @@ mod tests {
             1371819118,
         ];
         assert_eq!(&vals[1244..1252], &expected_1244);
-        // FNV-style fold over the full sequence: a wrong word at any index
-        // fails, which is what kills mutants in the middle of the twist loops.
+        // FNV-style fold over the full sequence: a wrong word at any index fails, which is what kills mutants in the middle of the twist loops.
         let mut h: u64 = 14_695_981_039_346_656_037;
         for &v in &vals {
             h = h.wrapping_mul(1_099_511_628_211) ^ u64::from(v);

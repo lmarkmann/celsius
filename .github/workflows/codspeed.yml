@@ -5,20 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # `workflow_dispatch` allows CodSpeed to trigger backtest
-  # performance analysis in order to generate initial data.
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write # for OpenID Connect authentication with CodSpeed
+  id-token: write
 
 jobs:
   benchmarks:
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -30,10 +28,10 @@ jobs:
           tool: cargo-codspeed
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build --bench render
+        run: cargo codspeed build -m simulation -m memory
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: simulation
+          mode: simulation,memory
           run: cargo codspeed run

@@ -3,11 +3,30 @@ changelog_update = true
 git_release_enable = true
 git_tag_enable = true
 pr_labels = ["release"]
-semver_check = false
 pr_name = "chore: release{% if version %} v{{ version }}{% endif %}"
+# cargo-semver-checks runs by default (the release-plz action installs it), and an incompatible
+# result forces a breaking bump on its own, which on 0.x means 0.x.0. The compatibility line has
+# to be spelled out here: this body replaces release-plz's default summary, which is where the
+# marker normally lives, so without it the check would run and say nothing.
 pr_body = """
+{% for release in releases -%}
+{% if release.semver_check == "incompatible" %}API breaking changes detected in `{{ release.package }}`.
+{% elif release.semver_check == "compatible" %}API compatible changes in `{{ release.package }}`.
+{% endif -%}
+{% endfor -%}
+{% for release in releases -%}
+{% if release.breaking_changes %}
+```text
+{{ release.breaking_changes }}
+```
+{% endif -%}
+{% endfor %}
 {% for release in releases %}{% if release.changelog %}{{ release.changelog }}{% endif %}{% endfor -%}
 """
+
+[[package]]
+name = "celsius-lab"
+release = false
 
 [changelog]
 header = """# Changelog

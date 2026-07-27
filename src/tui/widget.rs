@@ -1,3 +1,9 @@
+//! The half-block widget: two sky pixels per terminal cell.
+//!
+//! A terminal cell is roughly twice as tall as it is wide, so drawing one pixel per cell gives a squashed sky. Printing `▀` with the upper pixel as foreground and the lower as background instead packs two rows into one cell, which both doubles vertical resolution and squares the aspect ratio. A 104x50 buffer therefore occupies 104 columns and 25 rows.
+//!
+//! This is why every scene constant is expressed against a 104x50 pixel buffer rather than against terminal rows.
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;

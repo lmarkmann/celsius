@@ -16,42 +16,113 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: celsius
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
+          checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
 
   homebrew:
     name: bump homebrew formula
+    needs: upload-binaries
     runs-on: ubuntu-latest
     steps:
-      - uses: mislav/bump-homebrew-formula-action@v4
+      - uses: actions/checkout@v7
         with:
-          formula-name: celsius
-          formula-path: Formula/celsius.rb
-          homebrew-tap: lmarkmann/homebrew-tap
-          base-branch: main
-          # codeload serves the tarball directly; the github.com archive URL
-          # redirects with 303, which the action rejects (mislav/bump-homebrew-formula-action#340)
-          download-url: https://codeload.github.com/lmarkmann/celsius/tar.gz/refs/tags/${{ github.ref_name }}
-          commit-message: |
-            celsius ${{ github.ref_name }}
+          repository: lmarkmann/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
 
-            Created by https://github.com/mislav/bump-homebrew-formula-action
+      - name: render formula
         env:
-          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          releases="https://github.com/lmarkmann/celsius/releases/download/$TAG"
+
+          macos_arm_archive="celsius-$TAG-aarch64-apple-darwin.tar.gz"
+          linux_x86_archive="celsius-$TAG-x86_64-unknown-linux-musl.tar.gz"
+          source_url="https://github.com/lmarkmann/celsius/archive/refs/tags/$TAG.tar.gz"
+
+          gh release download "$TAG" --repo lmarkmann/celsius \
+            -p "$macos_arm_archive" -p "$linux_x86_archive" -D dist
+          curl -sSfL -o "dist/source.tar.gz" "$source_url"
+
+          macos_arm_sha=$(sha256sum "dist/$macos_arm_archive" | cut -d' ' -f1)
+          linux_x86_sha=$(sha256sum "dist/$linux_x86_archive" | cut -d' ' -f1)
+          source_sha=$(sha256sum dist/source.tar.gz | cut -d' ' -f1)
+
+          cat > tap/Formula/celsius.rb <<EOF
+          class Celsius < Formula
+            desc "Terminal weather as a first-person sky view"
+            homepage "https://github.com/lmarkmann/celsius"
+            version "$version"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "$releases/$macos_arm_archive"
+                sha256 "$macos_arm_sha"
+              end
+              on_intel do
+                url "$source_url"
+                sha256 "$source_sha"
+                depends_on "rust" => :build
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "$releases/$linux_x86_archive"
+                sha256 "$linux_x86_sha"
+              end
+              on_arm do
+                url "$source_url"
+                sha256 "$source_sha"
+                depends_on "rust" => :build
+              end
+            end
+
+            head do
+              url "https://github.com/lmarkmann/celsius.git", branch: "main"
+              depends_on "rust" => :build
+            end
+
+            def install
+              if File.exist?("Cargo.toml")
+                system "cargo", "install", *std_cargo_args
+              else
+                bin.install "celsius"
+              end
+            end
+
+            test do
+              assert_match "celsius", shell_output("#{bin}/celsius --version")
+            end
+          end
+          EOF
+
+      - name: commit and push
+        working-directory: tap
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/celsius.rb
+          git diff --cached --quiet || git commit -m "celsius $TAG"
+          git push

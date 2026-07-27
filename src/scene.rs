@@ -1,3 +1,11 @@
+//! [`SkyState`], the complete description of one sky, and the TOML that authors it.
+//!
+//! Everything the renderer needs is here and nothing it does not: a gradient, sun and moon placement, cloud layers, and optional haze, stars, precipitation. A `SkyState` carries no notion of *when* it is being drawn, only which instant it depicts, which is why the same struct serves a fixed scene file and a synthesized forecast hour alike.
+//!
+//! The TOML surface is a separate private type rather than `Deserialize` on `SkyState` itself. That split is what lets fields exist that no scene file can set: `lightning`, `meteors`, `horizon_glow` and `analytic` are built by the weather layer, never authored by hand. It also keeps parsing strict, so a typo like `kind = "Rain"` is rejected instead of silently rendering as snow.
+//!
+//! The seven oracle-locked scenes are compiled in via `include_str!`, so `--scene high_noon_clear` resolves from an installed binary with no files on disk.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +15,7 @@ use thiserror::Error;
 use crate::analytic_sky::AnalyticSky;
 use crate::gradient::Gradient;
 use crate::lightning::Lightning;
+use crate::meteors::Meteors;
 
 #[derive(Debug, Error)]
 pub enum SceneError {
@@ -37,11 +46,7 @@ pub struct Sun {
     pub visible: bool,
 }
 
-/// Cloud morphology class. Drives noise detail, edge sharpness, and the
-/// lit/shadow colors so a thin cirrus veil, a flat stratus deck, and a dark
-/// storm tower no longer share one texture. `Generic` reproduces the
-/// pre-morphology render exactly, which keeps vendored scenes and the oracle
-/// goldens unchanged.
+/// Cloud morphology class. Drives noise detail, edge sharpness, and the lit/shadow colors so a thin cirrus veil, a flat stratus deck, and a dark storm tower no longer share one texture. `Generic` reproduces the pre-morphology render exactly, which keeps vendored scenes and the oracle goldens unchanged.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CloudKind {
@@ -115,8 +120,7 @@ pub struct CloudLayer {
     pub seed: u64,
     #[serde(default)]
     pub kind: CloudKind,
-    /// 0 = full noise texture, 1 = featureless flat deck. Lets a high-cover
-    /// stratus layer render as a solid lid instead of separate blobs.
+    /// 0 = full noise texture, 1 = featureless flat deck. Lets a high-cover stratus layer render as a solid lid instead of separate blobs.
     #[serde(default)]
     pub flatten: f64,
     #[serde(default = "default_offset_x")]
@@ -134,7 +138,7 @@ pub struct Haze {
     pub exponent: f64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Stars {
     pub count: u32,
     pub seed: u64,
@@ -160,25 +164,18 @@ pub struct Chrome {
     pub header_right: String,
     pub footer: String,
     pub keys: String,
-    /// One-line ASCII summary for the `--plain` surface, built from structured
-    /// weather data. Empty for scene files, which have no structured weather;
-    /// `write_plain` falls back to the decorative chrome there.
+    /// One-line ASCII summary for the `--plain` surface, built from structured weather data. Empty for scene files, which have no structured weather; `write_plain` falls back to the decorative chrome there.
     #[serde(default)]
     pub status: String,
-    /// Footer payload (temp, H/L, condition, wind) as width tiers, richest
-    /// first. The TUI picks the widest tier that fits so the live reading
-    /// survives while the window narrows. Empty for scene files, which keep the
-    /// static `footer` string.
+    /// Footer payload (temp, H/L, condition, wind) as width tiers, richest first. The TUI picks the widest tier that fits so the live reading survives while the window narrows. Empty for scene files, which keep the static `footer` string.
     #[serde(skip)]
     pub footer_tiers: Vec<String>,
-    /// Key-hint tiers, richest first, collapsing to `? help` before any footer
-    /// payload is dropped. Empty for scene files, which keep the static `keys`.
+    /// Key-hint tiers, richest first, collapsing to `? help` before any footer payload is dropped. Empty for scene files, which keep the static `keys`.
     #[serde(skip)]
     pub keys_tiers: Vec<String>,
 }
 
-/// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to
-/// slip through the old stringly field and silently render as snow.
+/// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to slip through the old stringly field and silently render as snow.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PrecipKind {
@@ -198,9 +195,7 @@ pub struct Precipitation {
     pub opacity: f64,
 }
 
-/// Warm light concentrated on the horizon at the sun's bearing. The vertical
-/// gradient is azimuth-blind, so this is what puts sunrise/sunset color on the
-/// side the sun actually is rather than symmetrically across the frame.
+/// Warm light concentrated on the horizon at the sun's bearing. The vertical gradient is azimuth-blind, so this is what puts sunrise/sunset color on the side the sun actually is rather than symmetrically across the frame.
 #[derive(Clone, Debug)]
 pub struct HorizonGlow {
     pub x_frac: f64,
@@ -220,15 +215,12 @@ pub struct SkyState {
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
     pub lightning: Option<Lightning>,
+    pub meteors: Option<Meteors>,
     pub horizon_glow: Option<HorizonGlow>,
-    /// Prototype: when present, render computes the sky background from the
-    /// Preetham analytic model instead of sampling `gradient`. Set only for the
-    /// live-weather daytime path; scenes leave it None.
+    /// Prototype: when present, render computes the sky background from the Preetham analytic model instead of sampling `gradient`. Set only for the live-weather daytime path; scenes leave it None.
     pub analytic: Option<AnalyticSky>,
     pub wind_speed_kmh: f64,
-    /// The UTC instant this sky depicts, so time-gated overlays read the hour on
-    /// screen rather than the machine clock. `0` for static scene files and the
-    /// error sky, which never trigger them.
+    /// The UTC instant this sky depicts, so time-gated overlays read the hour on screen rather than the machine clock. `0` for static scene files and the error sky, which never trigger them.
     pub unix_utc: i64,
 }
 
@@ -262,19 +254,69 @@ struct CloudsToml {
     layers: Vec<CloudLayer>,
 }
 
+/// The oracle-locked scenes, compiled in so `--scene <name>` works from an
+/// installed binary with no files on disk. These are the same bytes the golden
+/// oracle hashes; `tests/oracle.rs` asserts this list matches the manifest.
+static BUILTINS: &[(&str, &str)] = &[
+    (
+        "blue_hour_calm",
+        include_str!("../scenes/blue_hour_calm.toml"),
+    ),
+    (
+        "golden_hour_cumulus",
+        include_str!("../scenes/golden_hour_cumulus.toml"),
+    ),
+    (
+        "high_noon_clear",
+        include_str!("../scenes/high_noon_clear.toml"),
+    ),
+    (
+        "moonless_darksky",
+        include_str!("../scenes/moonless_darksky.toml"),
+    ),
+    (
+        "moonlit_clear_winter",
+        include_str!("../scenes/moonlit_clear_winter.toml"),
+    ),
+    (
+        "overcast_night",
+        include_str!("../scenes/overcast_night.toml"),
+    ),
+    (
+        "stormy_afternoon_advancing",
+        include_str!("../scenes/stormy_afternoon_advancing.toml"),
+    ),
+];
+
+/// Built-in scene names, sorted.
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTINS.iter().map(|(name, _)| *name)
+}
+
+/// Load a scene compiled into the binary. `None` if no built-in goes by that name.
+pub fn load_builtin_scene(name: &str) -> Option<Result<SkyState, SceneError>> {
+    BUILTINS
+        .iter()
+        .find(|(builtin, _)| *builtin == name)
+        .map(|(builtin, text)| parse_scene(Path::new(builtin), text))
+}
+
 pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
     let path = path.as_ref();
     let text = fs::read_to_string(path).map_err(|e| SceneError::Read {
         path: path.to_path_buf(),
         source: e,
     })?;
-    let raw: SceneToml = basic_toml::from_str(&text).map_err(|e| SceneError::Parse {
+    parse_scene(path, &text)
+}
+
+fn parse_scene(path: &Path, text: &str) -> Result<SkyState, SceneError> {
+    let raw: SceneToml = basic_toml::from_str(text).map_err(|e| SceneError::Parse {
         path: path.to_path_buf(),
         source: e,
     })?;
 
-    // Gradient::sample panics on zero stops; reject it here so a bad scene
-    // file fails with a SceneError instead of a render-time panic.
+    // Gradient::sample panics on zero stops; reject it here so a bad scene file fails with a SceneError instead of a render-time panic.
     if raw.gradient.stops.is_empty() {
         return Err(SceneError::EmptyGradient {
             path: path.to_path_buf(),
@@ -308,6 +350,7 @@ pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
         moon: raw.moon,
         precipitation: raw.precipitation,
         lightning: None,
+        meteors: None,
         horizon_glow: None,
         analytic: None,
         wind_speed_kmh: 0.0,

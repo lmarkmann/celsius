@@ -1,4 +1,6 @@
 use std::io::{BufWriter, ErrorKind, IsTerminal, Write, stdout};
+use std::path::Path;
+#[cfg(feature = "png")]
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -13,7 +15,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use celsius::config::{self, LocationPref};
 use celsius::tui::{RunOutcome, Timeline};
 use celsius::weather::{ComposeOpts, compose, compose_at, error_sky, forecast, location};
-use celsius::{SkyState, load_scene, tui};
+use celsius::{SkyState, builtin_names, load_builtin_scene, load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
 
@@ -30,8 +32,13 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
   \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
-  \x1b[1;36mcelsius --scene scenes/golden_hour_cumulus.toml\x1b[0m
-  \x1b[1;36mcelsius render --scene scene.toml --out scene.png\x1b[0m
+  \x1b[1;36mcelsius --scene golden_hour_cumulus\x1b[0m       a built-in sky, no network
+  \x1b[1;36mcelsius --scene ./my_sky.toml\x1b[0m             your own scene file
+  \x1b[1;36mcelsius render --scene high_noon_clear --out sky.png\x1b[0m
+
+\x1b[1;32mBuilt-in scenes:\x1b[0m
+  blue_hour_calm  golden_hour_cumulus  high_noon_clear  moonless_darksky
+  moonlit_clear_winter  overcast_night  stormy_afternoon_advancing
 ";
 
 #[cfg(not(feature = "png"))]
@@ -41,14 +48,19 @@ const AFTER_HELP: &str = "\x1b[1;32mExamples:\x1b[0m
   \x1b[1;36mcelsius -l Hamburg --at +3h\x1b[0m            three hours from now
   \x1b[1;36mcelsius -l \"Reykjavík\" --at 2026-06-21\x1b[0m  solstice, noon UTC
   \x1b[1;36mcelsius --lat 53.55 --lon 9.99\x1b[0m
-  \x1b[1;36mcelsius --scene scenes/golden_hour_cumulus.toml\x1b[0m
+  \x1b[1;36mcelsius --scene golden_hour_cumulus\x1b[0m       a built-in sky, no network
+  \x1b[1;36mcelsius --scene ./my_sky.toml\x1b[0m             your own scene file
+
+\x1b[1;32mBuilt-in scenes:\x1b[0m
+  blue_hour_calm  golden_hour_cumulus  high_noon_clear  moonless_darksky
+  moonlit_clear_winter  overcast_night  stormy_afternoon_advancing
 ";
 
 #[derive(Parser)]
 #[command(
     name = "celsius",
     version,
-    about = "a sky in your terminal",
+    about = "The sky in your terminal.",
     styles = STYLES,
     after_help = AFTER_HELP,
 )]
@@ -65,41 +77,32 @@ struct Cli {
     #[arg(long, value_name = "F64", global = true, allow_hyphen_values = true)]
     lon: Option<f64>,
 
-    /// UTC time to scrub to. Accepts a bare hour ("17"), HH:MM ("17:30"),
-    /// a relative offset from now ("+3h", "-30m", "+1d"), a date alone
-    /// ("2026-06-21", defaults to 12:00 UTC), or full ISO 8601
-    /// ("2026-06-21T17:00:00Z"). Default: now.
+    /// UTC time to scrub to. Accepts a bare hour ("17"), HH:MM ("17:30"), a relative offset from now ("+3h", "-30m", "+1d"), a date alone ("2026-06-21", defaults to 12:00 UTC), or full ISO 8601 ("2026-06-21T17:00:00Z"). Default: now.
     #[arg(long, value_name = "TIME", global = true, allow_hyphen_values = true)]
     at: Option<String>,
 
-    /// Load a lab scene TOML directly instead of synthesizing from weather.
-    #[arg(long, value_name = "PATH", global = true)]
-    scene: Option<PathBuf>,
+    /// Show a fixed scene instead of synthesizing from live weather. Takes a
+    /// built-in name (see the list below) or a path to your own scene TOML.
+    #[arg(long, value_name = "NAME|PATH", global = true)]
+    scene: Option<String>,
 
-    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W.
-    /// Default 180 (south) suits northern-hemisphere observers.
-    #[arg(long, value_name = "DEG", global = true, default_value_t = 180.0)]
-    facing: f64,
+    /// Compass bearing the viewer faces: 0=N, 90=E, 180=S, 270=W. Defaults to the side of the sky the sun crosses: south in the northern hemisphere, north in the southern. Falls back to config.
+    #[arg(long, value_name = "DEG", global = true)]
+    facing: Option<f64>,
 
-    /// Bortle dark-sky class for your location: 1 (pristine) to 9 (inner city).
-    /// Scales visible star count and tints the horizon with light-pollution glow.
-    /// Default: unset (treat as Bortle 1, today's behavior). Falls back to config.
+    /// Bortle dark-sky class for your location: 1 (pristine) to 9 (inner city). Scales visible star count and tints the horizon with light-pollution glow. Default: unset (treat as Bortle 1, today's behavior). Falls back to config.
     #[arg(long, value_name = "1..9", global = true, value_parser = clap::value_parser!(u8).range(1..=9))]
     bortle: Option<u8>,
 
-    /// Print a one-line ASCII weather summary and exit, no full-screen UI.
-    /// Also the default when stdout is not a terminal or NO_COLOR is set.
+    /// Print a one-line ASCII weather summary and exit, no full-screen UI. Also the default when stdout is not a terminal or NO_COLOR is set.
     #[arg(long, visible_alias = "no-tui", global = true)]
     plain: bool,
 
-    /// Print one ANSI half-block frame (104x50) and exit: the visual capture
-    /// surface, for piping into a file or `less -R`.
+    /// Print one ANSI half-block frame (104x50) and exit: the visual capture surface, for piping into a file or `less -R`.
     #[arg(long, global = true, conflicts_with = "plain")]
     frame: bool,
 
-    /// Sky model for the live-weather background. `analytic` (default) is the
-    /// Preetham physical sky, crossfading to the `palette` gradient through
-    /// twilight and night. Pass `--sky palette` to force the hand-tuned gradient.
+    /// Sky model for the live-weather background. `analytic` (default) is the Preetham physical sky, crossfading to the `palette` gradient through twilight and night. Pass `--sky palette` to force the hand-tuned gradient.
     #[arg(long, value_enum, default_value_t = SkyModel::Analytic, global = true)]
     sky: SkyModel,
 
@@ -117,11 +120,11 @@ enum SkyModel {
 #[cfg(feature = "png")]
 #[derive(Subcommand)]
 enum Command {
-    /// Render a scene TOML to a PNG (oracle path, `png` feature).
+    /// Render a scene to a PNG (oracle path, `png` feature).
     Render {
-        /// Path to the scene TOML.
-        #[arg(short, long)]
-        scene: PathBuf,
+        /// Built-in scene name, or a path to a scene TOML.
+        #[arg(short, long, value_name = "NAME|PATH")]
+        scene: String,
         /// Output PNG path.
         #[arg(short, long)]
         out: PathBuf,
@@ -138,9 +141,7 @@ enum OutputMode {
     Frame,
 }
 
-/// Decide how to render. First match wins: an explicit `--frame` beats
-/// everything; otherwise anything that means "not an interactive color
-/// terminal" (--plain, NO_COLOR, a pipe) falls back to the flat text surface.
+/// Decide how to render. First match wins: an explicit `--frame` beats everything; otherwise anything that means "not an interactive color terminal" (--plain, NO_COLOR, a pipe) falls back to the flat text surface.
 fn output_mode(cli: &Cli) -> OutputMode {
     if cli.frame {
         OutputMode::Frame
@@ -155,8 +156,27 @@ fn output_mode(cli: &Cli) -> OutputMode {
     }
 }
 
-/// Write one state non-interactively and exit. A broken pipe (`celsius | head`)
-/// is a normal way to stop reading, not an error, so it maps to success.
+/// Resolve `--scene`. A bare word is a built-in name; anything carrying a directory component is a path, so `./dawn.toml` always means the file even if a built-in ever takes that name. A bare word that matches nothing is the one place users learn which scenes exist, so the error lists them.
+fn resolve_scene(arg: &str) -> Result<SkyState> {
+    let has_directory = Path::new(arg)
+        .parent()
+        .is_some_and(|p| !p.as_os_str().is_empty());
+    if !has_directory {
+        let name = arg.strip_suffix(".toml").unwrap_or(arg);
+        if let Some(state) = load_builtin_scene(name) {
+            return state.with_context(|| format!("loading built-in scene {name}"));
+        }
+        if !Path::new(arg).is_file() {
+            bail!(
+                "unknown scene {arg:?}\nbuilt in: {}\npass a path to load your own scene TOML",
+                builtin_names().collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+    load_scene(arg).with_context(|| format!("loading scene {arg}"))
+}
+
+/// Write one state non-interactively and exit. A broken pipe (`celsius | head`) is a normal way to stop reading, not an error, so it maps to success.
 fn write_oneshot(state: &SkyState, mode: &OutputMode) -> Result<()> {
     let mut out = BufWriter::new(stdout().lock());
     let written = match mode {
@@ -181,31 +201,28 @@ fn main() -> Result<()> {
         height,
     }) = cli.command
     {
-        let state =
-            load_scene(&scene).with_context(|| format!("loading scene {}", scene.display()))?;
+        let state = resolve_scene(&scene)?;
         let pixels = render(&state, width, height);
         terminal::write_png(&pixels, &out).with_context(|| format!("writing {}", out.display()))?;
         println!("{} -> {} ({}x{})", state.name, out.display(), width, height);
         return Ok(());
     }
 
-    // Scene-file path: single state, no retry loop needed.
-    if let Some(scene_path) = cli.scene.as_ref() {
-        let state = load_scene(scene_path)
-            .with_context(|| format!("loading scene {}", scene_path.display()))?;
+    // Fixed scene: single state, no retry loop needed.
+    if let Some(scene) = cli.scene.as_ref() {
+        let state = resolve_scene(scene)?;
         let mode = output_mode(&cli);
         if !matches!(mode, OutputMode::Tui) {
             return write_oneshot(&state, &mode);
         }
         let mut session = tui::Session::new();
         session
-            .run(&Timeline::single(state))
+            .run(&Timeline::scene(state))
             .context("running tui")?;
         return Ok(());
     }
 
-    // Non-interactive (pipe, --plain, --frame, NO_COLOR): build once, no retry.
-    // A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
+    // Non-interactive (pipe, --plain, --frame, NO_COLOR): build once, no retry. A fetch error here goes to stderr and exits non-zero, the normal CLI shape.
     let mode = output_mode(&cli);
     if !matches!(mode, OutputMode::Tui) {
         let location = resolve_location(&cli)
@@ -216,14 +233,11 @@ fn main() -> Result<()> {
         return write_oneshot(&timeline.states[timeline.home], &mode);
     }
 
-    // Live TUI: one continuous terminal session. Forecasts fetch on a background
-    // thread behind a loading screen, so the sky never drops to a bare shell
-    // while a city loads. A fetch failure becomes an error sky retryable with `r`.
+    // Live TUI: one continuous terminal session. Forecasts fetch on a background thread behind a loading screen, so the sky never drops to a bare shell while a city loads. A fetch failure becomes an error sky retryable with `r`.
     let params = FetchParams::from(&cli);
     let mut session = tui::Session::new();
     let result = run_tui(&mut session, &cli, &params);
-    // Drop the session (restoring the terminal) before any error is printed, so
-    // it lands on the normal screen rather than inside the alternate one.
+    // Drop the session (restoring the terminal) before any error is printed, so it lands on the normal screen rather than inside the alternate one.
     drop(session);
     result
 }
@@ -259,12 +273,11 @@ fn run_tui(session: &mut tui::Session, cli: &Cli, params: &FetchParams) -> Resul
     }
 }
 
-/// The compose-relevant CLI fields, owned so a background fetch thread can hold
-/// them while the main thread keeps drawing.
+/// The compose-relevant CLI fields, owned so a background fetch thread can hold them while the main thread keeps drawing.
 #[derive(Clone)]
 struct FetchParams {
     at: Option<String>,
-    facing: f64,
+    facing: Option<f64>,
     bortle: Option<u8>,
     analytic: bool,
 }
@@ -280,9 +293,7 @@ impl From<&Cli> for FetchParams {
     }
 }
 
-/// Fetch and compose the timeline for `geo` on a background thread, drawing the
-/// loading screen over `current` until it lands. `Ok(None)` means the user
-/// cancelled the wait; the caller keeps whatever sky was showing.
+/// Fetch and compose the timeline for `geo` on a background thread, drawing the loading screen over `current` until it lands. `Ok(None)` means the user cancelled the wait; the caller keeps whatever sky was showing.
 fn fetch_timeline(
     session: &mut tui::Session,
     params: &FetchParams,
@@ -298,13 +309,17 @@ fn fetch_timeline(
     session.await_timeline(current, &label, rx)
 }
 
-/// Build the timeline for a location, collapsing any failure into an error sky
-/// so the loop (and the loading screen) always have something to show.
+/// Build the timeline for a location, collapsing any failure into an error sky so the loop (and the loading screen) always have something to show.
 fn timeline_or_error(params: &FetchParams, location: location::GeoResult) -> Timeline {
     match build_live_timeline(params, &location) {
         Ok(t) => t,
         Err(e) => Timeline::single(error_sky(&e.to_string())),
     }
+}
+
+/// Which way to look when nobody has said. The sun, moon and planets all cross the southern sky seen from the northern hemisphere and the northern sky seen from the southern one, so facing the equator is what puts them in frame at all. A fixed 180 put every southern-hemisphere viewer at the back of their own sky, watching the half where nothing happens, and the latitude needed to know better was already in hand.
+fn default_facing(lat: f64) -> f64 {
+    if lat < 0.0 { 0.0 } else { 180.0 }
 }
 
 fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> Result<Timeline> {
@@ -321,9 +336,13 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
         bail!("forecast returned zero hours for {}", location.label());
     }
 
+    let saved = config::load();
     let opts = ComposeOpts {
-        center_az: params.facing,
-        bortle: params.bortle.or_else(|| config::load().bortle),
+        center_az: params
+            .facing
+            .or(saved.facing)
+            .unwrap_or_else(|| default_facing(location.latitude)),
+        bortle: params.bortle.or(saved.bortle),
         analytic: params.analytic,
     };
     let mut states: Vec<_> = (0..hours)
@@ -331,8 +350,7 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
         .collect::<Result<_, _>>()
         .context("composing sky timeline")?;
     let home = nearest_hour_index(&forecast, at_unix);
-    // Render the home slot at the exact requested instant, interpolating between
-    // the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
+    // Render the home slot at the exact requested instant, interpolating between the bracketing hours, so "now" (or any --at) isn't rounded to the hour.
     states[home] = compose_at(&forecast, location, at_unix, now_unix, opts)
         .context("composing sky for requested time")?;
     let coords = Some((location.latitude, location.longitude));
@@ -344,9 +362,7 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
     ))
 }
 
-/// The starting location: CLI flags or saved config, falling back to the
-/// interactive picker (and saving the pick) on a fresh install. `None` only if
-/// the user cancels that first-run picker.
+/// The starting location: CLI flags or saved config, falling back to the interactive picker (and saving the pick) on a fresh install. `None` only if the user cancels that first-run picker.
 fn first_location(session: &mut tui::Session, cli: &Cli) -> Result<Option<location::GeoResult>> {
     match resolve_location(cli)? {
         Some(geo) => Ok(Some(geo)),
@@ -354,8 +370,7 @@ fn first_location(session: &mut tui::Session, cli: &Cli) -> Result<Option<locati
     }
 }
 
-/// Resolve from CLI flags or saved config. `Ok(None)` means nothing is set yet,
-/// so an interactive caller should prompt and a pipe should error.
+/// Resolve from CLI flags or saved config. `Ok(None)` means nothing is set yet, so an interactive caller should prompt and a pipe should error.
 fn resolve_location(cli: &Cli) -> Result<Option<location::GeoResult>> {
     match (cli.lat, cli.lon, cli.location.as_deref()) {
         (Some(lat), Some(lon), name) => Ok(Some(location::GeoResult {
@@ -406,9 +421,7 @@ fn resolve_from_config() -> Result<Option<location::GeoResult>> {
     }
 }
 
-/// First run with no saved location: search interactively, remember the exact
-/// place (coords + name) so a later best_match can never re-rank it away, and
-/// return it. `None` if the user cancels the picker.
+/// First run with no saved location: search interactively, remember the exact place (coords + name) so a later best_match can never re-rank it away, and return it. `None` if the user cancels the picker.
 fn pick_and_save(session: &mut tui::Session) -> Result<Option<location::GeoResult>> {
     let Some(geo) = session.search_location().context("location search")? else {
         return Ok(None);
@@ -465,8 +478,7 @@ fn parse_at(raw: &str, now_unix: i64) -> Result<i64> {
         return Ok(NaiveDateTime::new(d, t).and_utc().timestamp());
     }
 
-    // Date + time with either T or space separator.
-    // Accepts a bare hour, HH:MM, or HH:MM:SS on the right side.
+    // Date + time with either T or space separator. Accepts a bare hour, HH:MM, or HH:MM:SS on the right side.
     if let Some((date_part, time_part)) = body.split_once('T').or_else(|| body.split_once(' '))
         && let Ok(d) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d")
         && let Some(t) = parse_clock(time_part)
@@ -534,6 +546,14 @@ fn nearest_hour_index(forecast: &forecast::Forecast, target_unix: i64) -> usize 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_facing_follows_the_hemisphere() {
+        assert_eq!(default_facing(53.55), 180.0, "Hamburg faces south");
+        assert_eq!(default_facing(-33.45), 0.0, "Santiago faces north");
+        assert_eq!(default_facing(-22.9), 0.0, "the Atacama faces north");
+        assert_eq!(default_facing(0.0), 180.0, "the equator has to pick one");
+    }
 
     fn ymd_hms(y: i32, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> i64 {
         NaiveDate::from_ymd_opt(y, m, d)

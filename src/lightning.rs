@@ -1,10 +1,12 @@
 //! Lightning flashes for thunderstorm scenes (WMO 95-99).
 //!
-//! Lives outside the render pipeline: composed once when SkyState is built,
-//! evaluated each TUI tick by `overlay()`. Bit-parity with celsius-lab's
-//! lightning.py for strike scheduling (verified by tests/lightning.rs).
+//! Lives outside the render pipeline: composed once when SkyState is built, evaluated each TUI tick by `overlay()`. Strike scheduling is pinned to a locked fixture, so the flash rhythm of a given seed never drifts.
 
 use std::sync::LazyLock;
+
+/// Bolts are generated once, in the coordinates of the reference frame, and scaled to the real buffer when drawn. Generating them against the live terminal size instead meant a bolt built for 104x50 stayed in the top-left corner of a wider terminal, and that a resize left the strike hanging in the wrong part of the sky. Keeping generation fixed also keeps it bit-reproducible for the locked schedule fixture.
+const BOLT_REF_WIDTH: u32 = 104;
+const BOLT_REF_HEIGHT: u32 = 50;
 
 use crate::colorspace::{Oklab, PixelBuffer, Rgb, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::noise::Mt19937;
@@ -59,18 +61,11 @@ pub struct Lightning {
 }
 
 impl Lightning {
-    pub fn new(
-        seed: u32,
-        intensity: f64,
-        duration_s: f64,
-        with_bolts: bool,
-        width: u32,
-        height: u32,
-    ) -> Self {
+    pub fn new(seed: u32, intensity: f64, duration_s: f64, with_bolts: bool) -> Self {
         let params = FlashParams::default();
         let mut strikes = schedule_strikes(seed, duration_s, &params, intensity);
         if with_bolts {
-            attach_bolts(&mut strikes, seed, width, height);
+            attach_bolts(&mut strikes, seed, BOLT_REF_WIDTH, BOLT_REF_HEIGHT);
         }
         Self { params, strikes }
     }
@@ -227,8 +222,7 @@ pub fn l_bump_at(strikes: &[Strike], t_now: f64, params: &FlashParams) -> f64 {
 
 fn active_bolt<'a>(strikes: &'a [Strike], t_now: f64, params: &FlashParams) -> Option<&'a Bolt> {
     for s in strikes {
-        // A boltless strike must not end the search; `?` here would return
-        // None for the whole function at the first sheet flash.
+        // A boltless strike must not end the search; `?` here would return None for the whole function at the first sheet flash.
         let Some(bolt) = s.bolt.as_ref() else {
             continue;
         };
@@ -258,7 +252,12 @@ pub fn overlay(pixels: &mut PixelBuffer, lightning: &Lightning, t_seconds: f64) 
     if let Some(bolt) = active_bolt(&lightning.strikes, t_seconds, &lightning.params) {
         // Snapshot pre-bolt buffer for occlusion / halo blending.
         let base: Vec<crate::colorspace::Rgb> = pixels.pixels.clone();
-        draw_bolt_recursive(pixels, &base, bolt, 0);
+        // Reference coordinates to this buffer's pixels. A wider terminal stretches the bolt across the sky rather than pinning it to one corner.
+        let scale = (
+            pixels.width as f64 / BOLT_REF_WIDTH as f64,
+            pixels.height as f64 / BOLT_REF_HEIGHT as f64,
+        );
+        draw_bolt_recursive(pixels, &base, bolt, 0, scale);
     }
 }
 
@@ -276,14 +275,27 @@ fn draw_bolt_recursive(
     base: &[crate::colorspace::Rgb],
     bolt: &Bolt,
     depth: u32,
+    scale: (f64, f64),
 ) {
+    let to_buffer = |(x, y): (i32, i32)| {
+        (
+            (x as f64 * scale.0).round() as i32,
+            (y as f64 * scale.1).round() as i32,
+        )
+    };
     let pts = &bolt.points;
     for i in 0..pts.len().saturating_sub(1) {
-        draw_segment(pixels, base, pts[i], pts[i + 1], depth);
+        draw_segment(
+            pixels,
+            base,
+            to_buffer(pts[i]),
+            to_buffer(pts[i + 1]),
+            depth,
+        );
     }
     if depth < 2 {
         for fork in &bolt.forks {
-            draw_bolt_recursive(pixels, base, fork, depth + 1);
+            draw_bolt_recursive(pixels, base, fork, depth + 1, scale);
         }
     }
 }

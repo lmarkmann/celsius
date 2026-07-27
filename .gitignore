@@ -1,6 +1,18 @@
-/target
+debug/
+target/
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+rustc-ice-*.txt
+
+.idea/
+.vscode/
+.zed/
+*.swp
+
 out/
 .DS_Store
+.rumdl_cache
 
 # profiling / coverage artifacts
 perf.data
@@ -8,7 +20,3 @@ perf.data.old
 flamegraph.svg
 *.profraw
 mutants.out*/
-
-# editor scratch
-.idea/
-*.swp

@@ -1,8 +1,17 @@
+//! Forecast plus coordinates in, [`SkyState`] out. The synthesis layer.
+//!
+//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; visibility drives both haze and the analytic sky's turbidity.
+//!
+//! The judgement calls worth knowing. Cloud seeds mix `(lat, lon, day)` so a sky reshapes once per UTC day rather than every hour, which stops clouds boiling as you scrub the timeline. `compose_at` interpolates between forecast hours for scalars but snaps weather codes to the nearer hour, because a code is categorical and half of "thunderstorm" is not a thing. Wind direction becomes a lateral offset from the facing bearing, so rain leans the way the wind is actually blowing relative to the viewer.
+//!
+//! Times are UTC everywhere inside. Open-Meteo returns local strings under `timezone=auto`, so they are converted in at the boundary and back out only for display.
+
 use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
 use crate::lightning::Lightning;
+use crate::meteors::Meteors;
 use crate::scene::{
     Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, PrecipKind, Precipitation, SkyState,
     Stars, Sun,
@@ -16,9 +25,7 @@ use super::location::GeoResult;
 
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
 
-// Key hints from richest to a single `? help` floor. The TUI drops down this
-// list before sacrificing any footer weather data, then holds `? help` until
-// the too-small gate; `?` opens the overlay that lists every binding.
+// Key hints from richest to a single `? help` floor. The TUI drops down this list before sacrificing any footer weather data, then holds `? help` until the too-small gate; `?` opens the overlay that lists every binding.
 const KEYS_TIERS: [&str; 4] = [
     KEYS_HINT,
     "tab day   l location   ? help   q quit",
@@ -26,8 +33,7 @@ const KEYS_TIERS: [&str; 4] = [
     "? help",
 ];
 
-// The weather fields the sky is built from, already resolved (and possibly
-// interpolated between two hours) so the builder never indexes the forecast.
+// The weather fields the sky is built from, already resolved (and possibly interpolated between two hours) so the builder never indexes the forecast.
 struct HourSample {
     temperature_c: Option<f64>,
     reported_cover: Option<f64>,
@@ -81,8 +87,7 @@ impl HourSample {
     }
 }
 
-/// View options shared by every sky in a timeline: where the camera points,
-/// how dark the site is, and which model paints the daytime background.
+/// View options shared by every sky in a timeline: where the camera points, how dark the site is, and which model paints the daytime background.
 #[derive(Clone, Copy, Debug)]
 pub struct ComposeOpts {
     /// Azimuth at the horizontal center of the frame, in degrees (180 = south).
@@ -125,10 +130,7 @@ pub fn compose(
     ))
 }
 
-/// Build a sky for an exact instant, interpolating the weather fields and the
-/// sun/moon position between the bracketing forecast hours instead of snapping
-/// to the top of the hour. This is what makes the live "now" view show the sky
-/// for 14:23 rather than 14:00.
+/// Build a sky for an exact instant, interpolating the weather fields and the sun/moon position between the bracketing forecast hours instead of snapping to the top of the hour. This is what makes the live "now" view show the sky for 14:23 rather than 14:00.
 pub fn compose_at(
     forecast: &Forecast,
     location: &GeoResult,
@@ -149,8 +151,7 @@ pub fn compose_at(
     ))
 }
 
-// Locate the two forecast hours straddling target_unix and the 0..1 fraction
-// between them. Clamps to the ends when the target falls outside the range.
+// Locate the two forecast hours straddling target_unix and the 0..1 fraction between them. Clamps to the ends when the target falls outside the range.
 fn bracket_hours(
     forecast: &Forecast,
     target_unix: i64,
@@ -176,9 +177,9 @@ fn bracket_hours(
     Ok((h0, h0 + 1, frac))
 }
 
-// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km
-// in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
-fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
+// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
+/// Map visibility in metres to the turbidity range used by the analytic sky.
+pub fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
     let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
     (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
 }
@@ -225,8 +226,7 @@ fn build_sky(
         lon,
         day_ordinal,
     );
-    // A bright-but-clouded daytime sky needs its own horizon haze regardless of
-    // reported visibility; this matches the old CloudyDay palette regime.
+    // A bright-but-clouded daytime sky needs its own horizon haze regardless of reported visibility; this matches the old CloudyDay palette regime.
     let cloudy_day = sun_altaz.altitude > 3.0 && (0.50..0.80).contains(&total_cover);
     let haze = if cloudy_day {
         Some(Haze {
@@ -248,6 +248,15 @@ fn build_sky(
         center_az,
     );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
+    let meteors = build_meteors(
+        sun_altaz.altitude,
+        total_cover,
+        lat,
+        lon,
+        unix_utc,
+        center_az,
+        opts.bortle,
+    );
 
     let date_iso = utc_date_iso(unix_utc + offset);
     let sun_day = daily.and_then(|d| sun_day_for(d, &date_iso, offset));
@@ -257,17 +266,14 @@ fn build_sky(
         location, unix_utc, now_unix, offset, sample, sun_day, high_low,
     );
 
-    // Prototype: the analytic sky is daytime-only (Preetham's zenith formula
-    // breaks once the sun is below the horizon); twilight and night keep the
-    // palette gradient.
+    // Prototype: the analytic sky is daytime-only (Preetham's zenith formula breaks once the sun is below the horizon); twilight and night keep the palette gradient.
     let analytic_sky = (analytic && sun_altaz.altitude > 0.0).then(|| AnalyticSky {
         sun_alt: sun_altaz.altitude,
         sun_az: sun_altaz.azimuth,
         center_az,
         turbidity: turbidity_from_visibility(sample.visibility_m),
-        // Ramp in over the first 8 degrees of solar elevation so the model
-        // crossfades out of the palette through twilight, no seam at sunrise.
-        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0),
+        // Two things hold the model back. It ramps in over the first 8 degrees of solar elevation, so it crossfades out of the palette through twilight with no seam at sunrise. And it fades out under cloud, because Preetham describes a *clear* sky: run at full strength under an overcast deck it paints a clean blue-to-pale gradient and calls it a grey day. The overcast palette exists precisely for the sky you can actually see when the clear one is hidden.
+        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0) * (1.0 - total_cover).clamp(0.0, 1.0),
     });
 
     SkyState {
@@ -285,6 +291,7 @@ fn build_sky(
         moon,
         precipitation,
         lightning,
+        meteors,
         horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
         analytic: analytic_sky,
         wind_speed_kmh: sample.wind_speed.unwrap_or(0.0),
@@ -303,8 +310,7 @@ fn lerp_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
     }
 }
 
-// Interpolate along the shortest arc so 350 -> 10 crosses through 0, not back
-// through 180.
+// Interpolate along the shortest arc so 350 -> 10 crosses through 0, not back through 180.
 fn lerp_angle_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
     match (a, b) {
         (Some(x), Some(y)) => {
@@ -314,9 +320,6 @@ fn lerp_angle_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
         (some, None) | (None, some) => some,
     }
 }
-
-const SKY_W: u32 = 104;
-const SKY_H: u32 = 50;
 
 fn build_lightning(
     weather_code: Option<u32>,
@@ -335,14 +338,32 @@ fn build_lightning(
     let hour = unix_utc.div_euclid(3_600) as u64;
     let day_ordinal = unix_utc.div_euclid(86_400) as u64;
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, hour, 0x1167_8175]) as u32;
-    Some(Lightning::new(
-        seed, intensity, 3_600.0, with_bolts, SKY_W, SKY_H,
+    Some(Lightning::new(seed, intensity, 3_600.0, with_bolts))
+}
+
+// Meteors show on a dark, clear-enough sky: sun well below the horizon and not overcast. Seeded per (place, day) like the clouds and lightning.
+fn build_meteors(
+    sun_alt: f64,
+    total_cover: f64,
+    lat: f64,
+    lon: f64,
+    unix_utc: i64,
+    center_az: f64,
+    bortle: Option<u8>,
+) -> Option<Meteors> {
+    if sun_alt > -3.0 || total_cover > 0.6 {
+        return None;
+    }
+    let day_ordinal = unix_utc.div_euclid(86_400) as u64;
+    let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, 0x3A9F_C217]) as u32;
+    // ZHR counts the whole hemisphere; the frame holds about a third of it, and light pollution takes its share on top.
+    let rate_scale = astro::frame_solid_angle_fraction() * bortle::meteor_factor(bortle);
+    Some(Meteors::new(
+        seed, unix_utc, lat, lon, center_az, 3_600.0, rate_scale,
     ))
 }
 
-// Open-Meteo returns its time strings already in the location's local zone
-// (timezone=auto), so subtract the location's UTC offset to recover true UTC;
-// the whole internal pipeline then runs in UTC.
+// Open-Meteo returns its time strings already in the location's local zone (timezone=auto), so subtract the location's UTC offset to recover true UTC; the whole internal pipeline then runs in UTC.
 fn parse_hour_to_unix(time_str: &str, offset: i64) -> Result<i64, WeatherError> {
     let naive = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M")
         .map_err(|e| WeatherError::Decode(format!("hour timestamp '{time_str}': {e}")))?;
@@ -363,10 +384,7 @@ fn utc_date_iso(unix_utc: i64) -> String {
         .unwrap_or_default()
 }
 
-// Open-Meteo encodes polar day/night as sentinel values, not nulls:
-// polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00.
-// polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00.
-// Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
+// Open-Meteo encodes polar day/night as sentinel values, not nulls: polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00. polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00. Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
 fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDay> {
     let i = daily.time.iter().position(|d| d == date_iso)?;
     let dur = daily.daylight_duration.get(i).copied()?;
@@ -384,9 +402,7 @@ fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDa
     })
 }
 
-// The day's high/low for the date of the displayed hour, so a scrubbed future
-// hour shows that day's envelope, not today's. Both ends must be present or the
-// footer omits the H/L segment entirely (no half pair).
+// The day's high/low for the date of the displayed hour, so a scrubbed future hour shows that day's envelope, not today's. Both ends must be present or the footer omits the H/L segment entirely (no half pair).
 fn daily_high_low(daily: &DailyArrays, date_iso: &str) -> Option<(f64, f64)> {
     let i = daily.time.iter().position(|d| d == date_iso)?;
     let high = daily.temperature_2m_max.get(i).copied().flatten()?;
@@ -401,9 +417,7 @@ fn local_hhmm(unix_utc: i64, offset: i64) -> String {
         .unwrap_or_default()
 }
 
-// Arrows ↑ U+2191 / ↓ U+2193 are East-Asian-Width Ambiguous: width 1 in western
-// terminals (default), width 2 in CJK locales or when ambiguous-as-wide is set.
-// Column math elsewhere assumes width 1; revisit if that changes.
+// Arrows ↑ U+2191 / ↓ U+2193 are East-Asian-Width Ambiguous: width 1 in western terminals (default), width 2 in CJK locales or when ambiguous-as-wide is set. Column math elsewhere assumes width 1; revisit if that changes.
 fn format_sun_segment(sun_day: Option<&SunDay>, offset: i64) -> String {
     match sun_day {
         Some(SunDay::Times {
@@ -421,8 +435,9 @@ fn format_sun_segment(sun_day: Option<&SunDay>, offset: i64) -> String {
 }
 
 fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
-    let (x_frac, y_frac) = astro::to_sky_fracs(altaz, center_az);
-    let in_view = lateral_offset_deg(altaz.azimuth, center_az).abs() < 90.0;
+    // Behind the viewing plane there is no screen position at all; park the disc off-frame and let `visible` do the hiding.
+    let (x_frac, y_frac) = astro::to_sky_fracs(altaz, center_az).unwrap_or((-1.0, -1.0));
+    let in_view = astro::in_view(altaz, center_az);
     Sun {
         x_frac,
         y_frac,
@@ -432,11 +447,11 @@ fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
 }
 
 fn build_moon(state: &astro::MoonState, center_az: f64) -> Option<Moon> {
-    let (x_frac, y_frac) = astro::to_sky_fracs(&state.altaz, center_az);
-    let in_view = lateral_offset_deg(state.altaz.azimuth, center_az).abs() < 90.0;
+    let in_view = astro::in_view(&state.altaz, center_az);
     if state.altaz.altitude <= 0.0 || !in_view {
         return None;
     }
+    let (x_frac, y_frac) = astro::to_sky_fracs(&state.altaz, center_az)?;
     Some(Moon {
         x_frac,
         y_frac,
@@ -446,8 +461,7 @@ fn build_moon(state: &astro::MoonState, center_az: f64) -> Option<Moon> {
     })
 }
 
-// Warm horizon light on the sun's side, strongest at sunrise/sunset and gone by
-// full day or deep night. Cover damps it, since an overcast horizon has no glow.
+// Warm horizon light on the sun's side, strongest at sunrise/sunset and gone by full day or deep night. Cover damps it, since an overcast horizon has no glow.
 fn build_horizon_glow(altaz: &AltAz, center_az: f64, total_cover: f64) -> Option<HorizonGlow> {
     if lateral_offset_deg(altaz.azimuth, center_az).abs() >= 90.0 {
         return None;
@@ -464,7 +478,7 @@ fn build_horizon_glow(altaz: &AltAz, center_az: f64, total_cover: f64) -> Option
     if strength < 0.02 {
         return None;
     }
-    let (x_frac, _) = astro::to_sky_fracs(altaz, center_az);
+    let (x_frac, _) = astro::to_sky_fracs(altaz, center_az)?;
     Some(HorizonGlow {
         x_frac,
         rgb: [255, 138, 72],
@@ -499,10 +513,7 @@ fn build_stars(
     })
 }
 
-// Total sky cover. Prefer Open-Meteo's own `cloud_cover` (computed across all
-// levels); when it's missing, combine the three bands as independent occluders
-// (1 - product of clear fractions) rather than averaging them, so a single
-// fully-covered layer still reads as a fully-covered sky.
+// Total sky cover. Prefer Open-Meteo's own `cloud_cover` (computed across all levels); when it's missing, combine the three bands as independent occluders (1 - product of clear fractions) rather than averaging them, so a single fully-covered layer still reads as a fully-covered sky.
 fn total_cover(reported: Option<f64>, low: f64, mid: f64, high: f64) -> f64 {
     let cover = match reported {
         Some(pct) => pct / 100.0,
@@ -544,9 +555,7 @@ fn build_clouds(
     layers
 }
 
-// The low band carries the weather: showers and thunderstorms are convective
-// towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather
-// cumulus, and anything else is a flat stratus deck.
+// The low band carries the weather: showers and thunderstorms are convective towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather cumulus, and anything else is a flat stratus deck.
 fn low_cloud_kind(weather_code: u32, cover_low: f64) -> CloudKind {
     if (80..=82).contains(&weather_code) || (95..=99).contains(&weather_code) {
         CloudKind::Cumulonimbus
@@ -570,8 +579,7 @@ fn cloud_layer(
     }
     let threshold = 0.55 - 0.40 * cover;
     let cover_strength = 0.90 + 1.00 * (1.0 - cover);
-    // A stratus deck flattens into a solid lid as it approaches full cover, and
-    // widens vertically so the overcast fills the sky rather than a thin band.
+    // A stratus deck flattens into a solid lid as it approaches full cover, and widens vertically so the overcast fills the sky rather than a thin band.
     let flatten = if kind == CloudKind::Stratus {
         let f = ((cover - 0.70) / 0.25).clamp(0.0, 1.0);
         f * f * (3.0 - 2.0 * f)
@@ -642,9 +650,7 @@ fn build_precipitation(
     })
 }
 
-// Footer payload tiers, richest to poorest, dropping lowest-value first:
-// abbreviate wind (lose the word "wind"), then the wind value, then H/L, with
-// the condition word and temperature held longest. `temp` alone is the floor.
+// Footer payload tiers, richest to poorest, dropping lowest-value first: abbreviate wind (lose the word "wind"), then the wind value, then H/L, with the condition word and temperature held longest. `temp` alone is the floor.
 fn footer_tiers(
     temp: &str,
     high_low: Option<&str>,
@@ -698,8 +704,7 @@ fn build_chrome(
     let high_low = high_low.map(|(hi, lo)| format!("H{hi:.0} L{lo:.0}"));
     let footer = format!("{temp}  {word}   wind {compass} {speed}");
 
-    // ASCII one-liner for --plain: carries the place name, no degree sign.
-    // Grep- and pipe-friendly, distinct from the decorative footer.
+    // ASCII one-liner for --plain: carries the place name, no degree sign. Grep- and pipe-friendly, distinct from the decorative footer.
     let temp_ascii = sample
         .temperature_c
         .map(|t| format!("{t:.0}C"))
@@ -789,9 +794,7 @@ fn hash_lat_lon(lat: f64, lon: f64) -> u64 {
 pub fn error_sky(msg: &str) -> SkyState {
     let gradient = gradient_for(Palette::Night);
     let first_line = msg.lines().next().unwrap_or(msg);
-    // Truncate on a char boundary: error text carries user-supplied location
-    // labels, and a byte slice through a multibyte char would panic the one
-    // path that must never panic.
+    // Truncate on a char boundary: error text carries user-supplied location labels, and a byte slice through a multibyte char would panic the one path that must never panic.
     let footer = match first_line.char_indices().nth(72) {
         Some((cut, _)) => format!("{}...", &first_line[..cut]),
         None => first_line.to_string(),
@@ -820,6 +823,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         moon: None,
         precipitation: None,
         lightning: None,
+        meteors: None,
         horizon_glow: None,
         analytic: None,
         wind_speed_kmh: 0.0,
@@ -827,9 +831,7 @@ pub fn error_sky(msg: &str) -> SkyState {
     }
 }
 
-/// FNV-1a over the little-endian bytes of each part. Cloud, star and
-/// precipitation seeds must reproduce across toolchains; DefaultHasher's
-/// algorithm is explicitly not guaranteed between Rust releases.
+/// FNV-1a over the little-endian bytes of each part. Cloud, star and precipitation seeds must reproduce across toolchains; DefaultHasher's algorithm is explicitly not guaranteed between Rust releases.
 fn mix_seed(parts: &[u64]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for part in parts {
@@ -847,8 +849,7 @@ mod tests {
 
     #[test]
     fn mix_seed_is_stable_across_toolchains() {
-        // FNV-1a reference vectors, computed independently. If these move,
-        // every daily cloud/star/precip seed moves with them.
+        // FNV-1a reference vectors, computed independently. If these move, every daily cloud/star/precip seed moves with them.
         assert_eq!(mix_seed(&[]), 0xcbf2_9ce4_8422_2325);
         assert_eq!(mix_seed(&[0]), 0xa8c7_f832_281a_39c5);
         assert_eq!(mix_seed(&[1, 2]), 0x7717_9803_63c8_e066);
@@ -878,8 +879,7 @@ mod tests {
 
     #[test]
     fn format_label_uses_location_offset_not_machine() {
-        // 18:00Z is 02:00 the next local day at UTC+8; with "now" at the same
-        // instant the header reads the location's wall clock, not the machine's.
+        // 18:00Z is 02:00 the next local day at UTC+8; with "now" at the same instant the header reads the location's wall clock, not the machine's.
         let unix = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
         assert_eq!(format_label(unix, unix, 8 * 3600), "today 02:00");
         let next = unix + 86_400;
@@ -888,8 +888,7 @@ mod tests {
 
     #[test]
     fn error_sky_truncates_multibyte_text_without_panicking() {
-        // The two-byte ü starts at byte 71, so the old `&first_line[..72]`
-        // sliced through it and panicked the error path itself.
+        // The two-byte ü starts at byte 71, so the old `&first_line[..72]` sliced through it and panicked the error path itself.
         let msg = format!("{}ürich weather fetch failed", "Z".repeat(71));
         let sky = error_sky(&msg);
         assert!(sky.chrome.footer.ends_with("..."));
@@ -920,8 +919,7 @@ mod tests {
 
     #[test]
     fn total_cover_overcast_stratus_is_total() {
-        // 100% low stratus, nothing above: the union must read as fully covered,
-        // not the (1.0+0+0)/3 = 0.33 the old averaging produced.
+        // 100% low stratus, nothing above: the union must read as fully covered, not the (1.0+0+0)/3 = 0.33 the old averaging produced.
         assert!((total_cover(None, 1.0, 0.0, 0.0) - 1.0).abs() < 1e-9);
         // Two half-covered independent layers: 1 - 0.5*0.5 = 0.75.
         assert!((total_cover(None, 0.5, 0.5, 0.0) - 0.75).abs() < 1e-9);
@@ -976,8 +974,7 @@ mod tests {
                 rise_unix,
                 set_unix,
             }) => {
-                // 2026-04-11T00:00Z = 1_775_865_600 (per parse_hour_round_trip);
-                // +4h38m = +16_680, +18h14m = +65_640.
+                // 2026-04-11T00:00Z = 1_775_865_600 (per parse_hour_round_trip); +4h38m = +16_680, +18h14m = +65_640.
                 assert_eq!(rise_unix, 1_775_882_280);
                 assert_eq!(set_unix, 1_775_931_240);
             }

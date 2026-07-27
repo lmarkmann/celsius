@@ -1,3 +1,9 @@
+//! Seven hand-tuned sky palettes, chosen by sun altitude and cloud cover.
+//!
+//! Day, GoldenHour, Dawn, BlueHour and Night form a sequence down the sun's altitude; CloudyDay and Overcast override that sequence when cover is high enough, because a thick deck flattens the sky regardless of where the sun is.
+//!
+//! These stay useful even though a physical daytime model exists. The analytic sky is only valid while the sun is above the horizon, so twilight and night are still painted from these palettes, and the two crossfade rather than switching. They are also the fallback for `--sky palette` and the base for every authored scene.
+
 use crate::gradient::Gradient;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -99,9 +105,7 @@ pub(super) fn gradient_for(palette: Palette) -> Gradient {
     Gradient::from_rgb_stops(stops)
 }
 
-// Sun-altitude anchors for the clear-sky gradient. Between two anchors the
-// bracketing palettes are blended in Oklab, so the sky shifts continuously
-// through twilight instead of snapping when an altitude threshold is crossed.
+// Sun-altitude anchors for the clear-sky gradient. Between two anchors the bracketing palettes are blended in Oklab, so the sky shifts continuously through twilight instead of snapping when an altitude threshold is crossed.
 const CLEAR_ANCHORS: [(f64, Palette); 5] = [
     (-12.0, Palette::Night),
     (-7.5, Palette::BlueHour),
@@ -110,7 +114,8 @@ const CLEAR_ANCHORS: [(f64, Palette); 5] = [
     (12.0, Palette::Day),
 ];
 
-fn clear_sky_gradient(sun_alt_deg: f64) -> Gradient {
+/// Return the production clear-sky gradient for a solar altitude in degrees.
+pub fn clear_sky_gradient(sun_alt_deg: f64) -> Gradient {
     let (lo_alt, lo_pal) = CLEAR_ANCHORS[0];
     if sun_alt_deg <= lo_alt {
         return gradient_for(lo_pal);
@@ -130,10 +135,7 @@ fn clear_sky_gradient(sun_alt_deg: f64) -> Gradient {
     gradient_for(hi_pal)
 }
 
-/// Continuous sky gradient: clear-sky color by sun altitude, faded toward the
-/// cloudy-day then overcast looks as total cover rises. The cloud influence is
-/// scaled by a daylight factor so a cloudy night stays a night sky instead of
-/// turning daytime-gray.
+/// Continuous sky gradient: clear-sky color by sun altitude, faded toward the cloudy-day then overcast looks as total cover rises. The cloud influence is scaled by a daylight factor so a cloudy night stays a night sky instead of turning daytime-gray.
 pub(super) fn sky_gradient(sun_alt_deg: f64, total_cover: f64) -> Gradient {
     let clear = clear_sky_gradient(sun_alt_deg);
     let daylight = smoothstep01((sun_alt_deg + 3.0) / 9.0);
@@ -159,8 +161,7 @@ fn smoothstep01(x: f64) -> f64 {
 mod tests {
     use super::*;
 
-    // Sample a gradient at nine heights so a palette swap anywhere in the
-    // vertical profile, not just one stop, counts as a jump.
+    // Sample a gradient at nine heights so a palette swap anywhere in the vertical profile, not just one stop, counts as a jump.
     fn profile(g: &Gradient) -> [[f64; 3]; 9] {
         let mut prof = [[0.0; 3]; 9];
         for (i, slot) in prof.iter_mut().enumerate() {
@@ -182,8 +183,7 @@ mod tests {
 
     #[test]
     fn clear_sky_has_no_altitude_jump() {
-        // Sweep through every old threshold (-12, -3, 3, 10) in fine steps.
-        // A step-function palette swap would show up as a large profile jump.
+        // Sweep through every old threshold (-12, -3, 3, 10) in fine steps. A step-function palette swap would show up as a large profile jump.
         let mut prev = profile(&sky_gradient(-15.0, 0.0));
         let mut worst = 0.0_f64;
         let mut alt = -15.0;
@@ -193,9 +193,7 @@ mod tests {
             prev = cur;
             alt += 0.5;
         }
-        // A 0.5deg step rides the steepest anchor ramp (Night->BlueHour) at
-        // ~0.05; the old step function jumped by the full palette delta (>0.3)
-        // at a single threshold, so this bound separates ramp from jump.
+        // A 0.5deg step rides the steepest anchor ramp (Night->BlueHour) at ~0.05; the old step function jumped by the full palette delta (>0.3) at a single threshold, so this bound separates ramp from jump.
         assert!(
             worst < 0.08,
             "largest 0.5deg color step was {worst}, expected a smooth sweep"
@@ -204,8 +202,7 @@ mod tests {
 
     #[test]
     fn cover_fade_has_no_jump() {
-        // At full daylight, sweeping cover 0 -> 1 must stay continuous across the
-        // 0.5 cloudy-day / overcast hinge.
+        // At full daylight, sweeping cover 0 -> 1 must stay continuous across the 0.5 cloudy-day / overcast hinge.
         let mut prev = profile(&sky_gradient(40.0, 0.0));
         let mut worst = 0.0_f64;
         let mut cover = 0.0;

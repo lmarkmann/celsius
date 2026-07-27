@@ -38,9 +38,7 @@ fn geocoding_label_includes_country() {
 
 #[test]
 fn best_match_on_real_response_picks_most_populous() {
-    // Real Open-Meteo data: five "Hamburg" matches. best_match must return the
-    // German one (1.8M), and its label drops the redundant admin1 (the city is
-    // its own state) to read "Hamburg, Germany".
+    // Real Open-Meteo data: five "Hamburg" matches. best_match must return the German one (1.8M), and its label drops the redundant admin1 (the city is its own state) to read "Hamburg, Germany".
     let parsed: GeoResponse = serde_json::from_str(GEOCODING_HAMBURG).unwrap();
     let pick = celsius::weather::location::best_match(parsed.results).expect("a match");
     assert_eq!(pick.name, "Hamburg");
@@ -55,8 +53,7 @@ fn best_match_on_real_response_picks_most_populous() {
 
 #[test]
 fn rank_reorders_when_api_order_is_not_by_population() {
-    // The API's order is not population-sorted here: Grafton (11,527) is listed
-    // after the smaller Hamburg, Arkansas (2,791). rank must fix the tail.
+    // The API's order is not population-sorted here: Grafton (11,527) is listed after the smaller Hamburg, Arkansas (2,791). rank must fix the tail.
     let parsed: GeoResponse = serde_json::from_str(GEOCODING_HAMBURG).unwrap();
     let original: Vec<String> = parsed.results.iter().map(|r| r.label()).collect();
     let ranked = celsius::weather::location::rank(parsed.results);
@@ -83,8 +80,7 @@ fn forecast_response_parses_hamburg() {
     assert!((parsed.latitude - 53.56).abs() < 0.1);
     assert!((parsed.longitude - 10.0).abs() < 0.1);
     assert_eq!(parsed.timezone, "GMT");
-    // Fixture predates timezone=auto and carries no offset; serde defaults it to
-    // 0, so its UTC times survive the local->UTC boundary unchanged.
+    // Fixture predates timezone=auto and carries no offset; serde defaults it to 0, so its UTC times survive the local->UTC boundary unchanged.
     assert_eq!(parsed.utc_offset_seconds, 0);
     assert_eq!(parsed.hourly.len(), 6);
     assert_eq!(parsed.hourly.time[0], "2026-04-11T00:00");
@@ -159,8 +155,7 @@ fn compose_at_interpolates_between_hours() {
         elevation: None,
         population: None,
     };
-    // Halfway between 01:00 and 02:00 UTC. wind_speed_10m is 4.0 then 4.1, so the
-    // interpolated sky must read 4.05, proving it didn't snap to the top of hour.
+    // Halfway between 01:00 and 02:00 UTC. wind_speed_10m is 4.0 then 4.1, so the interpolated sky must read 4.05, proving it didn't snap to the top of hour.
     let t01 = 1_775_869_200; // 2026-04-11T01:00Z
     let mid = t01 + 1_800; // 01:30Z
     let opts = celsius::weather::ComposeOpts {
@@ -196,13 +191,7 @@ fn hamburg_geo() -> GeoResult {
     }
 }
 
-// 2026-04-11 in Hamburg: sunrise 04:38 UTC, sunset 18:14 (the fixture's daily
-// block), and a clear, cloudless, dry hourly block (weather_code 0, all cloud
-// cover 0, no precip). These two tests lock the forecast -> SkyState synthesis
-// at a pre-dawn hour and just after sunrise. The MT19937 determinism behind the
-// oracle makes every derived field reproducible, so exact assertions are safe;
-// chrome is checked case-insensitively so a later capitalization pass does not
-// make them brittle.
+// 2026-04-11 in Hamburg: sunrise 04:38 UTC, sunset 18:14 (the fixture's daily block), and a clear, cloudless, dry hourly block (weather_code 0, all cloud cover 0, no precip). These two tests lock the forecast -> SkyState synthesis at a pre-dawn hour and just after sunrise. The MT19937 determinism behind the oracle makes every derived field reproducible, so exact assertions are safe; chrome is checked case-insensitively so a later capitalization pass does not make them brittle.
 #[test]
 fn compose_at_locks_clear_night_mapping() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
@@ -252,9 +241,7 @@ fn compose_at_post_sunrise_attaches_analytic_sky() {
     let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, opts)
         .expect("compose_at on fixture");
 
-    // The sun is up (analytic attaches, stars gone), but the view faces south
-    // (center_az 180) and the just-risen sun is in the east, so it is out of
-    // frame: sun.visible is false even in daylight.
+    // The sun is up (analytic attaches, stars gone), but the view faces south (center_az 180) and the just-risen sun is in the east, so it is out of frame: sun.visible is false even in daylight.
     assert!(
         sky.analytic.is_some(),
         "daytime with analytic enabled attaches a Preetham sky"
@@ -266,10 +253,7 @@ fn compose_at_post_sunrise_attaches_analytic_sky() {
     );
 }
 
-// compose() (the hour-index entry point) only ran against the live API before;
-// the compose_at tests above cover the interpolating instant path. Lock the
-// hour-index path on the fixture's clear pre-dawn hour 0, and confirm it agrees
-// with compose_at at that same instant, where interpolation is a no-op.
+// compose() (the hour-index entry point) only ran against the live API before; the compose_at tests above cover the interpolating instant path. Lock the hour-index path on the fixture's clear pre-dawn hour 0, and confirm it agrees with compose_at at that same instant, where interpolation is a no-op.
 #[test]
 fn compose_locks_clear_night_via_hour_index() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
@@ -303,9 +287,7 @@ fn compose_locks_clear_night_via_hour_index() {
     assert!((sky.wind_speed_kmh - same.wind_speed_kmh).abs() < 1e-9);
 }
 
-// Live network smoke tests. Opt-in via `cargo test -- --ignored` so they
-// only run when a developer wants to verify the real Open-Meteo response
-// still matches our types. Never in CI.
+// Live network smoke tests. Opt-in via `cargo test -- --ignored` so they only run when a developer wants to verify the real Open-Meteo response still matches our types. Never in CI.
 
 #[test]
 #[ignore]
@@ -324,8 +306,7 @@ fn live_geocoding_returns_hamburg() {
 #[ignore]
 fn live_forecast_returns_168_hours() {
     let forecast = celsius::weather::forecast::fetch(53.5511, 9.9937).expect("live request");
-    // timezone=auto resolves the zone from the coordinates: Hamburg is Berlin,
-    // CET (+3600) in winter or CEST (+7200) under summer time.
+    // timezone=auto resolves the zone from the coordinates: Hamburg is Berlin, CET (+3600) in winter or CEST (+7200) under summer time.
     assert_eq!(forecast.timezone, "Europe/Berlin");
     assert!(
         [3600, 7200].contains(&forecast.utc_offset_seconds),
