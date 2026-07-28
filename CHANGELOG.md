@@ -2,6 +2,12 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-07-28
+
+### Docs
+
+- Write the 0.5.0 changelog entry properly ([#70](https://github.com/lmarkmann/celsius/pull/70))
+
 ## [0.5.0] - 2026-07-27
 
 The sky is now projected the way a camera sees it rather than the way a diagram does, meteors fall on clear nights, and the two parts of the renderer that no test could reach are covered ([#68](https://github.com/lmarkmann/celsius/pull/68), [#69](https://github.com/lmarkmann/celsius/pull/69)).
