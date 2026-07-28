@@ -4,9 +4,50 @@ All notable changes to celsius are recorded here. The format roughly follows [Ke
 
 ## [0.5.0] - 2026-07-27
 
+The sky is now projected the way a camera sees it rather than the way a diagram does, meteors fall on clear nights, and the two parts of the renderer that no test could reach are covered ([#68](https://github.com/lmarkmann/celsius/pull/68), [#69](https://github.com/lmarkmann/celsius/pull/69)).
+
+### Breaking
+
+- `celsius::haze` is gone; its one function folded into `celsius::render`.
+- `celsius::lightning::Lightning::new` takes four parameters instead of six.
+- `celsius::pigs` is no longer public. It documented where and when a hidden easter egg appears, and a public module published that to docs.rs.
+- `SkyState`, `Timeline`, and `Config` each gained a field, so struct literals over them need updating.
+- `--facing` no longer carries a fixed default of 180. Passing it explicitly behaves as before.
+
 ### Added
 
-- Atmospheric fidelity, coverage, and the 0.5.0 API ([#68](https://github.com/lmarkmann/celsius/pull/68))
+- **Meteors on clear nights.** A sporadic background plus the IMO working list of major showers, with each radiant placed from its J2000 coordinates and meteors streaming away from it. Faster showers read cooler and longer. Rates are scaled down twice: to the frame's share of the sky, because ZHR counts a whole hemisphere while every meteor is drawn inside the frame, and again for light pollution when `--bortle` is set.
+- **Built-in scene names.** `--scene high_noon_clear` works with no files on disk, so a `cargo install` or `brew install` user can see the locked scene library immediately. Paths still work.
+- **`--facing` persists** through `~/.config/celsius/config.toml`, alongside the location and Bortle class.
+- **A declared minimum supported Rust version**, `1.88`, found by bisection rather than copied from a dependency, with a CI job pinned to it so the floor cannot drift silently.
+
+### Changed
+
+- **The projection is rectilinear.** It was orthographic. Straight lines in the sky now stay straight on screen, which is what lets a meteor shower's fan be drawn as straight rays from its radiant. The frame covers 110 degrees horizontally and reaches about 69 degrees of altitude rather than the zenith.
+- **Gradients, cloud altitudes, haze, and star visibility are placed on an altitude axis** instead of on screen rows. The mapping from row to viewing angle is not linear, so a palette placed by row was being squashed into whatever slice of sky the field of view happened to cover.
+- **The analytic sky sets its exposure from the sky it is drawing**, surveying the frame rather than using one constant tuned against a clear noon zenith. Two skies are therefore no longer on a common absolute scale.
+- Linux release binaries are now `x86_64-unknown-linux-musl`. The gnu artifacts inherited the build runner's glibc and required `GLIBC_2.39`, so they failed to start on Ubuntu 22.04, Debian 12, RHEL 9, and Alpine, with no error message under our control. The release matrix drops from five targets to three; Intel Mac and ARM Linux fall back to a source build or `cargo install`. Every archive ships a `.sha256` sibling.
+- `crossterm` updated to 0.29.
+
+### Fixed
+
+- **The waning half of the moon was inverted.** The terminator expression was negated for phases past full instead of mirrored, which swaps lit for dark as well as left for right: a waning gibbous drew as a dark face inside a bright rim, and a waning crescent as an almost fully lit disc. The quarters are the one place the correct and incorrect forms agree, which is why it went unnoticed. Roughly half of all nights were affected.
+- **`--facing` defaulted to due south regardless of hemisphere**, putting every southern-hemisphere viewer at the back of their own sky, watching the half the sun never crosses. It now follows the sign of the latitude.
+- **Stars were scattered evenly across the screen rather than across the sky.** Under this projection a pixel near the edge of the frame covers less sky than one at the centre, so an even screen scatter crowded them into the corners by roughly six to one.
+- Cloud interiors read as flat colour, because thickness saturated to full opacity as soon as noise passed the layer threshold. Opacity is now Beer-Lambert and thickness also shades the cloud toward its shadow tone.
+- Wide terminals showed the same few cloud blobs, larger. Detail now resolves with buffer width, capped where the noise grid would tile.
+- The clear-sky model was painting overcast skies.
+- Meteor travel and streak length were measured on different bases, so how far a meteor flew depended on which direction it went.
+
+### Performance
+
+- **A night frame renders 26 percent faster**, 136 to 100 microseconds at the reference size. `render()` rebuilt the star field on every call, and placing stars on the sky means rejecting most candidates, so the rebuild had grown to a quarter of the frame while the TUI redrew an unchanged sky thirty times a second. It is now cached on the state that produces it.
+
+### Testing
+
+- `analytic_sky.rs` went from **0 to 100 percent** coverage and `lightning.rs` from 13 to 97. Both were unreachable by the golden oracle: scene files cannot express an analytic sky, and the tick overlays composite outside `render()`.
+- The new tests assert properties rather than hashing frames, because a hash only catches a change once someone chooses to relock, at which point the new value silently becomes the truth. The radiance peak must sit within a pixel of where the sun disc is drawn; a quiet lightning frame must be byte-identical to the sky beneath it.
+- Surviving mutants fell from 22 to 6, and the remaining six are equivalent mutants that cannot change behaviour. Chasing them is what surfaced the moon bug above.
 
 ## [0.4.7] - 2026-07-15
 
