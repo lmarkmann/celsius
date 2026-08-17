@@ -2,6 +2,21 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-17
+
+### Added
+
+- Sub-cell raster tiers, and take the dependencies out of the public API ([#74](https://github.com/lmarkmann/celsius/pull/74))
+- Add a curl | sh installer ([#72](https://github.com/lmarkmann/celsius/pull/72))
+
+### Docs
+
+- Write the 0.5.0 changelog entry properly ([#70](https://github.com/lmarkmann/celsius/pull/70))
+
+### Fixed
+
+- Close three reachable panics and the missing trait surface ([#73](https://github.com/lmarkmann/celsius/pull/73))
+
 ## [0.5.0] - 2026-07-27
 
 The sky is now projected the way a camera sees it rather than the way a diagram does, meteors fall on clear nights, and the two parts of the renderer that no test could reach are covered ([#68](https://github.com/lmarkmann/celsius/pull/68), [#69](https://github.com/lmarkmann/celsius/pull/69)).
