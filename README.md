@@ -12,12 +12,17 @@ Terminal weather as a first-person sky view. You look up into the sky you would 
 ## Install
 
 ```sh
-cargo install celsius
-# or, prebuilt binary, v0.2.0+
-cargo binstall -y celsius
+# prebuilt binary, no Rust toolchain needed
+curl -fsSL https://raw.githubusercontent.com/lmarkmann/celsius/main/install.sh | sh
 # or
 brew install lmarkmann/tap/celsius
+# or, prebuilt binary, v0.2.0+
+cargo binstall -y celsius
+# or, from source
+cargo install celsius
 ```
+
+The script needs `curl` or `wget`, verifies the SHA-256 published with the release, and installs into `$XDG_BIN_HOME`, or `~/.local/bin` if that is unset. Options go after `-s --`, so `| sh -s -- --install-dir ~/bin` or `| sh -s -- --version v0.5.0`. It covers arm64 macOS and x86_64 Linux; Intel Mac and ARM Linux ship no prebuilt binary, so use Homebrew or `cargo install` there and build from source.
 
 ## Usage
 

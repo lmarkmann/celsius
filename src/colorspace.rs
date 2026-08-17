@@ -6,7 +6,8 @@
 //!
 //! [`PixelBuffer`] is flat and row-major because the render loop indexes it once per pixel.
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+// Eq and Hash come free on a u8 triple and are what let a caller key a palette histogram by colour. Oklab cannot have either, since its fields are floats.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Rgb {
     pub r: u8,
     pub g: u8,
@@ -14,6 +15,7 @@ pub struct Rgb {
 }
 
 impl Rgb {
+    #[must_use]
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
@@ -29,19 +31,32 @@ pub struct Oklab {
 }
 
 impl Oklab {
+    #[must_use]
     pub const fn new(l: f64, a: f64, b: f64) -> Self {
         Self { l, a, b }
     }
 }
 
-#[derive(Clone)]
+// PartialEq is what lets a caller assert on a rendered frame. Debug is written out rather than derived because a derived one prints every pixel: the reference buffer alone is 5200 of them, so an assert_eq! failure would bury its own message. Dimensions plus a count is what a reader of a failed test actually needs.
+#[derive(Clone, PartialEq)]
 pub struct PixelBuffer {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<Rgb>,
 }
 
+impl std::fmt::Debug for PixelBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PixelBuffer")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("pixels", &format_args!("[{} pixels]", self.pixels.len()))
+            .finish()
+    }
+}
+
 impl PixelBuffer {
+    #[must_use]
     pub fn filled(width: usize, height: usize, color: Rgb) -> Self {
         Self {
             width,
@@ -51,11 +66,13 @@ impl PixelBuffer {
     }
 
     #[inline]
+    #[must_use]
     pub fn index(&self, x: usize, y: usize) -> usize {
         y * self.width + x
     }
 
     #[inline]
+    #[must_use]
     pub fn get(&self, x: usize, y: usize) -> Rgb {
         self.pixels[self.index(x, y)]
     }
@@ -86,6 +103,7 @@ fn lin_to_srgb(c: f64) -> u8 {
     (255.0 * v).round() as u8
 }
 
+#[must_use]
 pub fn rgb_to_oklab(r: f64, g: f64, b: f64) -> Oklab {
     let lr = srgb_to_lin(r);
     let lg = srgb_to_lin(g);
@@ -106,10 +124,12 @@ pub fn rgb_to_oklab(r: f64, g: f64, b: f64) -> Oklab {
     }
 }
 
+#[must_use]
 pub fn rgb_u8_to_oklab(r: u8, g: u8, b: u8) -> Oklab {
     rgb_to_oklab(r as f64, g as f64, b as f64)
 }
 
+#[must_use]
 pub fn oklab_to_rgb(lab: Oklab) -> Rgb {
     let l_ = lab.l + 0.396_337_777_4 * lab.a + 0.215_803_757_3 * lab.b;
     let m_ = lab.l - 0.105_561_345_8 * lab.a - 0.063_854_172_8 * lab.b;
@@ -130,6 +150,7 @@ pub fn oklab_to_rgb(lab: Oklab) -> Rgb {
     }
 }
 
+#[must_use]
 pub fn lerp_oklab(c1: Oklab, c2: Oklab, t: f64) -> Oklab {
     Oklab {
         l: c1.l + (c2.l - c1.l) * t,

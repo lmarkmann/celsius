@@ -71,6 +71,11 @@ pub fn load() -> Config {
     }
 }
 
+/// Write the config to `~/.config/celsius/config.toml`, creating the directory if it does not exist.
+///
+/// # Errors
+///
+/// [`ConfigError::Io`] if the directory cannot be created or the file cannot be written, and [`ConfigError::Serialize`] if the config does not serialize to TOML.
 pub fn save(cfg: &Config) -> Result<(), ConfigError> {
     let path = config_path();
     if let Some(parent) = path.parent() {

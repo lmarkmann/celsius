@@ -147,7 +147,18 @@ struct LayerRender {
     two_sigma_sq: f64,
 }
 
-/// One sky at the size the viewer sees it.
+/// One sky at the size the viewer sees it, in a fresh buffer of `width` by `height` pixels.
+///
+/// A caller that will fold the result back down into terminal cells wants [`render_supersampled`] instead.
+///
+/// ```
+/// # fn main() -> Result<(), celsius::scene::SceneError> {
+/// let sky = celsius::load_builtin_scene("high_noon_clear").expect("a built-in name")?;
+/// let pixels = celsius::render(&sky, 104, 50);
+/// assert_eq!((pixels.width, pixels.height), (104, 50));
+/// # Ok(())
+/// # }
+/// ```
 pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     render_supersampled(state, width, height, 1)
 }

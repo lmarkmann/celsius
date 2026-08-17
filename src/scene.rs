@@ -60,6 +60,7 @@ pub enum CloudKind {
     Cumulonimbus,
 }
 
+#[derive(Debug)]
 pub struct CloudMorphology {
     pub octaves: u32,
     pub edge: f64,
@@ -302,6 +303,18 @@ pub fn load_builtin_scene(name: &str) -> Option<Result<SkyState, SceneError>> {
         .map(|(builtin, text)| parse_scene(Path::new(builtin), text))
 }
 
+/// Load a scene from a TOML file on disk.
+///
+/// For the seven scenes compiled into the binary, use [`load_builtin_scene`] instead; it needs no file.
+///
+/// # Errors
+///
+/// [`SceneError::Read`] if the file cannot be read, [`SceneError::Parse`] if the TOML is malformed, [`SceneError::NoStem`] if the path has no file stem to name the scene by, and [`SceneError::EmptyGradient`] if the scene declares no gradient stops.
+///
+/// ```no_run
+/// let sky = celsius::load_scene("scenes/high_noon_clear.toml")?;
+/// # Ok::<(), celsius::scene::SceneError>(())
+/// ```
 pub fn load_scene(path: impl AsRef<Path>) -> Result<SkyState, SceneError> {
     let path = path.as_ref();
     let text = fs::read_to_string(path).map_err(|e| SceneError::Read {

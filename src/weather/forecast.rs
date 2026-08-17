@@ -77,6 +77,11 @@ pub struct DailyArrays {
     pub temperature_2m_min: Vec<Option<f64>>,
 }
 
+/// Fetch the 7-day, 168-hour forecast for a coordinate from Open-Meteo.
+///
+/// # Errors
+///
+/// [`WeatherError::Network`] if the request does not complete, [`WeatherError::Http`] for a non-success status, and [`WeatherError::Decode`] if the body is not the JSON shape this crate expects.
 pub fn fetch(lat: f64, lon: f64) -> Result<Forecast, WeatherError> {
     let mut response = super::AGENT
         .get(ENDPOINT)
