@@ -13,6 +13,17 @@ pub struct Noise {
     grid: Vec<f64>,
 }
 
+// Written out rather than derived: the grid is 3072 samples at the default size, and printing them buries whatever the reader was actually looking at.
+impl std::fmt::Debug for Noise {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Noise")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("grid", &format_args!("[{} samples]", self.grid.len()))
+            .finish()
+    }
+}
+
 impl Noise {
     pub fn new(seed: u64) -> Self {
         Self::with_size(seed, NOISE_WIDTH, NOISE_HEIGHT)
@@ -92,6 +103,13 @@ const LOWER_MASK: u32 = 0x7fff_ffff;
 pub struct Mt19937 {
     mt: [u32; MT_N],
     mti: usize,
+}
+
+// The 624-word state is not something a reader can interpret, and printing it invites comparing two generators by their internals rather than by their output. The position in the block is the one useful field.
+impl std::fmt::Debug for Mt19937 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mt19937").field("mti", &self.mti).finish()
+    }
 }
 
 impl Mt19937 {

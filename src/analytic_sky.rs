@@ -23,6 +23,7 @@ pub struct AnalyticSky {
     pub blend: f64,
 }
 
+#[derive(Debug)]
 struct Coeffs {
     a: f64,
     b: f64,
@@ -86,6 +87,7 @@ fn zenith_cy(t: f64, ts: f64) -> f64 {
 }
 
 /// Per-sky constants computed once, so the per-pixel loop only does the Perez ratio and the color conversion.
+#[derive(Debug)]
 pub struct Prepared {
     sun: [f64; 3],
     lum: Coeffs,
