@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use super::TuiError;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
@@ -53,6 +53,19 @@ pub struct Timeline {
     pub offset: i64,
     /// A fixed scene loaded from a file, rather than a forecast. There is no timeline to scrub, no place to look up and nothing to retry, so the keys that do those things are inert and the chrome stops advertising them. An error sky is deliberately *not* fixed: it holds one state too, but retrying is the whole point of it.
     pub fixed: bool,
+}
+
+// Written out rather than derived: `states` is up to 168 full skies, each with its own cloud layers and star field, so a derived Debug prints the entire forecast.
+impl std::fmt::Debug for Timeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Timeline")
+            .field("states", &format_args!("[{} skies]", self.states.len()))
+            .field("home", &self.home)
+            .field("coords", &self.coords)
+            .field("offset", &self.offset)
+            .field("fixed", &self.fixed)
+            .finish()
+    }
 }
 
 impl Timeline {
@@ -125,6 +138,17 @@ pub struct App<'a> {
     sky_dirty: bool,
     sky_cache: Option<SkyCache>,
     raster: RasterOpts,
+}
+
+// The borrowed timeline and the composed display sky are both large, and neither is what a reader of a failed assertion is looking for. Where the app is pointed is.
+impl std::fmt::Debug for App<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("App")
+            .field("index", &self.index)
+            .field("drift_paused", &self.drift_paused)
+            .field("egg_frame", &self.egg_frame)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> App<'a> {
@@ -229,6 +253,15 @@ pub struct Session {
     raster: RasterOpts,
 }
 
+// A terminal handle has no readable representation, so only the raster options are worth printing.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("raster", &self.raster)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Session {
     pub fn new() -> Self {
         Self::with_raster(RasterOpts::default())
@@ -242,14 +275,14 @@ impl Session {
         }
     }
 
-    pub fn run(&mut self, timeline: &Timeline) -> Result<RunOutcome> {
+    pub fn run(&mut self, timeline: &Timeline) -> Result<RunOutcome, TuiError> {
         event_loop(
             &mut self.terminal,
             &mut App::new(timeline).with_raster(self.raster),
         )
     }
 
-    pub fn search_location(&mut self) -> Result<Option<GeoResult>> {
+    pub fn search_location(&mut self) -> Result<Option<GeoResult>, TuiError> {
         search_loop(&mut self.terminal)
     }
 
@@ -259,7 +292,7 @@ impl Session {
         current: Option<&Timeline>,
         label: &str,
         rx: mpsc::Receiver<Timeline>,
-    ) -> Result<Option<Timeline>> {
+    ) -> Result<Option<Timeline>, TuiError> {
         await_loop(&mut self.terminal, current, label, rx, self.raster)
     }
 }
@@ -276,7 +309,7 @@ impl Drop for Session {
     }
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome> {
+fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcome, TuiError> {
     let mut last_tick = Instant::now();
     // Draw only when something changed. A still sky then sits idle instead of repainting 30 times a second, and a burst of resize events collapses into one repaint (see the drain loop below).
     let mut needs_redraw = true;
@@ -286,15 +319,15 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
                 let area = frame.area();
                 draw_frame(frame.buffer_mut(), area, app);
             })
-            .context("drawing frame")?;
+            .map_err(TuiError::terminal("drawing frame"))?;
             needs_redraw = false;
         }
 
         let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("polling input")? {
+        if event::poll(timeout).map_err(TuiError::terminal("polling input"))? {
             // Drain the whole queue before redrawing. During a window drag the terminal floods us with Resize events; coalescing them means one repaint at the final size, not one per intermediate size.
             loop {
-                match event::read().context("reading input")? {
+                match event::read().map_err(TuiError::terminal("reading input"))? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         app.handle_key(key);
                         if let Some(outcome) = app.outcome.take() {
@@ -305,7 +338,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<RunOutcom
                     Event::Resize(..) => needs_redraw = true,
                     _ => {}
                 }
-                if !event::poll(Duration::ZERO).context("polling input")? {
+                if !event::poll(Duration::ZERO).map_err(TuiError::terminal("polling input"))? {
                     break;
                 }
             }
@@ -353,7 +386,7 @@ fn await_loop(
     label: &str,
     rx: mpsc::Receiver<Timeline>,
     raster: RasterOpts,
-) -> Result<Option<Timeline>> {
+) -> Result<Option<Timeline>, TuiError> {
     let mut app = current.map(|t| App::new(t).with_raster(raster));
     let mut last_tick = Instant::now();
     let mut spinner = 0usize;
@@ -367,7 +400,7 @@ fn await_loop(
             }
             draw_loading_overlay(buf, area, label, SPINNER[spinner % SPINNER.len()]);
         })
-        .context("drawing loading screen")?;
+        .map_err(TuiError::terminal("drawing loading screen"))?;
 
         match rx.try_recv() {
             Ok(timeline) => return Ok(Some(timeline)),
@@ -377,8 +410,8 @@ fn await_loop(
         }
 
         let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("polling input")?
-            && let Event::Key(key) = event::read().context("reading input")?
+        if event::poll(timeout).map_err(TuiError::terminal("polling input"))?
+            && let Event::Key(key) = event::read().map_err(TuiError::terminal("reading input"))?
             && key.kind == KeyEventKind::Press
             && is_cancel_key(&key)
         {
@@ -471,7 +504,7 @@ impl SearchState {
     }
 }
 
-fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
+fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>, TuiError> {
     let (tx, rx) = mpsc::channel::<SearchReply>();
     let mut state = SearchState::new();
     loop {
@@ -479,7 +512,7 @@ fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
             let area = frame.area();
             draw_search(frame.buffer_mut(), area, &state);
         })
-        .context("drawing search")?;
+        .map_err(TuiError::terminal("drawing search"))?;
 
         // Accept only the newest query's reply; stale generations are dropped.
         while let Ok((generation, reply)) = rx.try_recv() {
@@ -498,7 +531,7 @@ fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
                     state.status = SearchStatus::Empty;
                     state.query_started = None;
                 }
-                Err(crate::weather::WeatherError::Network(_)) => {
+                Err(crate::weather::WeatherError::Network { .. }) => {
                     // A just-waking or flaky network gets retried until the grace window closes, then we settle on "no connection".
                     let within_grace = state
                         .query_started
@@ -539,8 +572,8 @@ fn search_loop(terminal: &mut DefaultTerminal) -> Result<Option<GeoResult>> {
             }
         }
 
-        if event::poll(SEARCH_POLL).context("polling input")?
-            && let Event::Key(key) = event::read().context("reading input")?
+        if event::poll(SEARCH_POLL).map_err(TuiError::terminal("polling input"))?
+            && let Event::Key(key) = event::read().map_err(TuiError::terminal("reading input"))?
             && key.kind == KeyEventKind::Press
         {
             match search_step(&key, &mut state) {

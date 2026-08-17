@@ -370,7 +370,7 @@ fn fetch_timeline(
     thread::spawn(move || {
         let _ = tx.send(timeline_or_error(&params, geo));
     });
-    session.await_timeline(current, &label, rx)
+    Ok(session.await_timeline(current, &label, rx)?)
 }
 
 /// Build the timeline for a location, collapsing any failure into an error sky so the loop (and the loading screen) always have something to show.

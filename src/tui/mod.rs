@@ -23,7 +23,32 @@ use crate::scene::SkyState;
 const FRAME_WIDTH: u32 = 104;
 const FRAME_HEIGHT: u32 = 50;
 
+/// Why the app stopped, when it was not the user asking it to.
+///
+/// Every failure the loops can reach is the terminal refusing to draw or to hand over an event, so one variant carries all of them along with the operation that was in flight. It is a concrete type rather than `anyhow::Result` because [`Session::run`] is public API: this way a caller can match on the failure, and anyhow stays out of the signature.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum TuiError {
+    #[error("{during}: {source}")]
+    Terminal {
+        during: &'static str,
+        #[source]
+        source: io::Error,
+    },
+}
+
+impl TuiError {
+    /// Label an I/O failure with the operation that was in flight, shaped for `map_err`.
+    fn terminal(during: &'static str) -> impl Fn(io::Error) -> Self {
+        move |source| Self::Terminal { during, source }
+    }
+}
+
 /// The flat-text surface for `--plain`, pipes, and `NO_COLOR`: one ASCII status line, no escape codes. Falls back to the decorative chrome for scene files, which carry no structured `status`.
+///
+/// # Errors
+///
+/// Propagates the write failure, so a closed pipe reaches the caller rather than becoming a panic.
 pub fn write_plain<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
     let line = if state.chrome.status.is_empty() {
         format!(
@@ -37,6 +62,11 @@ pub fn write_plain<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
     writeln!(out, "{}", line.trim())
 }
 
+/// One captured frame at the default geometry: half blocks at truecolor, the surface `--frame` pipes into a file.
+///
+/// # Errors
+///
+/// Propagates the write failure, so a closed pipe reaches the caller rather than becoming a panic.
 pub fn write_frame<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
     write_frame_with(state, out, RasterOpts::default())
 }
@@ -44,6 +74,10 @@ pub fn write_frame<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
 /// One captured frame at a chosen geometry and colour depth.
 ///
 /// A capture is not a live sky, so the two surfaces can reasonably differ here: this one is written once and read later, which is the case where error diffusion would beat the ordered dither the app needs.
+///
+/// # Errors
+///
+/// Propagates the write failure, so a closed pipe reaches the caller rather than becoming a panic.
 pub fn write_frame_with<W: Write>(
     state: &SkyState,
     out: &mut W,

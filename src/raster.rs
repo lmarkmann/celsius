@@ -1,6 +1,6 @@
 //! Pixels to terminal cells: which glyph a cell gets, and which two colours.
 //!
-//! [`render`](crate::render) produces square pixels. A terminal produces cells that are roughly twice as tall as they are wide and can carry exactly two colours. This module is the reduction between the two, and it has two knobs that are deliberately independent.
+//! [`render`](fn@crate::render) produces square pixels. A terminal produces cells that are roughly twice as tall as they are wide and can carry exactly two colours. This module is the reduction between the two, and it has two knobs that are deliberately independent.
 //!
 //! [`Geometry`] is how many sub-cell samples a cell is divided into, and [`ColorDepth`] is how many colours the terminal can actually show. They are separate because only one of them is detectable: a terminal will tell you its colour depth, directly or by reputation, but nothing will tell you whether its font has a glyph for U+2596. So colour depth is detected and geometry is chosen.
 //!

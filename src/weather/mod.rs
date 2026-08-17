@@ -33,10 +33,17 @@ pub(crate) static AGENT: LazyLock<Agent> = LazyLock::new(|| {
         .into()
 });
 
-#[derive(Debug, Clone, Error)]
+/// Why a fetch failed, split the way a caller's response differs: a network blip is worth retrying, a schema change is not.
+///
+/// `Network` keeps the underlying failure as its [`source`](std::error::Error::source) so a caller can walk the chain to a timeout or a refused connection. It is boxed rather than typed as `ureq::Error` deliberately: naming that type here would put ureq in this crate's public API, and a ureq major bump would then break every dependent. `Http` has no source because it is built from a status and a body rather than from an error, and `Decode` carries a message because its two producers are a JSON error and a timestamp parse error that need different context.
+#[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum WeatherError {
-    #[error("network: {0}")]
-    Network(String),
+    #[error("network: {source}")]
+    Network {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     #[error("http {status}: {body}")]
     Http { status: u16, body: String },
@@ -54,7 +61,9 @@ impl From<ureq::Error> for WeatherError {
                 body: String::new(),
             },
             ureq::Error::Json(e) => WeatherError::Decode(e.to_string()),
-            other => WeatherError::Network(other.to_string()),
+            other => WeatherError::Network {
+                source: Box::new(other),
+            },
         }
     }
 }
