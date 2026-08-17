@@ -18,6 +18,8 @@ exclude = [
   "scenes/dawn.toml",
   "scenes/cloudy_day.toml",
   "scripts/",
+  # Bootstraps a binary from GitHub Releases, so it is dead weight to anyone installing from the tarball, and shipping it would make every installer edit cut a release.
+  "install.sh",
   ".github/",
   "benches/",
   "tests/",
