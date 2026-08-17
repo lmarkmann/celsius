@@ -72,10 +72,13 @@ pub struct RasterOpts {
 /// The lattice is always isotropic, and that is load-bearing rather than tidy. Filling a quadrant grid directly would mean a buffer twice as wide but no taller, and five things in the renderer are sized in pixels rather than frame fractions: the sun and moon radii, the star halo, and precipitation's angle and count. On a grid like that the sun stops being a circle. Supersampling both axes leaves every one of them meaning what it meant.
 ///
 /// The resulting `2 * cols` by `4 * rows` lattice is also exactly the octant sub-cell grid, so the tier this build does not ship is a reducer away rather than a resampling change.
+///
+/// Every combination is spelled out rather than falling through a catch-all. A `_ => 2` arm here quietly gave quadrants and antialiased quadrants the same factor, so `--aa` produced byte-identical output under `--glyphs quad` and the flag did nothing at all. The factor a subpixel needs is set by its own shape: a half block is square and wants `2x2` per subpixel to average, a quadrant is a 1:2 sliver and wants `2x4`, which is a factor of 4 on both axes.
 pub const fn sample_factor(opts: RasterOpts) -> u32 {
     match (opts.geometry, opts.antialias) {
         (Geometry::HalfBlock, false) => 1,
-        _ => 2,
+        (Geometry::HalfBlock, true) | (Geometry::Quadrant, false) => 2,
+        (Geometry::Quadrant, true) => 4,
     }
 }
 

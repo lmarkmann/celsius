@@ -111,7 +111,7 @@ struct Cli {
     #[arg(long, value_enum, value_name = "half|quad", global = true)]
     glyphs: Option<Glyphs>,
 
-    /// Supersample the sky and average it back down, which smooths edges without needing any glyph the terminal does not already have. Costs four times the render. Falls back to config.
+    /// Supersample the sky and average it back down, which smooths edges without needing any glyph the terminal does not already have. Costs four times the render, or sixteen with `--glyphs quad`. Still rough: the moon, the star halo and rain streaks are sized in pixels and are not scaled yet, so they draw smaller here than at the default. Falls back to config.
     #[arg(long, global = true)]
     aa: bool,
 
