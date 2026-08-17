@@ -147,6 +147,16 @@ struct LayerRender {
     two_sigma_sq: f64,
 }
 
+/// Render a sky into a fresh buffer of `width` by `height` pixels.
+///
+/// ```
+/// # fn main() -> Result<(), celsius::scene::SceneError> {
+/// let sky = celsius::load_builtin_scene("high_noon_clear").expect("a built-in name")?;
+/// let pixels = celsius::render(&sky, 104, 50);
+/// assert_eq!((pixels.width, pixels.height), (104, 50));
+/// # Ok(())
+/// # }
+/// ```
 pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let w = width as usize;
     let h = height as usize;

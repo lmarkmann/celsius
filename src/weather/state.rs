@@ -109,6 +109,10 @@ impl Default for ComposeOpts {
 }
 
 /// Build a sky for the forecast hour at `hour_index`.
+///
+/// # Errors
+///
+/// [`WeatherError::Decode`] if the forecast's hour timestamp cannot be parsed. The hourly measurements are all optional, so a forecast with gaps in them still composes.
 pub fn compose(
     forecast: &Forecast,
     location: &GeoResult,
@@ -131,6 +135,10 @@ pub fn compose(
 }
 
 /// Build a sky for an exact instant, interpolating the weather fields and the sun/moon position between the bracketing forecast hours instead of snapping to the top of the hour. This is what makes the live "now" view show the sky for 14:23 rather than 14:00.
+///
+/// # Errors
+///
+/// [`WeatherError::Decode`] if the forecast timestamps bracketing `target_unix` cannot be parsed.
 pub fn compose_at(
     forecast: &Forecast,
     location: &GeoResult,
@@ -729,11 +737,11 @@ fn format_label(unix_utc: i64, now_unix: i64, offset: i64) -> String {
     let target = match Utc.timestamp_opt(unix_utc + offset, 0).single() {
         Some(dt) => dt,
         None => {
-            return Utc
-                .timestamp_opt(unix_utc, 0)
-                .unwrap()
-                .format("%Y-%m-%d %H:%M")
-                .to_string();
+            // The offset pushed the timestamp out of range, so fall back to bare UTC. If that is out of range too there is no date to format, and the raw epoch beats a panic in the branch whose whole job is not failing.
+            return match Utc.timestamp_opt(unix_utc, 0).single() {
+                Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+                None => format!("t={unix_utc}"),
+            };
         }
     };
     let now = Utc

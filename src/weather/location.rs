@@ -67,6 +67,11 @@ pub fn best_match(results: Vec<GeoResult>) -> Option<GeoResult> {
     rank(results).into_iter().next()
 }
 
+/// Look a place name up against Open-Meteo's geocoder. An empty result vector means no match, which is not an error.
+///
+/// # Errors
+///
+/// [`WeatherError::Network`] if the request does not complete, [`WeatherError::Http`] for a non-success status, and [`WeatherError::Decode`] if the body is not the JSON shape this crate expects.
 pub fn geocode(query: &str) -> Result<Vec<GeoResult>, WeatherError> {
     let count = CANDIDATE_LIMIT.to_string();
     let mut response = super::AGENT

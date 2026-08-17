@@ -28,6 +28,17 @@ impl Gradient {
         }
     }
 
+    /// Build a gradient from sRGB stops, converting each to Oklab once.
+    ///
+    /// `t` runs 0 at the top of the frame to 1 at the horizon, the same axis [`Gradient::sample`] reads.
+    ///
+    /// ```
+    /// use celsius::Gradient;
+    ///
+    /// let dusk = Gradient::from_rgb_stops(&[(0.0, [20, 24, 48]), (1.0, [198, 128, 92])]);
+    /// assert!(dusk.sample(1.0).l > dusk.sample(0.0).l, "the horizon is the lit end");
+    /// ```
+    #[must_use]
     pub fn from_rgb_stops(stops: &[(f64, [u8; 3])]) -> Self {
         Self {
             stops: stops
@@ -40,19 +51,26 @@ impl Gradient {
         }
     }
 
+    /// Colour at height `t`, clamped to the 0..1 axis.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the gradient has no stops. `load_scene` rejects that at parse time as [`SceneError::EmptyGradient`](crate::scene::SceneError::EmptyGradient), so it is reachable only by constructing a `Gradient` directly from an empty slice.
+    #[must_use]
     pub fn sample(&self, t: f64) -> Oklab {
         let t = t.clamp(0.0, 1.0);
         let stops = &self.stops;
-        for i in 0..stops.len() - 1 {
-            let s0 = stops[i];
-            let s1 = stops[i + 1];
+        // windows(2) rather than 0..len()-1: on an empty gradient that range underflows usize and the panic arrives as "attempt to subtract with overflow", which says nothing about the actual mistake.
+        let last = stops.last().expect("a gradient needs at least one stop");
+        for pair in stops.windows(2) {
+            let (s0, s1) = (pair[0], pair[1]);
             if t <= s1.t {
                 let span = s1.t - s0.t;
                 let k = if span > 0.0 { (t - s0.t) / span } else { 0.0 };
                 return lerp_oklab(s0.color, s1.color, k);
             }
         }
-        stops.last().copied().unwrap().color
+        last.color
     }
 
     /// Cross-fade toward another gradient in Oklab. Samples both at the union of their stop positions so neither gradient's keyframes are lost, which keeps a continuous sky transition smooth as `k` sweeps 0 -> 1.
@@ -70,7 +88,8 @@ impl Gradient {
             .chain(other.stops.iter())
             .map(|s| s.t)
             .collect();
-        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // total_cmp, not partial_cmp().unwrap(): a stop position of NaN is representable, and the unwrap turned it into a panic reachable from any caller holding two gradients.
+        ts.sort_by(|a, b| a.total_cmp(b));
         ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         let stops = ts
             .into_iter()
@@ -118,6 +137,32 @@ mod arithmetic_tests {
         let g = ramp();
         assert!((g.sample(-1.0).l - g.sample(0.0).l).abs() < 1e-12);
         assert!((g.sample(2.0).l - g.sample(1.0).l).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_single_stop_gradient_samples_that_stop() {
+        let flat = Gradient::from_rgb_stops(&[(0.0, [10, 20, 30])]);
+        let expected = rgb_u8_to_oklab(10, 20, 30);
+        assert_eq!(flat.sample(0.0), expected);
+        assert_eq!(flat.sample(1.0), expected);
+    }
+
+    /// Both of these were reachable from the public API and neither said so. `sample` indexed `0..len() - 1`, which underflows usize on an empty gradient and surfaced as "attempt to subtract with overflow"; `blend` sorted stop positions with `partial_cmp().unwrap()`, which a NaN position turns into a panic.
+    #[test]
+    #[should_panic(expected = "a gradient needs at least one stop")]
+    fn an_empty_gradient_says_what_is_wrong() {
+        let _ = Gradient::from_rgb_stops(&[]).sample(0.5);
+    }
+
+    #[test]
+    fn blend_survives_a_nan_stop_position() {
+        let sane = ramp();
+        let broken = Gradient::from_rgb_stops(&[(f64::NAN, [1, 2, 3]), (1.0, [4, 5, 6])]);
+        let mixed = sane.blend(&broken, 0.5);
+        assert!(
+            mixed.sample(0.5).l.is_finite(),
+            "a NaN stop must not poison every sample"
+        );
     }
 
     /// `blend` is what crossfades one palette into the next as the sun moves, and it had no test at all: seven mutants lived in it and `tint_toward_horizon`.
