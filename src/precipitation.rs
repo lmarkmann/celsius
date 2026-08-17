@@ -19,10 +19,18 @@ fn snow() -> Oklab {
 }
 
 pub fn overlay(pixels: &mut PixelBuffer, precip: &Precipitation) {
+    let area = pixels.width * pixels.height;
+    overlay_scaled(pixels, precip, area);
+}
+
+/// Rain over a buffer that may hold more samples than the viewer sees.
+///
+/// `logical_area` is the pixel count on screen, which is the buffer's own area unless the caller supersampled. The drop count has to follow it rather than the buffer, because the number of drops in shot is set by the weather and the field of view, not by how finely the frame is sampled. Counting off the buffer instead puts four times the rain in a 2x2 supersampled frame.
+pub fn overlay_scaled(pixels: &mut PixelBuffer, precip: &Precipitation, logical_area: usize) {
     let width = pixels.width;
     let height = pixels.height;
     let mut rng = Mt19937::init_by_array(&[precip.seed as u32]);
-    let n = (((width * height) as f64 * precip.intensity * 0.025) as usize).max(1);
+    let n = ((logical_area as f64 * precip.intensity * 0.025) as usize).max(1);
     let is_rain = precip.kind == PrecipKind::Rain;
     let angle_rad = precip.angle_deg.to_radians();
     let dx = angle_rad.tan();

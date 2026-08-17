@@ -15,8 +15,13 @@ pub use app::{App, draw_frame};
 
 use std::io::{self, Write};
 
-use crate::render::render;
+use crate::raster::{self, CellColor, RasterOpts};
+use crate::render::render_supersampled;
 use crate::scene::SkyState;
+
+/// The captured frame is a fixed 104x50, the size every scene constant is tuned against, rather than the terminal's own size.
+const FRAME_WIDTH: u32 = 104;
+const FRAME_HEIGHT: u32 = 50;
 
 /// The flat-text surface for `--plain`, pipes, and `NO_COLOR`: one ASCII status line, no escape codes. Falls back to the decorative chrome for scene files, which carry no structured `status`.
 pub fn write_plain<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
@@ -33,22 +38,44 @@ pub fn write_plain<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
 }
 
 pub fn write_frame<W: Write>(state: &SkyState, out: &mut W) -> io::Result<()> {
-    let pixels = render(state, 104, 50);
-    let width = pixels.width;
-    let rows = pixels.height / 2;
+    write_frame_with(state, out, RasterOpts::default())
+}
+
+/// One captured frame at a chosen geometry and colour depth.
+///
+/// A capture is not a live sky, so the two surfaces can reasonably differ here: this one is written once and read later, which is the case where error diffusion would beat the ordered dither the app needs.
+pub fn write_frame_with<W: Write>(
+    state: &SkyState,
+    out: &mut W,
+    opts: RasterOpts,
+) -> io::Result<()> {
+    let pixels = render_supersampled(
+        state,
+        FRAME_WIDTH,
+        FRAME_HEIGHT,
+        raster::sample_factor(opts),
+    );
+    let cols = FRAME_WIDTH as usize;
+    let rows = (FRAME_HEIGHT / 2) as usize;
     for row in 0..rows {
-        let y_top = row * 2;
-        let y_bot = y_top + 1;
-        for col in 0..width {
-            let top = pixels.pixels[y_top * width + col];
-            let bot = pixels.pixels[y_bot * width + col];
-            write!(
-                out,
-                "\x1b[38;2;{};{};{};48;2;{};{};{}m▀",
-                top.r, top.g, top.b, bot.r, bot.g, bot.b
-            )?;
+        for col in 0..cols {
+            let cell = raster::cell_at(&pixels, opts, col, row);
+            out.write_all(b"\x1b[")?;
+            write_sgr(out, 38, cell.fg)?;
+            out.write_all(b";")?;
+            write_sgr(out, 48, cell.bg)?;
+            out.write_all(b"m")?;
+            write!(out, "{}", cell.glyph)?;
         }
         out.write_all(b"\x1b[0m\n")?;
     }
     Ok(())
+}
+
+/// One colour's SGR parameters, without the introducer, so a cell can join its foreground and background into a single escape the way this surface always has.
+fn write_sgr<W: Write>(out: &mut W, base: u8, color: CellColor) -> io::Result<()> {
+    match color {
+        CellColor::Rgb(c) => write!(out, "{base};2;{};{};{}", c.r, c.g, c.b),
+        CellColor::Indexed(i) => write!(out, "{base};5;{i}"),
+    }
 }

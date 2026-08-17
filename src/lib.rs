@@ -24,6 +24,7 @@ pub mod noise;
 // Crate-private: the module documents where and when the egg appears, and a `pub` module publishes that to docs.rs. Only `tui::app` needs it.
 pub(crate) mod pigs;
 pub mod precipitation;
+pub mod raster;
 pub mod render;
 pub mod scene;
 pub mod stars;
@@ -33,5 +34,5 @@ pub mod weather;
 
 pub use colorspace::{Oklab, PixelBuffer, Rgb};
 pub use gradient::Gradient;
-pub use render::render;
+pub use render::{render, render_supersampled};
 pub use scene::{SkyState, builtin_names, load_builtin_scene, load_scene};

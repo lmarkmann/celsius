@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::raster::Geometry;
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("config io: {0}")]
@@ -15,7 +17,9 @@ pub enum ConfigError {
     Serialize(#[from] basic_toml::Error),
 }
 
+/// Not exhaustively constructible from outside: this is a settings bag that gains a field every time a preference becomes worth remembering, and each one of those was otherwise a breaking change for anyone writing a struct literal. Build it from `Config::default()` and assign.
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct Config {
     // bortle and facing are scalars and must serialize before `location`, which becomes a [location] table; TOML requires every bare key before the first table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,6 +27,11 @@ pub struct Config {
     /// Compass bearing to face, when the hemisphere default is not what the viewer wants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facing: Option<f64>,
+    /// Sub-cell glyph family. Persisted because whether your font has the quadrants is a fact about your setup; colour depth deliberately is not, since a config file gets read over ssh and from other terminals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyphs: Option<Geometry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aa: Option<bool>,
     pub location: Option<LocationPref>,
 }
 
@@ -86,8 +95,7 @@ mod tests {
             location: Some(LocationPref::Name {
                 name: "Hamburg".into(),
             }),
-            bortle: None,
-            facing: None,
+            ..Config::default()
         };
         let back = roundtrip(&cfg);
         assert!(matches!(
@@ -105,8 +113,7 @@ mod tests {
                 lon: 9.99,
                 name: Some("Hamburg, Germany".into()),
             }),
-            bortle: None,
-            facing: None,
+            ..Config::default()
         };
         let back = roundtrip(&cfg);
         match back.location {
@@ -142,11 +149,13 @@ mod tests {
     }
 
     #[test]
-    fn bortle_facing_and_location_together_roundtrip() {
-        // Regression: `location` serializes to a [location] table, so every bare key must come first or basic_toml rejects it with "values must be emitted before tables" and save() fails.
+    fn every_scalar_and_location_together_roundtrip() {
+        // Regression: `location` serializes to a [location] table, so every bare key must come first or basic_toml rejects it with "values must be emitted before tables" and save() fails. Every scalar is set here rather than just the ones that first hit it, so adding another one below `location` fails here rather than at the next save.
         let cfg = Config {
             bortle: Some(5),
             facing: Some(0.0),
+            glyphs: Some(Geometry::Quadrant),
+            aa: Some(true),
             location: Some(LocationPref::Name {
                 name: "Hamburg".into(),
             }),
@@ -154,6 +163,8 @@ mod tests {
         let back = roundtrip(&cfg);
         assert_eq!(back.bortle, Some(5));
         assert_eq!(back.facing, Some(0.0));
+        assert_eq!(back.glyphs, Some(Geometry::Quadrant));
+        assert_eq!(back.aa, Some(true));
         assert!(matches!(
             back.location,
             Some(LocationPref::Name { name }) if name == "Hamburg"

@@ -26,7 +26,8 @@ use crate::colorspace::PixelBuffer;
 use crate::lightning;
 use crate::meteors;
 use crate::pigs;
-use crate::render::render;
+use crate::raster::{self, RasterOpts};
+use crate::render::render_supersampled;
 use crate::scene::{Chrome, SkyState};
 use crate::tui::widget::SkyWidget;
 use crate::weather::location::{GeoResult, geocode, rank};
@@ -123,6 +124,7 @@ pub struct App<'a> {
     outcome: Option<RunOutcome>,
     sky_dirty: bool,
     sky_cache: Option<SkyCache>,
+    raster: RasterOpts,
 }
 
 impl<'a> App<'a> {
@@ -141,7 +143,14 @@ impl<'a> App<'a> {
             outcome: None,
             sky_dirty: true,
             sky_cache: None,
+            raster: RasterOpts::default(),
         }
+    }
+
+    /// Draw at something other than the default half blocks at truecolor. A builder rather than an argument to `new`, so the many call sites that do not care about geometry stay as they are.
+    pub fn with_raster(mut self, opts: RasterOpts) -> Self {
+        self.raster = opts;
+        self
     }
 
     /// Whether the flying-pigs egg should show: at Kowloon Tong and the hour on screen inside the 01:28-02:10 local-time window. Keyed on the displayed sky's instant, so scrubbing (or `--at`) into the window turns it on and scrubbing out turns it off.
@@ -217,17 +226,27 @@ impl<'a> App<'a> {
 /// Owns the terminal for one interactive run: a single alternate-screen enter on `new`, a single leave on `Drop`. The live sky, the location search, and the loading screen all draw to this one surface, so the view never tears down and flashes the shell between them, nor sits bare while a forecast fetches.
 pub struct Session {
     terminal: DefaultTerminal,
+    raster: RasterOpts,
 }
 
 impl Session {
     pub fn new() -> Self {
+        Self::with_raster(RasterOpts::default())
+    }
+
+    /// Draw at something other than the default half blocks at truecolor. A second constructor rather than an argument to `new`, so adding this does not break anyone already calling it.
+    pub fn with_raster(raster: RasterOpts) -> Self {
         Self {
             terminal: ratatui::init(),
+            raster,
         }
     }
 
     pub fn run(&mut self, timeline: &Timeline) -> Result<RunOutcome> {
-        event_loop(&mut self.terminal, &mut App::new(timeline))
+        event_loop(
+            &mut self.terminal,
+            &mut App::new(timeline).with_raster(self.raster),
+        )
     }
 
     pub fn search_location(&mut self) -> Result<Option<GeoResult>> {
@@ -241,7 +260,7 @@ impl Session {
         label: &str,
         rx: mpsc::Receiver<Timeline>,
     ) -> Result<Option<Timeline>> {
-        await_loop(&mut self.terminal, current, label, rx)
+        await_loop(&mut self.terminal, current, label, rx, self.raster)
     }
 }
 
@@ -333,8 +352,9 @@ fn await_loop(
     current: Option<&Timeline>,
     label: &str,
     rx: mpsc::Receiver<Timeline>,
+    raster: RasterOpts,
 ) -> Result<Option<Timeline>> {
-    let mut app = current.map(App::new);
+    let mut app = current.map(|t| App::new(t).with_raster(raster));
     let mut last_tick = Instant::now();
     let mut spinner = 0usize;
     loop {
@@ -676,8 +696,10 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
     let egg = app.egg_active();
     let egg_frame = app.egg_frame;
 
+    // Logical pixels, the size the viewer sees. The cached buffer may hold more samples than that, but the key is the size on screen, which is what a resize changes.
     let px_width = sky_area.width as u32;
     let px_height = (sky_area.height as u32) * 2;
+    let factor = raster::sample_factor(app.raster);
     let cache = match &mut app.sky_cache {
         Some(c) if !app.sky_dirty && c.width == px_width && c.height == px_height => c,
         slot => {
@@ -685,7 +707,7 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
             slot.insert(SkyCache {
                 width: px_width,
                 height: px_height,
-                pixels: render(&app.display, px_width, px_height),
+                pixels: render_supersampled(&app.display, px_width, px_height, factor),
             })
         }
     };
@@ -701,10 +723,15 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
         if egg {
             pigs::overlay(&mut pixels, egg_frame);
         }
-        SkyWidget { pixels: &pixels }.render(sky_area, buf);
+        SkyWidget {
+            pixels: &pixels,
+            opts: app.raster,
+        }
+        .render(sky_area, buf);
     } else {
         SkyWidget {
             pixels: &cache.pixels,
+            opts: app.raster,
         }
         .render(sky_area, buf);
     }
@@ -1413,6 +1440,31 @@ mod tests {
             first,
             "a dirty frame must re-render and pick up the moved clouds"
         );
+    }
+
+    #[test]
+    fn every_geometry_draws_at_the_size_its_lattice_asks_for() {
+        // SkyWidget's debug asserts are the contract between what draw_sky renders and what the widget expects to fold back down. An odd terminal size is deliberate: it catches a factor that only divides evenly.
+        for opts in [
+            RasterOpts::default(),
+            RasterOpts {
+                geometry: raster::Geometry::Quadrant,
+                ..RasterOpts::default()
+            },
+            RasterOpts {
+                antialias: true,
+                ..RasterOpts::default()
+            },
+        ] {
+            let tl = timeline();
+            let mut app = App::new(&tl).with_raster(opts);
+            let mut term = Terminal::new(TestBackend::new(81, 41)).unwrap();
+            term.draw(|f| {
+                let area = f.area();
+                draw_sky(f.buffer_mut(), area, &mut app);
+            })
+            .unwrap();
+        }
     }
 
     #[test]
