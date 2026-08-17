@@ -11,11 +11,15 @@ wip_scenes := "dawn cloudy_day"
 default: check
 
 # Fast static checks: fmt + clippy on both feature sets (mirrors CI's fmt/clippy steps).
+# cargo doc is here rather than in CI because nothing in CI builds the docs at all, so
+# `build.warnings = "deny"` was gating only whoever happened to run it locally, and a
+# broken intra-doc link reached a branch undetected. In `check` it runs on every commit.
 check:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo clippy --all-targets --features png -- -D warnings
     cargo clippy -p celsius-lab --all-targets -- -D warnings
+    cargo doc --no-deps --features png
 
 # Everything the CI test job runs, before pushing (dependency policy is separate: `just policy`).
 ci: check

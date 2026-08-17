@@ -147,7 +147,9 @@ struct LayerRender {
     two_sigma_sq: f64,
 }
 
-/// Render a sky into a fresh buffer of `width` by `height` pixels.
+/// One sky at the size the viewer sees it, in a fresh buffer of `width` by `height` pixels.
+///
+/// A caller that will fold the result back down into terminal cells wants [`render_supersampled`] instead.
 ///
 /// ```
 /// # fn main() -> Result<(), celsius::scene::SceneError> {
@@ -158,11 +160,23 @@ struct LayerRender {
 /// # }
 /// ```
 pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
+    render_supersampled(state, width, height, 1)
+}
+
+/// The same sky at `factor` samples per pixel on each axis, for a caller that will fold the result back down into terminal cells.
+///
+/// `width` and `height` stay the logical size, and the buffer comes back `factor` times larger on each axis. Keeping the two apart is the point. How much cloud detail can be resolved, and how many raindrops are in shot, are properties of the display rather than of the sample grid; feed either one the sample count and a supersampled frame gets more cloud structure and more rain than the same sky at the same size. That reads on screen as a rendering fault and is a units fault.
+///
+/// Still counted in pixels rather than frame fractions, and so shrinking as `factor` rises: the moon radius, the star halo, and precipitation's streak length. The sun radius is scaled below; those three are not, yet.
+pub fn render_supersampled(state: &SkyState, width: u32, height: u32, factor: u32) -> PixelBuffer {
+    // Both read the logical size, before the shadowing below puts every other use of `width` and `height` in buffer pixels.
+    let extra_detail = detail_octaves(width);
+    let logical_area = (width * height) as usize;
+    let (width, height) = (width * factor, height * factor);
+
     let w = width as usize;
     let h = height as usize;
     let mut pixels = PixelBuffer::filled(w, h, Rgb::BLACK);
-
-    let extra_detail = detail_octaves(width);
     let cloud_layers: Vec<LayerRender> = state
         .clouds
         .iter()
@@ -198,7 +212,8 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     let sun = &state.sun;
     let sun_px = sun.x_frac * width as f64;
     let sun_py = sun.y_frac * height as f64;
-    let sun_r = sun.radius;
+    // A scene authors the disc in pixels, so supersampling has to grow it or the sun comes out smaller than the same sky rendered directly.
+    let sun_r = sun.radius * f64::from(factor);
     let sun_disc = sun_disc_color();
 
     // Prototype: when an analytic sky is attached, its Preetham radiance field replaces the vertical gradient as the background. Prepared once here; the per-pixel cost is one Perez ratio plus a color conversion.
@@ -349,7 +364,7 @@ pub fn render(state: &SkyState, width: u32, height: u32) -> PixelBuffer {
     }
 
     if let Some(p) = state.precipitation.as_ref() {
-        precipitation::overlay(&mut pixels, p);
+        precipitation::overlay_scaled(&mut pixels, p, logical_area);
     }
 
     pixels

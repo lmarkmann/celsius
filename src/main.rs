@@ -13,6 +13,7 @@ use clap::Subcommand;
 use clap::builder::styling::{AnsiColor, Styles};
 
 use celsius::config::{self, LocationPref};
+use celsius::raster::{ColorDepth, Geometry, RasterOpts, detect_depth};
 use celsius::tui::{RunOutcome, Timeline};
 use celsius::weather::{ComposeOpts, compose, compose_at, error_sky, forecast, location};
 use celsius::{SkyState, builtin_names, load_builtin_scene, load_scene, tui};
@@ -106,6 +107,18 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = SkyModel::Analytic, global = true)]
     sky: SkyModel,
 
+    /// Sub-cell glyph family. `half` (default) draws `▀` and works in every terminal. `quad` adds the U+2596 quadrants for finer horizontal placement, and needs a font that has them, which nothing can detect for you. Falls back to config.
+    #[arg(long, value_enum, value_name = "half|quad", global = true)]
+    glyphs: Option<Glyphs>,
+
+    /// Supersample the sky and average it back down, which smooths edges without needing any glyph the terminal does not already have. Costs four times the render, or sixteen with `--glyphs quad`. Still rough: the moon, the star halo and rain streaks are sized in pixels and are not scaled yet, so they draw smaller here than at the default. Falls back to config.
+    #[arg(long, global = true)]
+    aa: bool,
+
+    /// Colour depth to emit. `auto` (default) trusts COLORTERM and knows which Apple Terminal builds predate truecolor. Not persisted: this is a property of the terminal you are in, not of you.
+    #[arg(long, value_enum, default_value_t = Colors::Auto, value_name = "auto|true|256", global = true)]
+    colors: Colors,
+
     #[cfg(feature = "png")]
     #[command(subcommand)]
     command: Option<Command>,
@@ -115,6 +128,41 @@ struct Cli {
 enum SkyModel {
     Palette,
     Analytic,
+}
+
+/// The CLI spelling of `Geometry`. Kept separate so the library type does not grow clap derives, and named for what the user types rather than for what it selects.
+#[derive(Clone, Copy, PartialEq, clap::ValueEnum)]
+enum Glyphs {
+    Half,
+    Quad,
+}
+
+impl From<Glyphs> for Geometry {
+    fn from(g: Glyphs) -> Self {
+        match g {
+            Glyphs::Half => Geometry::HalfBlock,
+            Glyphs::Quad => Geometry::Quadrant,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, clap::ValueEnum)]
+enum Colors {
+    Auto,
+    True,
+    #[value(name = "256")]
+    Indexed256,
+}
+
+impl Colors {
+    /// Only `auto` asks the environment. An explicit choice is the user overruling that, which is the escape hatch for every terminal the detection does not know about.
+    fn depth(self) -> ColorDepth {
+        match self {
+            Colors::Auto => detect_depth(),
+            Colors::True => ColorDepth::True,
+            Colors::Indexed256 => ColorDepth::Indexed256,
+        }
+    }
 }
 
 #[cfg(feature = "png")]
@@ -176,11 +224,27 @@ fn resolve_scene(arg: &str) -> Result<SkyState> {
     load_scene(arg).with_context(|| format!("loading scene {arg}"))
 }
 
+/// How to draw: the flag, then the config, then the default.
+///
+/// Geometry persists and colour depth does not, and the asymmetry is deliberate. Whether your font has the quadrants is a fact about your setup that is worth remembering; which colours the terminal can take is a fact about the terminal you happen to be in, and the same config file gets read over ssh and from a different emulator.
+fn raster_opts(cli: &Cli) -> RasterOpts {
+    let saved = config::load();
+    RasterOpts {
+        geometry: cli
+            .glyphs
+            .map(Geometry::from)
+            .or(saved.glyphs)
+            .unwrap_or_default(),
+        depth: cli.colors.depth(),
+        antialias: cli.aa || saved.aa.unwrap_or(false),
+    }
+}
+
 /// Write one state non-interactively and exit. A broken pipe (`celsius | head`) is a normal way to stop reading, not an error, so it maps to success.
-fn write_oneshot(state: &SkyState, mode: &OutputMode) -> Result<()> {
+fn write_oneshot(state: &SkyState, mode: &OutputMode, opts: RasterOpts) -> Result<()> {
     let mut out = BufWriter::new(stdout().lock());
     let written = match mode {
-        OutputMode::Frame => tui::write_frame(state, &mut out),
+        OutputMode::Frame => tui::write_frame_with(state, &mut out, opts),
         _ => tui::write_plain(state, &mut out),
     };
     match written.and_then(|()| out.flush()) {
@@ -213,9 +277,9 @@ fn main() -> Result<()> {
         let state = resolve_scene(scene)?;
         let mode = output_mode(&cli);
         if !matches!(mode, OutputMode::Tui) {
-            return write_oneshot(&state, &mode);
+            return write_oneshot(&state, &mode, raster_opts(&cli));
         }
-        let mut session = tui::Session::new();
+        let mut session = tui::Session::with_raster(raster_opts(&cli));
         session
             .run(&Timeline::scene(state))
             .context("running tui")?;
@@ -230,12 +294,12 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow!("no location set; pass -l NAME or --lat/--lon"))?;
         let timeline = build_live_timeline(&FetchParams::from(&cli), &location)
             .context("building forecast")?;
-        return write_oneshot(&timeline.states[timeline.home], &mode);
+        return write_oneshot(&timeline.states[timeline.home], &mode, raster_opts(&cli));
     }
 
     // Live TUI: one continuous terminal session. Forecasts fetch on a background thread behind a loading screen, so the sky never drops to a bare shell while a city loads. A fetch failure becomes an error sky retryable with `r`.
     let params = FetchParams::from(&cli);
-    let mut session = tui::Session::new();
+    let mut session = tui::Session::with_raster(raster_opts(&cli));
     let result = run_tui(&mut session, &cli, &params);
     // Drop the session (restoring the terminal) before any error is printed, so it lands on the normal screen rather than inside the alternate one.
     drop(session);
@@ -306,7 +370,7 @@ fn fetch_timeline(
     thread::spawn(move || {
         let _ = tx.send(timeline_or_error(&params, geo));
     });
-    session.await_timeline(current, &label, rx)
+    Ok(session.await_timeline(current, &label, rx)?)
 }
 
 /// Build the timeline for a location, collapsing any failure into an error sky so the loop (and the loading screen) always have something to show.

@@ -18,6 +18,7 @@ use crate::lightning::Lightning;
 use crate::meteors::Meteors;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SceneError {
     #[error("reading {path}: {source}")]
     Read {
