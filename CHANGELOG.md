@@ -4,18 +4,32 @@ All notable changes to celsius are recorded here. The format roughly follows [Ke
 
 ## [0.6.0] - 2026-08-17
 
+A `curl | sh` installer, the scaffolding for sub-cell glyph tiers, and a one-time pass to get other people's types out of this crate's public API ([#72](https://github.com/lmarkmann/celsius/pull/72), [#73](https://github.com/lmarkmann/celsius/pull/73), [#74](https://github.com/lmarkmann/celsius/pull/74)).
+
+The breaking changes are concentrated deliberately. The raster work added fields to `Config` and so forced a minor release on its own, which made this the cheapest moment to clear the rest of the error-type backlog rather than break dependents twice.
+
+### Breaking
+
+- `celsius::terminal::encode_png` and `write_png` return `TerminalError` instead of `image::ImageError`. `image` is a 0.x crate, so naming its error type here made every `image` release a breaking change for every dependent of celsius. Nothing in CI could catch that: cargo-semver-checks compares this crate against itself with one version of each dependency resolved for both sides, so the break was created by someone else's release and delivered to your build.
+- `WeatherError` no longer derives `Clone`, and `Network` is a struct variant. It stringified its cause, so `source()` returned `None` on every variant and a caller could not tell a refused connection from a timeout. `Clone` was what forced that, and nothing was cloning it. Match arms become `WeatherError::Network { .. }`, and the cause is now reachable through `std::error::Error::source`.
+- `WeatherError` and `SceneError` are `#[non_exhaustive]`, so a match on either from outside the crate needs a wildcard arm. This is the last time adding a variant to them will be a breaking change.
+- `Config` is `#[non_exhaustive]` and gained `glyphs` and `aa`, so struct literals over it need updating.
+- `celsius::tui::Session::run`, `search_location` and `await_timeline` return `TuiError` instead of `anyhow::Result`. An `anyhow::Error` in a public signature is one a caller cannot match on.
+- `WeatherError` is no longer `UnwindSafe` or `RefUnwindSafe`, which follows from holding a boxed source.
+
 ### Added
 
-- Sub-cell raster tiers, and take the dependencies out of the public API ([#74](https://github.com/lmarkmann/celsius/pull/74))
-- Add a curl | sh installer ([#72](https://github.com/lmarkmann/celsius/pull/72))
-
-### Docs
-
-- Write the 0.5.0 changelog entry properly ([#70](https://github.com/lmarkmann/celsius/pull/70))
+- **Sub-cell raster tiers.** `--glyphs half|quad` chooses the glyph family, `--aa` supersamples and averages back down, and `--colors auto|true|256` sets the colour depth. Colour depth is detected rather than assumed: `COLORTERM` is trusted, and Apple Terminal builds before 464 are known to predate real truecolor. Whether your font has the quadrant glyphs is not detectable by anything, so that stays a choice and persists in the config file, while colour depth deliberately does not, since a config file gets read over ssh and from other terminals.
+- This tier is scaffolding and says so. `--glyphs quad` currently reduces to the half-block partition, `--colors 256` passes through without quantising, and `--aa` does not yet scale the moon, the star halo or rain streak length, so those draw smaller when it is on. Sextants and octants are absent for a structural reason rather than an unfinished one: Windows conhost stores sixteen bits per cell, and both families live above U+FFFF.
+- **A `curl | sh` installer** that needs neither Homebrew nor a Rust toolchain. It verifies the SHA-256 published with the release, runs the binary once from a temporary directory before installing it, and installs atomically, so a wrong-architecture or truncated download leaves an existing install untouched. Covers arm64 macOS and x86_64 Linux; elsewhere it says so and points at `cargo install`.
+- `render_supersampled`, for a caller that will fold the result back down into terminal cells itself, and `precipitation::overlay_scaled`, which takes the logical area so supersampling does not multiply the number of raindrops.
+- `PixelBuffer` implements `Debug` and `PartialEq`, so a rendered frame can be asserted on. `Rgb` gains `Eq` and `Hash`. Eight further types gain `Debug`.
+- `# Errors` sections on every fallible public function, saying which variant and when, and runnable examples on `render`, `load_scene` and `Gradient::from_rgb_stops`.
 
 ### Fixed
 
-- Close three reachable panics and the missing trait surface ([#73](https://github.com/lmarkmann/celsius/pull/73))
+- **Three panics reachable from the public API, none of which said so.** `Gradient::sample` indexed `0..stops.len() - 1`, which underflows on a gradient with no stops and surfaced as `attempt to subtract with overflow`. `Gradient::blend` sorted stop positions with `partial_cmp().unwrap()`, which a stop position of NaN turns into a panic for any caller holding two gradients. `format_label`'s fallback branch existed to survive an out-of-range timestamp and then unwrapped a second one on the way out.
+- `anyhow` is confined to the binary. The library returns concrete error types throughout.
 
 ## [0.5.0] - 2026-07-27
 
