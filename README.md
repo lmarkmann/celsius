@@ -7,7 +7,7 @@
 
 <img src="demos/demo.gif" alt="celsius demo" width="100%">
 
-Terminal weather as a first-person sky view. You look up into the sky you would see right now at your location, rendered as at truecolor in half-block; directly in your terminal. Clouds drift, the sun tracks its altitude, stars fade in at twilight, rain slants with the wind, and the lighting strikes are animated.
+Terminal weather as a first-person sky view. You look up into the sky you would see right now at your location, drawn in truecolor half-blocks directly in your terminal. Clouds drift, the sun tracks its altitude, stars fade in at twilight, rain slants with the wind, and thunderstorms flash.
 
 ## Install
 
@@ -22,7 +22,7 @@ cargo binstall -y celsius
 cargo install celsius
 ```
 
-The script needs `curl` or `wget`, verifies the SHA-256 published with the release, and installs into `$XDG_BIN_HOME`, or `~/.local/bin` if that is unset. Options go after `-s --`, so `| sh -s -- --install-dir ~/bin` or `| sh -s -- --version v0.5.0`. It covers arm64 macOS and x86_64 Linux; Intel Mac and ARM Linux ship no prebuilt binary, so use Homebrew or `cargo install` there and build from source.
+The script needs `curl` or `wget`, verifies the SHA-256 published with the release, and installs into `$XDG_BIN_HOME`, or `~/.local/bin` if that is unset. Options go after `-s --`, so `| sh -s -- --install-dir ~/bin` or `| sh -s -- --version v0.5.0`. It covers arm64 macOS and x86_64 Linux. Intel Mac and ARM Linux have no prebuilt binary, so Homebrew and `cargo install` build from source there. Windows has a prebuilt binary but no installer: take the `x86_64-pc-windows-msvc` zip from the [latest release](https://github.com/lmarkmann/celsius/releases/latest).
 
 ## Usage
 
