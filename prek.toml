@@ -20,3 +20,19 @@ entry = "just ci"
 always_run = true
 pass_filenames = false
 stages = ["pre-push"]
+
+[[repos.hooks]]
+id = "shellcheck"
+name = "shellcheck (shell scripts)"
+language = "system"
+entry = "shellcheck"
+files = '\.sh$'
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "actionlint"
+name = "actionlint (workflow correctness)"
+language = "system"
+entry = "actionlint"
+files = '^\.github/workflows/.*\.ya?ml$'
+stages = ["pre-commit"]

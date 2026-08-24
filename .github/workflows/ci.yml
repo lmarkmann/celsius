@@ -72,6 +72,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: pipx run zizmor==1.28.0 --min-severity high .github/workflows/
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: zizmor@1.28.0
+      - run: zizmor --min-severity high .github/workflows/
         env:
           GH_TOKEN: ${{ github.token }}
