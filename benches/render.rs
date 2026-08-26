@@ -95,6 +95,12 @@ fn bench_render(c: &mut Criterion) {
         b.iter(|| render(black_box(&sky), 104, 50))
     });
 
+    // The overcast daytime sky. `build_sky` attaches a Perez sky whenever the sun is up, then weights it by `(1 - total_cover)`, so full cover asks for one and discards it whole. This should now cost what `104x50_clear` costs, and it is the only thing that would notice if the per-pixel sample came back.
+    g.bench_function("104x50_clear_overcast", |b| {
+        let sky = with_analytic(&clear, 0.0);
+        b.iter(|| render(black_box(&sky), 104, 50))
+    });
+
     g.finish();
 }
 
