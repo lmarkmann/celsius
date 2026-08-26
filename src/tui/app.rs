@@ -36,6 +36,15 @@ const TICK: Duration = Duration::from_millis(33);
 const MIN_COLS: u16 = 60;
 const MIN_ROWS: u16 = 25;
 
+/// How far clouds must travel before the sky is worth redrawing, in pixels of the buffer last rendered.
+///
+/// Drift advances `offset_x` by `wind_speed_kmh * elapsed * 0.0001`, which at 28 km/h against the stormy scene's finest `scale_x` is about 0.002 pixels per tick. A single tick therefore changes roughly thirty of a 104x50 frame's pixels by exactly one level each, and the sky was being re-rendered thirty times a second to produce that. Cloud motion is continuous, but the output is quantised to eight bits, and below this distance the two disagree.
+///
+/// Measured in pixels rather than in `offset_x`, because the on-screen shift is `delta / scale_x * width`: this is a density, not an absolute. Reaching the same 0.05 pixels takes an `offset_x` step of 0.00216 at 104 wide but 0.00070 at 320, so a threshold fixed in `offset_x` would repaint a wide terminal a third as often as intended, which is the units fault `rules/reference-size.md` exists for.
+///
+/// The value is the largest shift measured to move no channel by more than one level, at both 104x50 and 320x150. A quarter pixel reaches five levels and can shimmer; going finer than this buys little, because thirty cached draws already cost more than the renders it would save.
+const DRIFT_REPAINT_PX: f64 = 0.05;
+
 #[derive(Debug, PartialEq)]
 pub enum RunOutcome {
     Quit,
@@ -130,6 +139,8 @@ pub struct App<'a> {
     index: usize,
     display: SkyState,
     drift_paused: bool,
+    /// Cloud motion accumulated since the last repaint, as a fraction of the frame. Compared against `DRIFT_REPAINT_PX` once scaled by the rendered width.
+    drift_debt: f64,
     overlay: Overlay,
     overlay_elapsed: Duration,
     egg_frame: u64,
@@ -160,6 +171,7 @@ impl<'a> App<'a> {
             index,
             display,
             drift_paused: false,
+            drift_debt: 0.0,
             overlay: Overlay::None,
             overlay_elapsed: Duration::ZERO,
             egg_frame: 0,
@@ -197,8 +209,29 @@ impl<'a> App<'a> {
             for layer in &mut self.display.clouds {
                 layer.offset_x += delta;
             }
-            self.sky_dirty = true;
-            changed = true;
+            // `offset_x` keeps accumulating exactly, so a frame that does re-render is identical to the one this would have drawn every tick. Only the decision of *when* to redraw is coarsened.
+            //
+            // The layer with the smallest `scale_x` travels furthest on screen for the same `offset_x` step, so it is the one that decides whether the frame is stale yet.
+            let finest = self
+                .display
+                .clouds
+                .iter()
+                .map(|l| l.scale_x)
+                .filter(|s| *s > 0.0)
+                .fold(f64::INFINITY, f64::min);
+            self.drift_debt += if finest.is_finite() {
+                delta / finest
+            } else {
+                delta
+            };
+            // Width of the buffer last actually rendered. Before the first draw there is no cache and no width to scale by, so the frame is simply stale.
+            let width = self.sky_cache.as_ref().map_or(0, |c| c.width);
+            if width == 0 || self.drift_debt * f64::from(width) >= DRIFT_REPAINT_PX {
+                // Reset rather than subtract the threshold: subtracting keeps the cadence marginally more even but carries stale units across a resize, and the two differ by at most one tick.
+                self.drift_debt = 0.0;
+                self.sky_dirty = true;
+                changed = true;
+            }
         }
         self.overlay_elapsed += elapsed;
         self.egg_frame = self.egg_frame.wrapping_add(1);
@@ -1432,6 +1465,49 @@ mod tests {
         // ...until a lightning scene, whose flash is recomputed every tick.
         app.display.lightning = Some(crate::lightning::Lightning::new(101, 0.5, 1.0, false));
         assert!(app.tick(Duration::from_millis(100)));
+    }
+
+    /// The two tests above never draw, so they exercise the no-cache path, where there is no width to scale by and the frame is simply stale. This is the gated path, which needs a cache to exist first.
+    #[test]
+    fn slow_drift_delays_the_repaint_without_slowing_the_clouds() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+        let mut term = Terminal::new(TestBackend::new(80, 40)).unwrap();
+        term.draw(|f| {
+            let area = f.area();
+            draw_sky(f.buffer_mut(), area, &mut app);
+        })
+        .unwrap();
+        assert!(!app.sky_dirty, "the first draw fills the cache");
+
+        // Pinned rather than taken from the fixture, so the arithmetic below does not move when a scene is retuned. At 28 km/h these advance about 0.0025 pixels per tick against an 80-pixel buffer, so the threshold is a little over twenty ticks away.
+        for layer in &mut app.display.clouds {
+            layer.scale_x = 3.0;
+        }
+        app.display.wind_speed_kmh = 28.0;
+
+        app.tick(TICK);
+        assert!(
+            !app.sky_dirty,
+            "one tick of ordinary drift cannot change the frame by more than a rounding step, so it must not throw the cache away"
+        );
+
+        // The gate delays a repaint, it does not cancel one.
+        for _ in 0..40 {
+            app.tick(TICK);
+        }
+        assert!(
+            app.sky_dirty,
+            "accumulated drift must eventually invalidate the cache"
+        );
+
+        // And the clouds keep moving the whole time: only the decision of when to redraw is coarsened, never the drift itself.
+        let before = app.display.clouds[0].offset_x;
+        app.tick(TICK);
+        assert!(
+            app.display.clouds[0].offset_x > before,
+            "drift must continue between repaints"
+        );
     }
 
     #[test]
