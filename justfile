@@ -98,7 +98,18 @@ lock:
 bench:
     cargo bench --bench render
 
-# Build and run the benches under cargo-codspeed. Reports no timings off Linux; real numbers come from the CodSpeed job on the PR.
-codspeed:
-    cargo codspeed build -m simulation -m memory
-    cargo codspeed run
+# Config lives in .cargo/mutants.toml. The whole crate is ~3600 mutants and hours of
+# wall clock, so reach for `mutants-file` or `mutants-diff` unless you mean it.
+# Every mutant the suite fails to kill: code a test runs but nothing asserts on.
+mutants:
+    cargo mutants --no-shuffle --in-place
+
+# One module's mutants, which is the shape worth running by hand.
+mutants-file file:
+    cargo mutants --no-shuffle --in-place --file {{file}}
+
+# What the mutants CI job runs: only the code this branch changed.
+mutants-diff:
+    git diff $(git merge-base HEAD main) HEAD -- src tests > /tmp/celsius-mutants.diff
+    cargo mutants --no-shuffle --in-place --in-diff /tmp/celsius-mutants.diff
+

@@ -1,0 +1,20 @@
+# The oracle, the analytic properties and the lightning overlay all live behind
+# `png`, and they are the tests that actually assert on rendered output. Without
+# this a mutant only has to survive the unit tests, which is the coverage theatre
+# `.claude/rules/determinism.md` warns about.
+additional_cargo_test_args = ["--features", "png"]
+
+# Same runner as `just test` and CI, so a survivor here is reproducible there.
+test_tool = "nextest"
+
+# A golden render is ~0.5s and the suite is ~0.6s, so the default 20s floor would
+# let a mutant that merely makes the renderer slow read as a timeout rather than a
+# caught mutant. 60s is well clear of a real run and still catches an infinite loop.
+minimum_test_timeout = 60
+
+exclude_globs = [
+    # Location-gated easter egg. Nothing can reach it without pinning the clock to
+    # a 42-minute window over one Hong Kong district, so every mutant in it would
+    # survive and bury the signal from code that is genuinely under test.
+    "src/pigs.rs",
+]

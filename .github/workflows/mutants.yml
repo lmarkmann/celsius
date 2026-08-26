@@ -1,0 +1,59 @@
+name: mutants
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/mutants.toml"
+      - ".github/workflows/mutants.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutants-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  in-diff:
+    name: surviving mutants in the diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants,nextest
+
+      - name: diff against the merge base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_REF"
+          git diff "$(git merge-base HEAD "origin/$BASE_REF")" HEAD -- src tests > mutants.diff
+          wc -l < mutants.diff
+
+      - name: mutants
+        run: cargo mutants --no-shuffle --in-place -vV --in-diff mutants.diff
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutants-in-diff
+          path: mutants.out
+          if-no-files-found: ignore
