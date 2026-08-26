@@ -2,19 +2,27 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -26,32 +34,77 @@ jobs:
         run: cargo fmt --check
 
       - name: clippy (default features)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: clippy (png feature)
-        run: cargo clippy --all-targets --features png -- -D warnings
+        run: cargo clippy --locked --all-targets --features png -- -D warnings
 
       - name: clippy (celsius-lab)
-        run: cargo clippy -p celsius-lab --all-targets -- -D warnings
+        run: cargo clippy --locked -p celsius-lab --all-targets -- -D warnings
+
+      - name: doc
+        run: cargo doc --locked --no-deps --features png
 
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
 
-      - name: test
-        run: cargo nextest run --features png
+      - name: test (default features)
+        run: cargo nextest run --locked
+
+      - name: test (png feature)
+        run: cargo nextest run --locked --features png
 
       - name: test (celsius-lab)
-        run: cargo nextest run -p celsius-lab
+        run: cargo nextest run --locked -p celsius-lab
 
       - name: bench (compile + smoke)
-        run: cargo bench --bench render -- --test
+        run: cargo bench --locked --bench render -- --test
+
+  cross:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: clippy (png feature)
+        run: cargo clippy --locked --all-targets --features png -- -D warnings
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: test (default features)
+        run: cargo nextest run --locked
+
+      - name: test (png feature)
+        run: cargo nextest run --locked --features png
+
+      - name: test (celsius-lab)
+        run: cargo nextest run --locked -p celsius-lab
 
   msrv:
     name: msrv (1.88.0)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked
@@ -60,8 +113,11 @@ jobs:
   deny:
     name: cargo deny (advisories + licences + sources + bans)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
@@ -70,8 +126,11 @@ jobs:
   zizmor:
     name: zizmor (Actions security)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@v2
         with:
           tool: zizmor@1.28.0
