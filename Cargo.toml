@@ -74,7 +74,7 @@ dirs = "6"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
+ratatui = { version = "0.30.1", default-features = false, features = ["crossterm_0_29"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 basic-toml = "0.1"
@@ -100,3 +100,28 @@ harness = false
 opt-level = 3
 lto = "thin"
 strip = "symbols"
+
+# The profile the released artifacts are built with. Fat LTO plus a single codegen
+# unit is worth about a fifth of the binary and roughly seven seconds of link time,
+# which is the right trade once per release and the wrong one on every `just ci`, so
+# [profile.release] stays as it is and the test gate keeps its fast rebuild.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+# rustls, ring, clap, basic_toml and chrono run at startup, on a network call, or on
+# a keypress, never inside a frame, so trading their speed for size costs nothing a
+# user can perceive. celsius itself is not covered by this glob and stays at 3.
+[profile.dist.package."*"]
+opt-level = "z"
+
+# Drawn every tick, so it is the one dependency actually on the frame path.
+[profile.dist.package.ratatui-core]
+opt-level = 3
+
+# Dependencies change rarely and are painfully slow unoptimized, so pay for them once
+# and keep our own crate at 0 for fast rebuilds and live debug assertions. Note this
+# does not speed up debug rendering: the renderer is ours, and ours stays at 0.
+[profile.dev.package."*"]
+opt-level = 3

@@ -37,6 +37,7 @@ jobs:
           archive: $bin-$tag-$target
           checksum: sha256
           locked: true
+          profile: dist
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/attest@v4
         with:

@@ -16,7 +16,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use crossterm::execute;
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 use ratatui::{DefaultTerminal, Frame};
@@ -702,12 +702,20 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
         draw_too_small(buf, area);
         return;
     }
-    let [header, sky_area, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Fill(1),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    // A one-row header and footer around a filled middle, which a general constraint
+    // solver used to compute. too_small() has already returned for anything under
+    // MIN_ROWS, so height is at least 25 here and the subtraction cannot underflow.
+    let header = Rect { height: 1, ..area };
+    let sky_area = Rect {
+        y: area.y + 1,
+        height: area.height - 2,
+        ..area
+    };
+    let footer = Rect {
+        y: area.y + area.height - 1,
+        height: 1,
+        ..area
+    };
 
     draw_chrome_bar(
         buf,

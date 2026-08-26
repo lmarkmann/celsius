@@ -46,6 +46,18 @@ build:
 build-oracle:
     cargo build --release --features png
 
+# Fat LTO, one codegen unit, dependencies at opt-level "z". About a third smaller than
+# `just build` and much slower to link, which is why it is not [profile.release].
+# The profile release.yml ships, so this is what a user actually downloads.
+dist:
+    cargo build --profile dist
+
+# [profile.release] is what the test gate runs, so nothing otherwise proves fat LTO and
+# opt-level "z" leave the render bit-identical. They do; this keeps it that way.
+# The goldens against the profile we actually ship.
+dist-check:
+    cargo nextest run --cargo-profile dist --features png
+
 # Release tests incl. the golden oracle (the deterministic scene-lock path).
 test:
     cargo nextest run --release --features png
