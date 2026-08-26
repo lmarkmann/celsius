@@ -12,6 +12,8 @@ jobs:
     name: upload ${{ matrix.target }}
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -25,13 +27,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: taiki-e/upload-rust-binary-action@v1
+        id: upload
         with:
           bin: celsius
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           checksum: sha256
+          locked: true
           token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: ${{ steps.upload.outputs.sha256 }}
 
   homebrew:
     name: bump homebrew formula
@@ -42,6 +51,7 @@ jobs:
         with:
           repository: lmarkmann/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: true
           path: tap
 
       - name: render formula
