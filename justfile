@@ -113,3 +113,18 @@ mutants-diff:
     git diff $(git merge-base HEAD main) HEAD -- src tests > /tmp/celsius-mutants.diff
     cargo mutants --no-shuffle --in-place --in-diff /tmp/celsius-mutants.diff
 
+# --all-features so the png-gated sinks and the oracle count as covered code
+# rather than reading as dead. High coverage here still means the goldens executed
+# the line, not that anything checked the result; `mutants` is what checks that.
+# Line coverage, which is where the percentages quoted in the docs come from.
+cov:
+    cargo llvm-cov --locked --all-features --summary-only
+
+# Coverage as lcov, for an editor gutter or CI upload.
+cov-lcov:
+    cargo llvm-cov --locked --all-features --lcov --output-path lcov.info
+
+# Build and run the benches under cargo-codspeed. Reports no timings off Linux; real numbers come from the CodSpeed job on the PR.
+codspeed:
+    cargo codspeed build -m simulation -m memory
+    cargo codspeed run

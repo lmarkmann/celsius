@@ -29,6 +29,7 @@ exclude = [
   "deny.toml",
   "release-plz.toml",
   ".rumdl.toml",
+  "_typos.toml",
   # cargo-mutants config. Not excluded by default: cargo packages every root file it
   # is not told to drop, and .cargo/ is no exception, so without this line every edit
   # to a mutation-testing knob would cut a patch release.
