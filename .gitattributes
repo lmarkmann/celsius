@@ -1,0 +1,6 @@
+# tests/oracle.rs hashes scenes/*.toml byte for byte, and Windows checks text files
+# out as CRLF by default, so a Windows clone changes those bytes and fails
+# scene_sha256 while rendering pixel-identical output. Pinning the working tree to LF
+# everywhere keeps one hash true on every platform. The goldens under tests/goldens/
+# are detected as binary by text=auto and are left alone.
+* text=auto eol=lf

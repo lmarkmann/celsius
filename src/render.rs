@@ -217,7 +217,13 @@ pub fn render_supersampled(state: &SkyState, width: u32, height: u32, factor: u3
     let sun_disc = sun_disc_color();
 
     // Prototype: when an analytic sky is attached, its Preetham radiance field replaces the vertical gradient as the background. Prepared once here; the per-pixel cost is one Perez ratio plus a color conversion.
-    let analytic = state.analytic.as_ref().map(crate::analytic_sky::prepare);
+    //
+    // Skipped outright at zero blend. `build_sky` attaches a sky whenever the sun is above the horizon but weights it by `(sun_alt / 8) * (1 - total_cover)`, so a fully overcast daytime hour asked for a Perez sample at every pixel and then lerped every bit of it away. Dropping it is bit-identical rather than merely close: `lerp_oklab(a, b, 0.0)` is `a + (b - a) * 0.0`, and `tests/analytic.rs` pins the radiance finite, so the discarded term could never have been anything but zero.
+    let analytic = state
+        .analytic
+        .as_ref()
+        .filter(|a| a.blend > 0.0)
+        .map(crate::analytic_sky::prepare);
 
     // Row-invariant cloud terms: the altitude gaussian and the noise row coordinate change per row and per layer, never per pixel.
     let mut row_clouds: Vec<(f64, f64)> = vec![(0.0, 0.0); cloud_layers.len()];

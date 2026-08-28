@@ -16,7 +16,7 @@ use celsius::tui::{App, Timeline, draw_frame, write_frame};
 use celsius::weather::forecast::Forecast;
 use celsius::weather::location::GeoResult;
 use celsius::weather::{ComposeOpts, compose, compose_at};
-use celsius::{PixelBuffer, Rgb, SkyState, load_scene, render};
+use celsius::{SkyState, load_scene, render, render_supersampled};
 
 /// One TUI tick, matching `TICK` in the event loop.
 const TICK: Duration = Duration::from_millis(33);
@@ -56,6 +56,15 @@ fn bench_render(c: &mut Criterion) {
         b.iter(|| render(black_box(&state), 320, 100))
     });
 
+    // The supersampled tiers. `raster::sample_factor` returns 2 for `--aa` on half blocks or for plain `--glyphs quad`, and 4 for both together, so factor 4 draws sixteen times the pixels of the default and is the heaviest frame the crate can be asked for. Until now the only measurement either had was a number typed by hand into a commit message.
+    g.bench_function("104x50_stormy_quad", |b| {
+        b.iter(|| render_supersampled(black_box(&state), 104, 50, 2))
+    });
+
+    g.bench_function("104x50_stormy_aa", |b| {
+        b.iter(|| render_supersampled(black_box(&state), 104, 50, 4))
+    });
+
     // Clear sky (no clouds, no precipitation) for comparison
     let clear = load_scene(scene_path("high_noon_clear")).unwrap();
     g.bench_function("104x50_clear", |b| {
@@ -83,6 +92,12 @@ fn bench_render(c: &mut Criterion) {
     // Twilight crossfade: pays for the Perez sample *and* the gradient lerp. This is the sunrise and sunset sky, the one people watch.
     g.bench_function("104x50_clear_crossfade", |b| {
         let sky = with_analytic(&clear, 0.5);
+        b.iter(|| render(black_box(&sky), 104, 50))
+    });
+
+    // The overcast daytime sky. `build_sky` attaches a Perez sky whenever the sun is up, then weights it by `(1 - total_cover)`, so full cover asks for one and discards it whole. This should now cost what `104x50_clear` costs, and it is the only thing that would notice if the per-pixel sample came back.
+    g.bench_function("104x50_clear_overcast", |b| {
+        let sky = with_analytic(&clear, 0.0);
         b.iter(|| render(black_box(&sky), 104, 50))
     });
 
@@ -128,6 +143,19 @@ fn bench_frame(c: &mut Criterion) {
         b.iter(|| {
             app.tick(TICK);
             draw_frame(&mut buf, FRAME_AREA, &mut app);
+        });
+    });
+
+    // A second of a sky nobody is touching: thirty ticks, each followed by a draw. Every one of those ticks re-renders the whole buffer, though at 28 km/h with `scale_x = 3` the clouds advance about a three-hundredth of a pixel per tick, so a few hundred consecutive frames are the same picture. `dirty_rerender` measures a single tick and cannot see that; this measures the cadence, which is where a change to when drift invalidates the cache would show up. `scrub_hour` is what keeps guarding the render itself, since a scrub always dirties.
+    const TICKS_PER_SECOND: u32 = 30;
+    g.bench_function("drift_cadence", |b| {
+        let timeline = Timeline::single(stormy.clone());
+        let mut app = App::new(&timeline);
+        b.iter(|| {
+            for _ in 0..TICKS_PER_SECOND {
+                app.tick(TICK);
+                draw_frame(&mut buf, FRAME_AREA, &mut app);
+            }
         });
     });
 
@@ -356,6 +384,15 @@ fn bench_compose(c: &mut Criterion) {
         b.iter(|| compose_at(black_box(&forecast), &geo, target, t00, opts).unwrap())
     });
 
+    // Everything startup computes before the first sky appears: `build_timeline` composes every hour of the week eagerly. Worth stating plainly, because no benchmark can show it: real startup is dominated by two sequential Open-Meteo round trips, so a fast number here does not mean a fast start. What this pins is that the CPU share stays negligible against them.
+    g.bench_function("timeline_168h", |b| {
+        b.iter(|| {
+            for h in 0..WEEK_HOURS {
+                black_box(compose(black_box(&forecast), &geo, h, t00, opts).unwrap());
+            }
+        })
+    });
+
     g.finish();
 }
 
@@ -367,8 +404,24 @@ fn bench_noise(c: &mut Criterion) {
         b.iter(|| Noise::new(black_box(0xC0FFEE_u64)))
     });
 
-    g.bench_function("warped_fbm", |b| {
-        b.iter(|| noise.warped_fbm(black_box(1.23), black_box(4.56)))
+    // A frame's worth, at the coordinates a 104x50 cloud layer actually walks (`nx = fx * scale_x + offset_x`, with the scene defaults). A lone call is far too short to survive the single-iteration harness the CodSpeed runner uses: it reported 2.6 us under simulation against 35 ns locally, a ratio the render benches hold between seven and thirteen, so what it measured was the harness rather than the fbm chain. Renamed rather than fixed in place, because the old series is not comparable to this one.
+    let coords: Vec<(f64, f64)> = (0..50)
+        .flat_map(|py| {
+            (0..104).map(move |px| {
+                (
+                    f64::from(px) / 104.0 * 3.0 + 0.4,
+                    f64::from(py) / 50.0 * 2.2 + 1.3,
+                )
+            })
+        })
+        .collect();
+
+    g.bench_function("warped_fbm_5200", |b| {
+        b.iter(|| {
+            for &(x, y) in &coords {
+                black_box(noise.warped_fbm(x, y));
+            }
+        })
     });
 
     g.finish();
@@ -385,17 +438,37 @@ fn bench_micro(c: &mut Criterion) {
         turbidity: 2.0,
         blend: 1.0,
     });
-    g.bench_function("analytic_sample", |b| {
-        b.iter(|| prepared.sample(black_box(0.37), black_box(0.62)))
+    // A frame's worth of Perez evaluations, which is what a daytime render pays: `sample` runs once per pixel and roughly triples a clear 104x50 frame. Batched for the same reason as `warped_fbm_5200`, a single call being short enough that the reported number was the harness.
+    let fracs: Vec<(f64, f64)> = (0..50)
+        .flat_map(|py| (0..104).map(move |px| (f64::from(px) / 103.0, f64::from(py) / 49.0)))
+        .collect();
+
+    g.bench_function("analytic_sample_5200", |b| {
+        b.iter(|| {
+            for &(x, y) in &fracs {
+                black_box(prepared.sample(x, y));
+            }
+        })
     });
 
-    // Both run once per compose; Meeus' lunar series is the heavier of the two.
+    // Both run once per compose, and startup composes every hour of the week, so a week is the honest batch rather than an arbitrary multiple. Meeus' lunar series is the heavier of the two.
     let t = 1_775_865_600;
-    g.bench_function("sun_position", |b| {
-        b.iter(|| astro::sun_position(black_box(53.55), black_box(9.99), t))
+    let week: Vec<i64> = (0..WEEK_HOURS as i64).map(|h| t + h * 3_600).collect();
+
+    g.bench_function("sun_position_168", |b| {
+        b.iter(|| {
+            for &at in &week {
+                black_box(astro::sun_position(black_box(53.55), black_box(9.99), at));
+            }
+        })
     });
-    g.bench_function("moon_state", |b| {
-        b.iter(|| astro::moon_state(black_box(53.55), black_box(9.99), t))
+
+    g.bench_function("moon_state_168", |b| {
+        b.iter(|| {
+            for &at in &week {
+                black_box(astro::moon_state(black_box(53.55), black_box(9.99), at));
+            }
+        })
     });
 
     // Real pixels rather than synthetic ones, so the value distribution matches what the write path actually sees.
@@ -423,10 +496,7 @@ fn bench_micro(c: &mut Criterion) {
         })
     });
 
-    // What share of a 104x50 render is the allocator. Settles whether a render_into that writes through a reused buffer would buy anything.
-    g.bench_function("alloc_floor_104x50", |b| {
-        b.iter(|| PixelBuffer::filled(black_box(104), black_box(50), Rgb::BLACK))
-    });
+    // `alloc_floor_104x50` used to sit here, asking what share of a 104x50 render is the allocator and therefore whether a `render_into` writing through a reused buffer would buy anything. It answered: 18.6 us against a 5.9 ms stormy render, with the whole render allocating 15.4 KB, so 0.3% and no. Retired rather than kept, because a settled question on the dashboard reads like an open one.
 
     // The star field is rebuilt inside every render, and placing stars on the sky rather than on the screen made each candidate cost a projection and a rejection draw. This is what says whether that rebuild is worth caching or is already noise against the pixel loop.
     let dark = load_scene(scene_path("moonless_darksky")).unwrap();

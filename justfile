@@ -46,6 +46,18 @@ build:
 build-oracle:
     cargo build --release --features png
 
+# Fat LTO, one codegen unit, dependencies at opt-level "z". About a third smaller than
+# `just build` and much slower to link, which is why it is not [profile.release].
+# The profile release.yml ships, so this is what a user actually downloads.
+dist:
+    cargo build --profile dist
+
+# [profile.release] is what the test gate runs, so nothing otherwise proves fat LTO and
+# opt-level "z" leave the render bit-identical. They do; this keeps it that way.
+# The goldens against the profile we actually ship.
+dist-check:
+    cargo nextest run --cargo-profile dist --features png
+
 # Release tests incl. the golden oracle (the deterministic scene-lock path).
 test:
     cargo nextest run --release --features png
@@ -97,6 +109,32 @@ lock:
 
 bench:
     cargo bench --bench render
+
+# Config lives in .cargo/mutants.toml. The whole crate is ~3600 mutants and hours of
+# wall clock, so reach for `mutants-file` or `mutants-diff` unless you mean it.
+# Every mutant the suite fails to kill: code a test runs but nothing asserts on.
+mutants:
+    cargo mutants --no-shuffle --in-place
+
+# One module's mutants, which is the shape worth running by hand.
+mutants-file file:
+    cargo mutants --no-shuffle --in-place --file {{file}}
+
+# What the mutants CI job runs: only the code this branch changed.
+mutants-diff:
+    git diff $(git merge-base HEAD main) HEAD -- src tests > /tmp/celsius-mutants.diff
+    cargo mutants --no-shuffle --in-place --in-diff /tmp/celsius-mutants.diff
+
+# --all-features so the png-gated sinks and the oracle count as covered code
+# rather than reading as dead. High coverage here still means the goldens executed
+# the line, not that anything checked the result; `mutants` is what checks that.
+# Line coverage, which is where the percentages quoted in the docs come from.
+cov:
+    cargo llvm-cov --locked --all-features --summary-only
+
+# Coverage as lcov, for an editor gutter or CI upload.
+cov-lcov:
+    cargo llvm-cov --locked --all-features --lcov --output-path lcov.info
 
 # Build and run the benches under cargo-codspeed. Reports no timings off Linux; real numbers come from the CodSpeed job on the PR.
 codspeed:

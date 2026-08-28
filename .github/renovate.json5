@@ -1,0 +1,82 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  extends: ["config:recommended"],
+
+  timezone: "Europe/Berlin",
+  schedule: ["before 7am on monday"],
+  labels: ["dependencies"],
+  prConcurrentLimit: 3,
+  // A crates.io release cannot be unpublished, but it can be yanked. Waiting three
+  // days means a bad release is usually already yanked before a PR opens for it.
+  minimumReleaseAge: "3 days",
+  separateMinorPatch: true,
+
+  // Installs the toolchain Renovate runs `cargo update` with, and is the baseline for
+  // constraintsFiltering. "1.88" is a range in rust-release-channel versioning, so the
+  // tool resolver picks the newest 1.88.x rather than failing to parse a single version.
+  constraints: {
+    rust: "1.88",
+  },
+  constraintsFiltering: "strict",
+
+  packageRules: [
+    {
+      // The MSRV gate, in the only shape that works. Release filtering compares under
+      // cargo versioning, where a bare "1.88" means ^1.88, and a crate spelling its MSRV
+      // with three components ("1.90.0", which is what ratatui and image do) is then a
+      // valid semver version that satisfies ^1.88, so it slips through. "~1.88" is
+      // >=1.88.0 <1.89.0, which makes subset() the deciding check: [1.88, 1.89) sits
+      // inside ^1.85 so a crate needing 1.85 stays eligible, and does not sit inside
+      // ^1.90 so that one is dropped.
+      //
+      // The config validator warns that "~1.88" is not a valid rust-release-channel
+      // version. That is expected: it validates every constraints.rust against the
+      // toolchain versioning even when the rule is scoped to the crate datasource. The
+      // warning is the price of the filter working on three-component MSRVs. Reverting
+      // to "1.88" silences it and reopens the hole.
+      //
+      // Crates that declare no rust-version at all are never filtered, so the msrv job
+      // in ci.yml stays the hard gate; this only keeps doomed PRs from being opened.
+      matchDatasources: ["crate"],
+      constraints: {
+        rust: "~1.88",
+      },
+    },
+    {
+      // Both of these are the 1.88 floor itself, not dependencies to keep current.
+      // Renovate reads its own config with the renovate-config manager and offered to
+      // move constraints.rust to 1.98; the msrv job's toolchain is the same trap from
+      // the other side. The floor moves by hand, together with rust-version in
+      // Cargo.toml, or not at all.
+      matchManagers: ["renovate-config", "github-actions"],
+      matchPackageNames: ["rust", "dtolnay/rust-toolchain"],
+      enabled: false,
+    },
+    {
+      // Cargo.toml carries loose ranges, so patch updates land in Cargo.lock alone and
+      // there is nothing to review one crate at a time.
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["patch"],
+      groupName: "cargo patch updates",
+    },
+    {
+      matchManagers: ["github-actions"],
+      groupName: "github actions",
+    },
+    {
+      // ratatui and crossterm are 0.x, so a minor bump is a breaking one, and it moves
+      // the pinned floor in Cargo.toml rather than only the lockfile.
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["minor", "major"],
+      groupName: null,
+      labels: ["dependencies", "needs-review"],
+    },
+  ],
+
+  // Refreshes transitive dependencies that no direct requirement pulls forward.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 7am on the first day of the month"],
+  },
+}

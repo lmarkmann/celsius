@@ -12,6 +12,8 @@ jobs:
     name: upload ${{ matrix.target }}
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -25,13 +27,54 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: taiki-e/upload-rust-binary-action@v1
+        id: upload
         with:
           bin: celsius
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           checksum: sha256
+          locked: true
+          profile: dist
           token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: ${{ steps.upload.outputs.sha256 }}
+
+  size-badge:
+    name: publish the binary size badge
+    needs: upload-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: badges
+          persist-credentials: true
+          path: badges
+
+      - name: measure and publish
+        working-directory: badges
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          archive="celsius-$TAG-x86_64-unknown-linux-musl.tar.gz"
+          gh release download "$TAG" --repo lmarkmann/celsius -p "$archive" -D dl
+          tar -xzf "dl/$archive" -C dl
+          bytes=$(stat -c%s dl/celsius)
+          mib=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')
+          rm -rf dl
+          printf '{"schemaVersion":1,"label":"binary","message":"%s MB","color":"blue"}\n' "$mib" > size.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add size.json
+          git diff --cached --quiet || git commit -m "celsius $TAG: ${mib} MB"
+          git push
 
   homebrew:
     name: bump homebrew formula
@@ -42,6 +85,7 @@ jobs:
         with:
           repository: lmarkmann/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: true
           path: tap
 
       - name: render formula

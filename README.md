@@ -1,8 +1,9 @@
 # celsius
 
-[![CI](https://github.com/lmarkmann/celsius/workflows/CI/badge.svg)](https://github.com/lmarkmann/celsius/actions)
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/lmarkmann/celsius?utm_source=badge)
-[![Crates.io](https://img.shields.io/crates/v/celsius)](https://crates.io/crates/celsius)
+[![Built With Ratatui](https://ratatui.rs/built-with-ratatui/badge.svg)](https://ratatui.rs/)
+[![Crates.io](https://img.shields.io/crates/v/celsius?logo=rust)](https://crates.io/crates/celsius)
+[![CI](https://github.com/lmarkmann/celsius/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/lmarkmann/celsius/actions/workflows/ci.yml?query=branch%3Amain)
+[![Binary size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/lmarkmann/celsius/badges/size.json)](https://github.com/lmarkmann/celsius/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <img src="demos/demo.gif" alt="celsius demo" width="100%">

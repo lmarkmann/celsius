@@ -6,7 +6,7 @@
 //!
 //! Times are UTC everywhere inside. Open-Meteo returns local strings under `timezone=auto`, so they are converted in at the boundary and back out only for display.
 
-use chrono::{Datelike, NaiveDateTime, TimeZone, Utc};
+use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
@@ -421,7 +421,7 @@ fn daily_high_low(daily: &DailyArrays, date_iso: &str) -> Option<(f64, f64)> {
 fn local_hhmm(unix_utc: i64, offset: i64) -> String {
     Utc.timestamp_opt(unix_utc + offset, 0)
         .single()
-        .map(|dt| dt.format("%H:%M").to_string())
+        .map(|dt| format!("{:02}:{:02}", dt.hour(), dt.minute()))
         .unwrap_or_default()
 }
 
@@ -739,7 +739,14 @@ fn format_label(unix_utc: i64, now_unix: i64, offset: i64) -> String {
         None => {
             // The offset pushed the timestamp out of range, so fall back to bare UTC. If that is out of range too there is no date to format, and the raw epoch beats a panic in the branch whose whole job is not failing.
             return match Utc.timestamp_opt(unix_utc, 0).single() {
-                Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+                Some(dt) => format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}",
+                    dt.year(),
+                    dt.month(),
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute()
+                ),
                 None => format!("t={unix_utc}"),
             };
         }
@@ -749,7 +756,7 @@ fn format_label(unix_utc: i64, now_unix: i64, offset: i64) -> String {
         .single()
         .unwrap_or(target);
     let day_diff = (target.date_naive() - now.date_naive()).num_days();
-    let hhmm = target.format("%H:%M").to_string();
+    let hhmm = format!("{:02}:{:02}", target.hour(), target.minute());
     match day_diff {
         0 => format!("today {hhmm}"),
         1 => format!("tomorrow {hhmm}"),

@@ -1,0 +1,15 @@
+# .rumdl.toml turns MD044 and MD061 off so that spelling lives in exactly one place.
+# This is that place. Everything below is a real identifier, not a typo we tolerate.
+
+[default.extend-identifiers]
+# The TUI framework. The dictionary reads it as a misspelling of ratatouille.
+ratatui = "ratatui"
+Ratatui = "Ratatui"
+# image::Delay::from_numer_denom_ms, an upstream API name we do not get to spell.
+from_numer_denom_ms = "from_numer_denom_ms"
+
+[default.extend-words]
+# Pixel loop index, always paired with ix. The dictionary reads it as "it".
+iy = "iy"
+# Falls out of splitting "PNGs", which appears in prose about the golden renders.
+PN = "PN"
