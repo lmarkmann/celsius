@@ -231,9 +231,11 @@ fn no_sky_in_the_live_domain_is_crushed_or_blown() {
     }
 }
 
-/// Nothing here asserted on colour, only on brightness and on where the sun is, and the chromaticity half of the model went untested as a result: every one of the eighteen mutants that survived a `cargo mutants` run over this module lived in `cx_coeffs` or `cy_coeffs`. You could corrupt the arithmetic that decides what colour the sky is and the whole suite stayed green.
+/// Nothing here asserted on colour at all, only on brightness and on where the sun is, so the chromaticity half of the model went untested: every mutant that survived a `cargo mutants` run over this module lived in `cx_coeffs` or `cy_coeffs`.
 ///
-/// The far side of the sky at a moderate sun is the one place the answer is not in doubt. It is blue, which in Oklab means a negative b, and this is an absolute rather than a comparison for the reason `rules/determinism.md` gives: a relative claim cannot pin arithmetic, only its direction.
+/// The far side of the sky at a moderate sun is the one place the answer is not in doubt. It is blue, which in Oklab means a negative b, and this is stated as an absolute rather than a comparison for the reason `rules/determinism.md` gives: a relative claim cannot pin arithmetic, only its direction.
+///
+/// It does not close those survivors, and neither do the two tests below; that is measured rather than assumed, and the finding is written up in `QUALITY-GATES.md`. These pin what the sky's colour *is*, which was worth pinning on its own.
 #[test]
 fn a_clear_daytime_sky_is_blue() {
     let prepared = sky(35.0, CENTER_AZ + 45.0, 2.0);
@@ -260,5 +262,21 @@ fn a_hazier_sky_is_a_less_blue_sky() {
             "turbidity {turbidity} leaves the sky at Oklab b = {b:.4}, no less blue than the {previous:.4} of the clearer sky before it"
         );
         previous = b;
+    }
+}
+
+/// `cx_coeffs` and `cy_coeffs` are Perez *distribution* coefficients: they decide how chromaticity varies across the sky, not what it is anywhere in particular, and `prepare` divides by `perez(1, theta_sun)` so a mutation moves numerator and denominator together. Sampling one direction, at any number of turbidities, therefore cannot see them. What can is the shape of the field itself.
+///
+/// A clear sky is bluest well above the horizon and washes out as it approaches it, because a horizontal line of sight looks through far more air and the aerosol scattering along it is near-neutral. That is the first thing anyone notices looking at a sky, and it is a statement about the gradient rather than about a point.
+#[test]
+fn the_sky_washes_out_toward_the_horizon() {
+    for turbidity in [2.0, 4.0] {
+        let prepared = sky(35.0, CENTER_AZ + 45.0, turbidity);
+        let high = prepared.sample(0.05, 0.2).b;
+        let horizon = prepared.sample(0.05, 1.0).b;
+        assert!(
+            horizon - high > 0.015,
+            "at turbidity {turbidity} the horizon sits at Oklab b = {horizon:.4} against {high:.4} well above it, so the sky does not wash out as it comes down"
+        );
     }
 }
