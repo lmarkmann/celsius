@@ -2,6 +2,12 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-28
+
+### Performance
+
+- 36% smaller binary, 91% fewer redraws, and the CI to keep it that way ([#86](https://github.com/lmarkmann/celsius/pull/86))
+
 ## [0.6.0] - 2026-08-18
 
 ### Added
