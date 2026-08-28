@@ -304,3 +304,47 @@ fn live_forecast_returns_168_hours() {
     );
     assert_eq!(forecast.hourly.temperature_2m.len(), forecast.hourly.len());
 }
+
+/// The handover from the palette to the analytic sky, which is the one place two different models paint the same sky and can disagree about how bright it is.
+///
+/// `blend` ramps from 0 at the horizon to full at 8 degrees of solar elevation, and across that ramp the palette is the brighter of the two, so the frame dims slightly while the sun is still rising. That dip is 0.041 of Oklab lightness on this fixture and it is not new: it measured 0.031 before the exposure carried any absolute brightness at all. What matters is that it stays far below what dawn itself does, which moves the frame by up to 0.107 in a single quarter hour, because a step only reads as a seam when it beats the change around it.
+///
+/// The ceiling is deliberately loose. Closing the gap properly means retuning the palettes to meet the model, and doing that against Preetham means calibrating on the elevation band Hosek-Wilkie exists to fix, so it is A1's to close. This is here to stop it widening unnoticed in the meantime.
+#[test]
+fn the_palette_to_analytic_handover_does_not_step() {
+    let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let geo = hamburg_geo();
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
+    let sunrise = 1_775_865_600 + 3 * 3_600; // 2026-04-11T03:00Z, an hour before the sun clears the horizon
+
+    let mut peak: f64 = 0.0;
+    let mut drawdown: f64 = 0.0;
+    let mut worst = (0.0, 0.0);
+    for step in 0..24 {
+        let t = sunrise + step * 900;
+        let sky = celsius::weather::compose_at(&forecast, &geo, t, t, opts).unwrap();
+        let alt = celsius::astro::sun_position(geo.latitude, geo.longitude, t).altitude;
+        if alt < 0.0 {
+            continue;
+        }
+        let pixels = celsius::render(&sky, 104, 50);
+        let mean = pixels
+            .pixels
+            .iter()
+            .map(|p| celsius::colorspace::rgb_u8_to_oklab(p.r, p.g, p.b).l)
+            .sum::<f64>()
+            / pixels.pixels.len() as f64;
+        peak = peak.max(mean);
+        if peak - mean > drawdown {
+            drawdown = peak - mean;
+            worst = (alt, mean);
+        }
+    }
+
+    assert!(
+        drawdown < 0.06,
+        "the sky dims by {drawdown:.4} of lightness across the crossfade, bottoming at {:.4} with the sun already {:.2} degrees up; the palette and the analytic model disagree by more than dawn itself changes",
+        worst.1,
+        worst.0
+    );
+}

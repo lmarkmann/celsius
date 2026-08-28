@@ -5,10 +5,20 @@ use std::f64::consts::PI;
 use crate::atmosphere::Atmosphere;
 use crate::colorspace::Oklab;
 
-/// Where a sky's own mean luminance is placed on the tone curve.
+/// The sky every other sky is exposed relative to: a clear noon, sun 55 degrees up at turbidity 2, which is the sky the gain was originally tuned against by eye. Both numbers are measured from that frame rather than recalled, and the pair is what keeps it rendering exactly as it does today.
 ///
-/// Preetham radiance is in kcd/m^2 and spans orders of magnitude between a low sun and a high one, so a fixed gain can only be correct at one solar elevation. It was tuned against a clear noon zenith, which meant every low sun came out under-exposed and muddy, and that is what forced the crossfade to hand twilight back to a hand-tuned palette. Exposure is now derived per sky from a coarse survey of the frame, and this constant is the target that survey is mapped onto. Its value is the old gain times the mean luminance of the sky it was tuned on, so a clear noon still lands where it always did.
-const ADAPT_KEY: f64 = 0.045 * 2.35;
+/// These were one constant, `0.045 * 2.35`, and that product is what made the exposure a pure auto-exposure. Dividing a frame's own log-average into a fixed target normalises every sky to the same mean lightness, so the one absolute quantity Preetham computes, radiance in kcd/m^2 spanning orders of magnitude between a low sun and a high one, was surveyed and then divided straight back out. The renderer could not draw a dim sky.
+///
+/// The factors are also why `2.35` was wrong and could stay wrong. Under full adaptation only the product is observable, so neither number alone had to describe anything; a clear noon measures 12.858 here, and 2.35 is a survey of some frame that stopped existing when the projection went rectilinear in v0.5.0 and the view stopped reaching the zenith. Splitting the product is what makes each factor load-bearing enough to be checked.
+const REFERENCE_GAIN: f64 = 0.008_225;
+const REFERENCE_LUMINANCE: f64 = 12.858;
+
+/// How much of its own brightness a sky is exposed for, from 0 to 1.
+///
+/// At 1 the exposure follows the sky exactly and this is the old behaviour, byte for byte. At 0 it is the fixed gain that came before that, which under-exposed every low sun into mud. In between, `1 - ADAPTATION` is the fraction of a stop of real brightness difference that survives to the terminal, which is the only quantity this constant controls.
+///
+/// Photographic tone reproduction calls the same idea incomplete adaptation, and the reason to want it here is not fidelity for its own sake: a sky that cannot be dim cannot be compared with another sky, which is why every assertion about this model had to be phrased as contrast until now.
+const ADAPTATION: f64 = 0.7;
 
 /// How many samples across the frame the luminance survey takes, per axis.
 const ADAPT_GRID: u32 = 5;
@@ -144,7 +154,16 @@ pub fn prepare(sky: &AnalyticSky) -> Prepared {
 }
 
 /// Survey the frame's luminance so the tone curve can be placed against the sky actually being drawn rather than against one remembered clear noon. A coarse grid is enough: this decides an exposure, not a pixel, and it runs once per sky rather than once per pixel.
+///
+/// What it returns is a partial adaptation rather than a normalisation; see `ADAPTATION`.
 fn adapted_exposure(sun: &[f64; 3], lum_z: f64, lum: &Coeffs, denom_lum: f64) -> f64 {
+    let mean = frame_log_average(sun, lum_z, lum, denom_lum);
+    // e = g * (Lref / Lbar)^p, so the rendered level scales as (Lbar / Lref)^(1 - p) and a brighter sky arrives brighter. At p = 1 this is a plain normalisation, and at Lbar = Lref it is g whatever p is, which is what holds the reference sky still.
+    REFERENCE_GAIN * (REFERENCE_LUMINANCE / mean).powf(ADAPTATION)
+}
+
+/// The luminance this frame reads as, which is the quantity `REFERENCE_LUMINANCE` is a measurement of.
+fn frame_log_average(sun: &[f64; 3], lum_z: f64, lum: &Coeffs, denom_lum: f64) -> f64 {
     let mut total = 0.0;
     for iy in 0..ADAPT_GRID {
         for ix in 0..ADAPT_GRID {
@@ -158,8 +177,7 @@ fn adapted_exposure(sun: &[f64; 3], lum_z: f64, lum: &Coeffs, denom_lum: f64) ->
             total += (sample.max(0.0) + 1e-4).ln();
         }
     }
-    let mean = (total / f64::from(ADAPT_GRID * ADAPT_GRID)).exp().max(1e-6);
-    ADAPT_KEY / mean
+    (total / f64::from(ADAPT_GRID * ADAPT_GRID)).exp().max(1e-6)
 }
 
 impl Prepared {
@@ -205,5 +223,46 @@ fn lin_rgb_to_oklab(lr: f64, lg: f64, lb: f64) -> Oklab {
         l: 0.210_454_255_3 * l + 0.793_617_785_0 * m - 0.004_072_046_8 * s,
         a: 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s,
         b: 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `REFERENCE_LUMINANCE` is a measurement of one specific frame, and a frame is only fixed while the projection is. This is the test the previous constant did not have: `2.35` survived the v0.5.0 move from an orthographic view to a rectilinear one that stops short of the zenith, describing a frame that no longer existed, and nothing could tell because full adaptation made only the product of the two factors observable.
+    #[test]
+    fn the_reference_sky_still_reads_as_the_reference_luminance() {
+        let (alt, turbidity) = (55.0f64, 2.0);
+        let theta_sun = (90.0 - alt).to_radians();
+        let lum = lum_coeffs(turbidity);
+        let measured = frame_log_average(
+            &dir_from_altaz(alt, 180.0, 180.0),
+            zenith_luminance(turbidity, theta_sun),
+            &lum,
+            perez(1.0, theta_sun, &lum),
+        );
+        assert!(
+            (measured / REFERENCE_LUMINANCE - 1.0).abs() < 1e-3,
+            "a clear noon now reads as {measured:.4}, not the {REFERENCE_LUMINANCE} the exposure is anchored to; re-measure both constants against the current projection rather than adjusting one"
+        );
+    }
+
+    /// The anchor is the whole of the compatibility claim: whatever the adaptation exponent is set to, the sky the gain was tuned on must come out at that gain.
+    #[test]
+    fn the_anchor_holds_at_any_adaptation() {
+        let (alt, turbidity) = (55.0f64, 2.0);
+        let theta_sun = (90.0 - alt).to_radians();
+        let lum = lum_coeffs(turbidity);
+        let exposure = adapted_exposure(
+            &dir_from_altaz(alt, 180.0, 180.0),
+            zenith_luminance(turbidity, theta_sun),
+            &lum,
+            perez(1.0, theta_sun, &lum),
+        );
+        assert!(
+            (exposure / REFERENCE_GAIN - 1.0).abs() < 1e-3,
+            "the reference sky is exposed at {exposure:.6} rather than {REFERENCE_GAIN}"
+        );
     }
 }

@@ -176,3 +176,89 @@ fn the_crossfade_weight_is_clamped() {
         );
     }
 }
+
+/// Frame-mean lightness over the model's live domain: turbidity 2 to 9 is what visibility maps to, and the sun is above the horizon wherever the model is attached at all.
+fn live_domain_means() -> Vec<(f64, f64, f64)> {
+    let mut out = Vec::new();
+    for sun_alt in [0.5, 2.0, 4.0, 8.0, 15.0, 30.0, 45.0, 60.0, 75.0, 89.0] {
+        for turbidity in [2.0, 3.0, 5.0, 7.0, 9.0] {
+            let prepared = sky(sun_alt, CENTER_AZ, turbidity);
+            let mut sum = 0.0;
+            for iy in 0..25 {
+                for ix in 0..25 {
+                    sum += prepared
+                        .sample(f64::from(ix) / 24.0, f64::from(iy) / 24.0)
+                        .l;
+                }
+            }
+            out.push((sun_alt, turbidity, sum / 625.0));
+        }
+    }
+    out
+}
+
+/// The property the exposure was rebuilt to have, and the one no assertion here could state before.
+///
+/// Dividing a frame's own log-average into a fixed target normalises every sky to the same output level, which is what `adapted_exposure` used to do: the same grid measured below spans 4.9 stops of real sky luminance and came out inside 0.012 of Oklab lightness end to end. Every sky looked equally bright, so a dim sky was not something the renderer could draw, and every property here had to be phrased as contrast within one sky rather than as brightness across two.
+///
+/// The floor is far above that 0.012 and far below what partial adaptation measures, so this fails if the adaptation exponent is ever quietly returned to 1.
+#[test]
+fn skies_of_different_brightness_do_not_all_render_alike() {
+    let means = live_domain_means();
+    let lo = means
+        .iter()
+        .map(|&(_, _, m)| m)
+        .fold(f64::INFINITY, f64::min);
+    let hi = means
+        .iter()
+        .map(|&(_, _, m)| m)
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(
+        hi - lo > 0.08,
+        "the live domain spans only {:.4} of lightness ({lo:.4} to {hi:.4}); at full adaptation it spanned 0.012 and every sky rendered equally bright",
+        hi - lo
+    );
+}
+
+/// The other end of the same knob. Partial adaptation buys range by letting skies drift from the anchor, and enough of it drives a hazy sunrise to black or a high sun to white, which is a worse failure than the flatness it fixes because it destroys the frame rather than levelling it.
+#[test]
+fn no_sky_in_the_live_domain_is_crushed_or_blown() {
+    for (sun_alt, turbidity, mean) in live_domain_means() {
+        assert!(
+            (0.20..=0.80).contains(&mean),
+            "sun {sun_alt} deg at turbidity {turbidity} renders at mean lightness {mean:.4}, outside the range a terminal can show as sky"
+        );
+    }
+}
+
+/// Nothing here asserted on colour, only on brightness and on where the sun is, and the chromaticity half of the model went untested as a result: every one of the eighteen mutants that survived a `cargo mutants` run over this module lived in `cx_coeffs` or `cy_coeffs`. You could corrupt the arithmetic that decides what colour the sky is and the whole suite stayed green.
+///
+/// The far side of the sky at a moderate sun is the one place the answer is not in doubt. It is blue, which in Oklab means a negative b, and this is an absolute rather than a comparison for the reason `rules/determinism.md` gives: a relative claim cannot pin arithmetic, only its direction.
+#[test]
+fn a_clear_daytime_sky_is_blue() {
+    let prepared = sky(35.0, CENTER_AZ + 45.0, 2.0);
+    for y in [0.2, 0.4, 0.6] {
+        let lab = prepared.sample(0.05, y);
+        assert!(
+            lab.b < -0.02,
+            "the far side of a clear sky has Oklab b = {:.4} at y={y}, which is not blue",
+            lab.b
+        );
+    }
+}
+
+/// Turbidity is aerosol, and aerosol scatters near-neutrally where air molecules scatter blue, so more of it whitens the sky. It is the milky sky HW12 describes over a desert, and it is the one chromaticity claim strong enough to state as a direction across turbidities rather than within one sky.
+#[test]
+fn a_hazier_sky_is_a_less_blue_sky() {
+    let blueness = |turbidity: f64| sky(35.0, CENTER_AZ + 45.0, turbidity).sample(0.05, 0.4).b;
+
+    let mut previous = f64::NEG_INFINITY;
+    for turbidity in [2.0, 3.0, 5.0, 7.0, 9.0] {
+        let b = blueness(turbidity);
+        assert!(
+            b > previous,
+            "turbidity {turbidity} leaves the sky at Oklab b = {b:.4}, no less blue than the {previous:.4} of the clearer sky before it"
+        );
+        previous = b;
+    }
+}
