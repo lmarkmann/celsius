@@ -1424,6 +1424,49 @@ mod tests {
         );
     }
 
+    // The three-row split used to be a Cassowary solve, which at least had the solver
+    // asserting its own constraints. It is arithmetic now, and cargo-mutants showed the
+    // suite would not notice `area.height - 2` becoming `area.height / 2`: the goldens
+    // never reach draw_sky, so nothing downstream of it was checking the geometry.
+    //
+    // Two mutants here stay alive and are meant to: deleting `height` from the header
+    // or footer Rect is equivalent, because draw_chrome_bar writes only `area.y` and
+    // never reads the height. The field says what the row is, not what the code needs.
+    #[test]
+    fn draw_sky_splits_into_a_header_a_filled_middle_and_a_footer() {
+        let tl = timeline();
+        let mut app = App::new(&tl);
+
+        for (w, h) in [(80_u16, 40_u16), (60, 25), (200, 61)] {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| {
+                let area = f.area();
+                draw_sky(f.buffer_mut(), area, &mut app);
+            })
+            .unwrap();
+
+            let buf = term.backend().buffer();
+            let header_blank = (0..w).all(|x| buf[(x, 0)].symbol() == " ");
+            let footer_blank = (0..w).all(|x| buf[(x, h - 1)].symbol() == " ");
+            assert!(!header_blank, "{w}x{h}: row 0 must carry the header chrome");
+            assert!(
+                !footer_blank,
+                "{w}x{h}: the last row must carry the footer chrome"
+            );
+
+            // The sky owns everything between them, so the row just inside each edge is
+            // painted sky rather than chrome or an untouched cell. A `/` in place of the
+            // `-` leaves the lower half of the frame blank and fails here.
+            let last_sky_row = h - 2;
+            let bottom_of_sky_painted =
+                (0..w).any(|x| buf[(x, last_sky_row)].bg != ratatui::style::Color::Reset);
+            assert!(
+                bottom_of_sky_painted,
+                "{w}x{h}: the sky must reach row {last_sky_row}, one above the footer"
+            );
+        }
+    }
+
     #[test]
     fn tick_marks_sky_dirty_only_when_clouds_move() {
         let tl = timeline();
