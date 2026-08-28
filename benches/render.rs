@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 
 use celsius::analytic_sky::{self, AnalyticSky};
 use celsius::astro;
+use celsius::atmosphere::Atmosphere;
 use celsius::colorspace::{Oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use celsius::lightning::{self, Lightning};
 use celsius::noise::Noise;
@@ -104,14 +105,14 @@ fn bench_render(c: &mut Criterion) {
     g.finish();
 }
 
-/// `base` with a midday analytic sky attached at crossfade weight `blend`. Turbidity 2.0 is what `turbidity_from_visibility` yields at full visibility.
+/// `base` with a midday analytic sky attached at crossfade weight `blend`. Turbidity 2.0 is what `Atmosphere::from_visibility` yields at full visibility.
 fn with_analytic(base: &SkyState, blend: f64) -> SkyState {
     let mut sky = base.clone();
     sky.analytic = Some(AnalyticSky {
         sun_alt: 55.0,
         sun_az: 180.0,
         center_az: 180.0,
-        turbidity: 2.0,
+        atmosphere: Atmosphere::from_turbidity(2.0),
         blend,
     });
     sky
@@ -435,7 +436,7 @@ fn bench_micro(c: &mut Criterion) {
         sun_alt: 55.0,
         sun_az: 180.0,
         center_az: 180.0,
-        turbidity: 2.0,
+        atmosphere: Atmosphere::from_turbidity(2.0),
         blend: 1.0,
     });
     // A frame's worth of Perez evaluations, which is what a daytime render pays: `sample` runs once per pixel and roughly triples a clear 104x50 frame. Batched for the same reason as `warped_fbm_5200`, a single call being short enough that the reported number was the harness.

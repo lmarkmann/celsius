@@ -1,6 +1,6 @@
 //! Forecast plus coordinates in, [`SkyState`] out. The synthesis layer.
 //!
-//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; visibility drives both haze and the analytic sky's turbidity.
+//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; and one `Atmosphere` built from the reported visibility feeds both the haze layer and the analytic sky.
 //!
 //! The judgement calls worth knowing. Cloud seeds mix `(lat, lon, day)` so a sky reshapes once per UTC day rather than every hour, which stops clouds boiling as you scrub the timeline. `compose_at` interpolates between forecast hours for scalars but snaps weather codes to the nearer hour, because a code is categorical and half of "thunderstorm" is not a thing. Wind direction becomes a lateral offset from the facing bearing, so rain leans the way the wind is actually blowing relative to the viewer.
 //!
@@ -10,6 +10,7 @@ use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
+use crate::atmosphere::Atmosphere;
 use crate::lightning::Lightning;
 use crate::meteors::Meteors;
 use crate::scene::{
@@ -88,7 +89,10 @@ impl HourSample {
 }
 
 /// View options shared by every sky in a timeline: where the camera points, how dark the site is, and which model paints the daytime background.
+///
+/// Not exhaustively constructible from outside, for the same reason `Config` is not: this is the surface the atmosphere work extends, and every axis added to it (ground albedo, aerosol species) would otherwise break each caller writing a struct literal. Start from [`ComposeOpts::new`], or from `default()` when the facing does not matter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ComposeOpts {
     /// Azimuth at the horizontal center of the frame, in degrees (180 = south).
     pub center_az: f64,
@@ -96,6 +100,29 @@ pub struct ComposeOpts {
     pub bortle: Option<u8>,
     /// Preetham analytic daytime background instead of the palette gradient.
     pub analytic: bool,
+}
+
+impl ComposeOpts {
+    /// Facing is the one option with no universal default, since which way is worth looking depends on the hemisphere. The rest have real defaults and are set through the `with_` methods.
+    #[must_use]
+    pub fn new(center_az: f64) -> Self {
+        Self {
+            center_az,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn with_bortle(mut self, bortle: Option<u8>) -> Self {
+        self.bortle = bortle;
+        self
+    }
+
+    #[must_use]
+    pub fn with_analytic(mut self, analytic: bool) -> Self {
+        self.analytic = analytic;
+        self
+    }
 }
 
 impl Default for ComposeOpts {
@@ -185,13 +212,6 @@ fn bracket_hours(
     Ok((h0, h0 + 1, frac))
 }
 
-// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
-/// Map visibility in metres to the turbidity range used by the analytic sky.
-pub fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
-    let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
-    (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
-}
-
 fn build_sky(
     sample: &HourSample,
     location: &GeoResult,
@@ -211,6 +231,7 @@ fn build_sky(
     let sun_altaz = astro::sun_position(lat, lon, unix_utc);
     let moon_state = astro::moon_state(lat, lon, unix_utc);
 
+    let atmosphere = Atmosphere::from_visibility(sample.visibility_m);
     let total_cover = total_cover(
         sample.reported_cover,
         sample.cover_low,
@@ -244,7 +265,7 @@ fn build_sky(
             exponent: 1.4,
         })
     } else {
-        build_haze(sample.visibility_m)
+        build_haze(&atmosphere)
     };
     let precipitation = build_precipitation(
         sample.weather_code,
@@ -279,7 +300,7 @@ fn build_sky(
         sun_alt: sun_altaz.altitude,
         sun_az: sun_altaz.azimuth,
         center_az,
-        turbidity: turbidity_from_visibility(sample.visibility_m),
+        atmosphere,
         // Two things hold the model back. It ramps in over the first 8 degrees of solar elevation, so it crossfades out of the palette through twilight with no seam at sunrise. And it fades out under cloud, because Preetham describes a *clear* sky: run at full strength under an overcast deck it paints a clean blue-to-pale gradient and calls it a grey day. The overcast palette exists precisely for the sky you can actually see when the clear one is hidden.
         blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0) * (1.0 - total_cover).clamp(0.0, 1.0),
     });
@@ -610,8 +631,8 @@ fn cloud_layer(
     })
 }
 
-fn build_haze(visibility_m: Option<f64>) -> Option<Haze> {
-    let viz_km = visibility_m? / 1000.0;
+fn build_haze(atmosphere: &Atmosphere) -> Option<Haze> {
+    let viz_km = atmosphere.visibility_m? / 1000.0;
     if viz_km >= 12.0 {
         return None;
     }

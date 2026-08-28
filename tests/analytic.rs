@@ -4,6 +4,7 @@
 
 use celsius::analytic_sky::{self, AnalyticSky};
 use celsius::astro::{self, AltAz};
+use celsius::atmosphere::Atmosphere;
 
 const CENTER_AZ: f64 = 180.0;
 
@@ -12,7 +13,7 @@ fn sky(sun_alt: f64, sun_az: f64, turbidity: f64) -> analytic_sky::Prepared {
         sun_alt,
         sun_az,
         center_az: CENTER_AZ,
-        turbidity,
+        atmosphere: Atmosphere::from_turbidity(turbidity),
         blend: 1.0,
     })
 }
@@ -166,7 +167,7 @@ fn the_crossfade_weight_is_clamped() {
             sun_alt: 30.0,
             sun_az: CENTER_AZ,
             center_az: CENTER_AZ,
-            turbidity: 2.5,
+            atmosphere: Atmosphere::from_turbidity(2.5),
             blend: given,
         });
         assert_eq!(

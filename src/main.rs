@@ -401,14 +401,14 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
     }
 
     let saved = config::load();
-    let opts = ComposeOpts {
-        center_az: params
+    let opts = ComposeOpts::new(
+        params
             .facing
             .or(saved.facing)
             .unwrap_or_else(|| default_facing(location.latitude)),
-        bortle: params.bortle.or(saved.bortle),
-        analytic: params.analytic,
-    };
+    )
+    .with_bortle(params.bortle.or(saved.bortle))
+    .with_analytic(params.analytic);
     let mut states: Vec<_> = (0..hours)
         .map(|h| compose(&forecast, location, h, now_unix, opts))
         .collect::<Result<_, _>>()

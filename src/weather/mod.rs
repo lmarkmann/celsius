@@ -15,7 +15,6 @@ pub use state::ComposeOpts;
 pub use state::compose;
 pub use state::compose_at;
 pub use state::error_sky;
-pub use state::turbidity_from_visibility;
 
 use std::sync::LazyLock;
 use std::time::Duration;

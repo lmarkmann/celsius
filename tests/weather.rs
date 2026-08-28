@@ -158,11 +158,7 @@ fn compose_at_interpolates_between_hours() {
     // Halfway between 01:00 and 02:00 UTC. wind_speed_10m is 4.0 then 4.1, so the interpolated sky must read 4.05, proving it didn't snap to the top of hour.
     let t01 = 1_775_869_200; // 2026-04-11T01:00Z
     let mid = t01 + 1_800; // 01:30Z
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: false,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(false);
     let sky = celsius::weather::compose_at(&forecast, &geo, mid, t01, opts)
         .expect("compose_at on fixture");
     assert!(
@@ -195,11 +191,7 @@ fn hamburg_geo() -> GeoResult {
 #[test]
 fn compose_at_locks_clear_night_mapping() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: true,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
     let t00 = 1_775_865_600; // 2026-04-11T00:00Z, ~4.5h before sunrise
     let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t00, t00, opts)
         .expect("compose_at on fixture");
@@ -232,11 +224,7 @@ fn compose_at_locks_clear_night_mapping() {
 #[test]
 fn compose_at_post_sunrise_attaches_analytic_sky() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: true,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
     let t05 = 1_775_865_600 + 5 * 3_600; // 2026-04-11T05:00Z, ~22m after sunrise
     let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, opts)
         .expect("compose_at on fixture");
@@ -257,11 +245,7 @@ fn compose_at_post_sunrise_attaches_analytic_sky() {
 #[test]
 fn compose_locks_clear_night_via_hour_index() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: true,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
     let t00 = 1_775_865_600; // 2026-04-11T00:00Z, the fixture's first hour
     let sky = celsius::weather::compose(&forecast, &hamburg_geo(), 0, t00, opts)
         .expect("compose on fixture");

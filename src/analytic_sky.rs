@@ -2,6 +2,7 @@
 
 use std::f64::consts::PI;
 
+use crate::atmosphere::Atmosphere;
 use crate::colorspace::Oklab;
 
 /// Where a sky's own mean luminance is placed on the tone curve.
@@ -18,7 +19,7 @@ pub struct AnalyticSky {
     pub sun_alt: f64,
     pub sun_az: f64,
     pub center_az: f64,
-    pub turbidity: f64,
+    pub atmosphere: Atmosphere,
     /// Crossfade weight toward the analytic sky, 0..1. Ramps up from 0 at the horizon to 1 a few degrees above it, so the model fades into the palette through twilight instead of popping in at sunrise. render lerps the palette gradient toward `sample()` by this amount.
     pub blend: f64,
 }
@@ -115,7 +116,7 @@ fn dir_from_altaz(alt_deg: f64, az_deg: f64, center_az: f64) -> [f64; 3] {
 }
 
 pub fn prepare(sky: &AnalyticSky) -> Prepared {
-    let t = sky.turbidity;
+    let t = sky.atmosphere.turbidity;
     let theta_sun = (90.0 - sky.sun_alt).to_radians();
     let lum = lum_coeffs(t);
     let cx = cx_coeffs(t);

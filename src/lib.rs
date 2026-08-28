@@ -14,6 +14,7 @@
 
 pub mod analytic_sky;
 pub mod astro;
+pub mod atmosphere;
 pub mod colorspace;
 pub mod config;
 pub mod gradient;
