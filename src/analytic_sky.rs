@@ -1,4 +1,6 @@
 //! Prototype: an analytic daytime sky (Preetham et al. 1999), the closed-form member of the Hosek-Wilkie family. Sky radiance is computed per pixel from the sun's position and an atmospheric turbidity via the Perez function, so the zenith-to-horizon falloff and the sun-side brightening fall out of one physical model instead of hand-tuned palettes. Daytime only: `build_sky` attaches this only when the sun is above the horizon, and `render` falls back to the gradient otherwise (Preetham's zenith formula is undefined once the solar zenith angle passes 90 degrees).
+//!
+//! Radiance comes out in kcd/m^2 and spans orders of magnitude between a low sun and a high one, so what reaches a terminal is decided by the exposure rather than by the model. It is a partial adaptation, anchored so that a clear noon renders as it always has while dimmer skies stay dimmer; a full adaptation, which is what this had, flattens every sky to one brightness and throws that range away. See `ADAPTATION`.
 
 use std::f64::consts::PI;
 
