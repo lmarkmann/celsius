@@ -6,8 +6,11 @@ All notable changes to celsius are recorded here. The format roughly follows [Ke
 
 ### Breaking
 
-- PrecipKind::Snow is removed; snow is celsius::snow. Also
-
+- `PrecipKind::Snow` is gone. Snow has its own renderer at `celsius::snow`, driven by a `[snowfall]` scene table and by the forecast's snowfall rate; `PrecipKind` is rain only.
+- `AnalyticSky` carries `atmosphere: Atmosphere` in place of `turbidity: f64`.
+- `weather::turbidity_from_visibility` moved to `atmosphere::turbidity_from_visibility`.
+- `ComposeOpts` is `#[non_exhaustive]`. Build it with `ComposeOpts::new(center_az)` and the `with_bortle` / `with_analytic` methods, or from `ComposeOpts::default()`.
+- `SkyState` gains `snowfall`, and `HourlyArrays` gains `relative_humidity_2m` and `snowfall`, so exhaustive struct literals over either need updating.
 
 ### Added
 
