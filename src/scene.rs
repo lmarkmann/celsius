@@ -16,6 +16,7 @@ use crate::analytic_sky::AnalyticSky;
 use crate::gradient::Gradient;
 use crate::lightning::Lightning;
 use crate::meteors::Meteors;
+use crate::snow::Snowfall;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -36,6 +37,13 @@ pub enum SceneError {
     NoStem { path: PathBuf },
     #[error("scene {path} declares an empty gradient (needs at least one stop)")]
     EmptyGradient { path: PathBuf },
+    #[error("scene {path} sets {field} to {value}, outside the documented range {range}")]
+    OutOfRange {
+        path: PathBuf,
+        field: &'static str,
+        value: f64,
+        range: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -177,12 +185,11 @@ pub struct Chrome {
     pub keys_tiers: Vec<String>,
 }
 
-/// Two kinds only, enforced at parse: a typo like `kind = "Rain"` used to slip through the old stringly field and silently render as snow.
+/// One kind, enforced at parse. It was two until snow got its own renderer: a flake is not a short raindrop, its shape comes from the air it grew in, and `snow::Snowfall` is where that lives now. Keeping the enum rather than deleting it is deliberate, since hail and sleet are the same shape of problem as rain and will want it back.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PrecipKind {
     Rain,
-    Snow,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -216,6 +223,8 @@ pub struct SkyState {
     pub stars: Option<Stars>,
     pub moon: Option<Moon>,
     pub precipitation: Option<Precipitation>,
+    /// Falling snow. Unlike lightning and meteors this one *is* drawn by `render()`, at `t = 0`; see `snow` for why.
+    pub snowfall: Option<Snowfall>,
     pub lightning: Option<Lightning>,
     pub meteors: Option<Meteors>,
     pub horizon_glow: Option<HorizonGlow>,
@@ -237,6 +246,7 @@ struct SceneToml {
     stars: Option<Stars>,
     moon: Option<Moon>,
     precipitation: Option<Precipitation>,
+    snowfall: Option<Snowfall>,
 }
 
 #[derive(Deserialize)]
@@ -337,6 +347,26 @@ fn parse_scene(path: &Path, text: &str) -> Result<SkyState, SceneError> {
         });
     }
 
+    // The draft this validation exists for set `intensity = 2.8` against a documented 0..1 and rendered anyway, because the value was multiplied straight into a count and nothing ever compared it to its own documentation.
+    if let Some(snow) = &raw.snowfall {
+        if !(0.0..=1.0).contains(&snow.opacity) {
+            return Err(SceneError::OutOfRange {
+                path: path.to_path_buf(),
+                field: "snowfall.opacity",
+                value: snow.opacity,
+                range: "0.0..=1.0",
+            });
+        }
+        if snow.count > 2000 {
+            return Err(SceneError::OutOfRange {
+                path: path.to_path_buf(),
+                field: "snowfall.count",
+                value: f64::from(snow.count),
+                range: "0..=2000",
+            });
+        }
+    }
+
     let stops: Vec<(f64, [u8; 3])> = raw
         .gradient
         .stops
@@ -363,6 +393,7 @@ fn parse_scene(path: &Path, text: &str) -> Result<SkyState, SceneError> {
         stars: raw.stars,
         moon: raw.moon,
         precipitation: raw.precipitation,
+        snowfall: raw.snowfall,
         lightning: None,
         meteors: None,
         horizon_glow: None,

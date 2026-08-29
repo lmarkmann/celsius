@@ -158,11 +158,7 @@ fn compose_at_interpolates_between_hours() {
     // Halfway between 01:00 and 02:00 UTC. wind_speed_10m is 4.0 then 4.1, so the interpolated sky must read 4.05, proving it didn't snap to the top of hour.
     let t01 = 1_775_869_200; // 2026-04-11T01:00Z
     let mid = t01 + 1_800; // 01:30Z
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: false,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(false);
     let sky = celsius::weather::compose_at(&forecast, &geo, mid, t01, opts)
         .expect("compose_at on fixture");
     assert!(
@@ -195,11 +191,7 @@ fn hamburg_geo() -> GeoResult {
 #[test]
 fn compose_at_locks_clear_night_mapping() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: true,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
     let t00 = 1_775_865_600; // 2026-04-11T00:00Z, ~4.5h before sunrise
     let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t00, t00, opts)
         .expect("compose_at on fixture");
@@ -232,11 +224,7 @@ fn compose_at_locks_clear_night_mapping() {
 #[test]
 fn compose_at_post_sunrise_attaches_analytic_sky() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: true,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
     let t05 = 1_775_865_600 + 5 * 3_600; // 2026-04-11T05:00Z, ~22m after sunrise
     let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, opts)
         .expect("compose_at on fixture");
@@ -257,11 +245,7 @@ fn compose_at_post_sunrise_attaches_analytic_sky() {
 #[test]
 fn compose_locks_clear_night_via_hour_index() {
     let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
-    let opts = celsius::weather::ComposeOpts {
-        center_az: 180.0,
-        bortle: None,
-        analytic: true,
-    };
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
     let t00 = 1_775_865_600; // 2026-04-11T00:00Z, the fixture's first hour
     let sky = celsius::weather::compose(&forecast, &hamburg_geo(), 0, t00, opts)
         .expect("compose on fixture");
@@ -319,4 +303,119 @@ fn live_forecast_returns_168_hours() {
         "7 days x 24 hours = 168 hourly samples"
     );
     assert_eq!(forecast.hourly.temperature_2m.len(), forecast.hourly.len());
+}
+
+/// The handover from the palette to the analytic sky, which is the one place two different models paint the same sky and can disagree about how bright it is.
+///
+/// `blend` ramps from 0 at the horizon to full at 8 degrees of solar elevation, and across that ramp the palette is the brighter of the two, so the frame dims slightly while the sun is still rising. That dip is 0.041 of Oklab lightness on this fixture and it is not new: it measured 0.031 before the exposure carried any absolute brightness at all. What matters is that it stays far below what dawn itself does, which moves the frame by up to 0.107 in a single quarter hour, because a step only reads as a seam when it beats the change around it.
+///
+/// The ceiling is deliberately loose. Closing the gap properly means retuning the palettes to meet the model, and doing that against Preetham means calibrating on the elevation band Hosek-Wilkie exists to fix, so it is A1's to close. This is here to stop it widening unnoticed in the meantime.
+#[test]
+fn the_palette_to_analytic_handover_does_not_step() {
+    let forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let geo = hamburg_geo();
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
+    let sunrise = 1_775_865_600 + 3 * 3_600; // 2026-04-11T03:00Z, an hour before the sun clears the horizon
+
+    let mut peak: f64 = 0.0;
+    let mut drawdown: f64 = 0.0;
+    let mut worst = (0.0, 0.0);
+    for step in 0..24 {
+        let t = sunrise + step * 900;
+        let sky = celsius::weather::compose_at(&forecast, &geo, t, t, opts).unwrap();
+        let alt = celsius::astro::sun_position(geo.latitude, geo.longitude, t).altitude;
+        if alt < 0.0 {
+            continue;
+        }
+        let pixels = celsius::render(&sky, 104, 50);
+        let mean = pixels
+            .pixels
+            .iter()
+            .map(|p| celsius::colorspace::rgb_u8_to_oklab(p.r, p.g, p.b).l)
+            .sum::<f64>()
+            / pixels.pixels.len() as f64;
+        peak = peak.max(mean);
+        if peak - mean > drawdown {
+            drawdown = peak - mean;
+            worst = (alt, mean);
+        }
+    }
+
+    assert!(
+        drawdown < 0.06,
+        "the sky dims by {drawdown:.4} of lightness across the crossfade, bottoming at {:.4} with the sun already {:.2} degrees up; the palette and the analytic model disagree by more than dawn itself changes",
+        worst.1,
+        worst.0
+    );
+}
+
+/// The two hourly fields the snow morphology needs. Both are `#[serde(default)]` so an older cached response still parses, which means a silent empty vector is the failure mode and only a fixture that actually carries them can tell the difference.
+#[test]
+fn forecast_carries_humidity_and_snowfall() {
+    let parsed: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let hours = parsed.hourly.time.len();
+    assert_eq!(
+        parsed.hourly.relative_humidity_2m.len(),
+        hours,
+        "humidity must arrive for every hour, not default to empty"
+    );
+    assert_eq!(parsed.hourly.snowfall.len(), hours);
+    assert!(
+        parsed.hourly.relative_humidity_2m[0].is_some(),
+        "the fixture must carry a real humidity reading"
+    );
+}
+
+/// Snow and rain are drawn by different renderers now, so exactly one of them may claim any given hour. Overlap would double the precipitation; a gap would drop it.
+#[test]
+fn a_snow_hour_belongs_to_snow_and_not_to_rain() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.weather_code[h] = Some(73); // moderate snowfall
+        forecast.hourly.precipitation[h] = Some(1.2);
+        forecast.hourly.snowfall[h] = Some(0.8);
+        forecast.hourly.temperature_2m[h] = Some(-6.0);
+        forecast.hourly.relative_humidity_2m[h] = Some(99.0);
+    }
+    let opts = celsius::weather::ComposeOpts::default();
+    let t = 1_775_865_600;
+    let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t, t, opts).unwrap();
+
+    assert!(sky.snowfall.is_some(), "a snow code must produce snow");
+    assert!(
+        sky.precipitation.is_none(),
+        "and must not also produce rain streaks"
+    );
+    assert_eq!(
+        sky.snowfall.unwrap().form,
+        celsius::snow::FlakeForm::Needle,
+        "-6 C in near-saturated air is the needle band of the diagram"
+    );
+}
+
+/// Precipitation seeds on place and UTC day only, so a whole forecast day of rain scrubs past as one frozen arrangement. Snow carries the hour, which is what makes scrubbing show different snow.
+#[test]
+fn snow_relayouts_each_hour() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.weather_code[h] = Some(73);
+        forecast.hourly.snowfall[h] = Some(0.8);
+        forecast.hourly.temperature_2m[h] = Some(-6.0);
+        forecast.hourly.relative_humidity_2m[h] = Some(99.0);
+    }
+    let opts = celsius::weather::ComposeOpts::default();
+    let geo = hamburg_geo();
+    let base = 1_775_865_600;
+    let first = celsius::weather::compose(&forecast, &geo, 0, base, opts)
+        .unwrap()
+        .snowfall
+        .expect("hour 0 snows");
+    let second = celsius::weather::compose(&forecast, &geo, 1, base, opts)
+        .unwrap()
+        .snowfall
+        .expect("hour 1 snows");
+    assert_ne!(
+        first.seed, second.seed,
+        "consecutive hours must not share a flake layout"
+    );
 }

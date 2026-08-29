@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 use celsius::astro::{moon_state, sun_position, to_sky_fracs};
-use celsius::weather::turbidity_from_visibility;
+use celsius::atmosphere::turbidity_from_visibility;
 use celsius_lab::{
     SKY_HEIGHT, SKY_WIDTH, SceneSpec, analytic_state, compare_images, contact_sheet,
     load_reference, parse_at, render_scene, render_state, repo_root, save_scaled, scene_path,

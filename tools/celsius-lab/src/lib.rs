@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail, ensure};
 use celsius::analytic_sky::{AnalyticSky, prepare};
 use celsius::astro::{moon_state, sun_position, to_sky_fracs};
+use celsius::atmosphere::Atmosphere;
 use celsius::colorspace::{oklab_to_rgb, rgb_u8_to_oklab};
 use celsius::scene::{Chrome, SkyState, Sun};
 use celsius::{Gradient, load_scene, render};
@@ -91,7 +92,7 @@ pub fn scene_toml(spec: &SceneSpec<'_>) -> Result<String> {
             sun_alt: sun.altitude,
             sun_az: sun.azimuth,
             center_az: spec.facing,
-            turbidity: spec.turbidity,
+            atmosphere: Atmosphere::from_turbidity(spec.turbidity),
             blend: 1.0,
         })
     });
@@ -455,6 +456,7 @@ pub fn analytic_state(sun_alt: f64, turbidity: f64, sun_az_offset: f64) -> SkySt
         stars: None,
         moon: None,
         precipitation: None,
+        snowfall: None,
         lightning: None,
         meteors: None,
         horizon_glow: None,
@@ -462,7 +464,7 @@ pub fn analytic_state(sun_alt: f64, turbidity: f64, sun_az_offset: f64) -> SkySt
             sun_alt,
             sun_az,
             center_az,
-            turbidity,
+            atmosphere: Atmosphere::from_turbidity(turbidity),
             blend: 1.0,
         }),
         wind_speed_kmh: 0.0,

@@ -5,6 +5,8 @@
 //! Everything that can be hoisted out of the per-pixel loop already has been: noise grids are cached per seed, the gradient is sampled once per row, and each cloud layer's altitude mask is a row term rather than a pixel term. That is what keeps a 104x50 frame in the hundreds of microseconds.
 //!
 //! Note what is *absent*: no time parameter. Animation is expressed by mutating the `SkyState` between calls (cloud drift) or by compositing overlays onto the result (lightning, meteors), never by rendering a different frame for a different instant.
+//!
+//! Snow is the one exception and it is drawn here at `t = 0`. The rule those others follow is that a still must not catch a moment, and a flash caught mid-strike is exactly that; a snowfall scene with an empty sky is not the same kind of error, it is a missing scene. The TUI calls the same `snow::overlay` with a real clock, so the still is a frame the animation passes through rather than an arrangement of its own.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -371,6 +373,10 @@ pub fn render_supersampled(state: &SkyState, width: u32, height: u32, factor: u3
 
     if let Some(p) = state.precipitation.as_ref() {
         precipitation::overlay_scaled(&mut pixels, p, logical_area);
+    }
+
+    if let Some(s) = state.snowfall.as_ref() {
+        crate::snow::overlay(&mut pixels, s, 0.0);
     }
 
     pixels

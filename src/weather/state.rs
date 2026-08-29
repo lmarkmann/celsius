@@ -1,6 +1,6 @@
 //! Forecast plus coordinates in, [`SkyState`] out. The synthesis layer.
 //!
-//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; visibility drives both haze and the analytic sky's turbidity.
+//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; and one `Atmosphere` built from the reported visibility feeds both the haze layer and the analytic sky.
 //!
 //! The judgement calls worth knowing. Cloud seeds mix `(lat, lon, day)` so a sky reshapes once per UTC day rather than every hour, which stops clouds boiling as you scrub the timeline. `compose_at` interpolates between forecast hours for scalars but snaps weather codes to the nearer hour, because a code is categorical and half of "thunderstorm" is not a thing. Wind direction becomes a lateral offset from the facing bearing, so rain leans the way the wind is actually blowing relative to the viewer.
 //!
@@ -10,12 +10,14 @@ use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
+use crate::atmosphere::Atmosphere;
 use crate::lightning::Lightning;
 use crate::meteors::Meteors;
 use crate::scene::{
     Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, PrecipKind, Precipitation, SkyState,
     Stars, Sun,
 };
+use crate::snow::{self, FlakeForm, Snowfall};
 
 use super::WeatherError;
 use super::bortle;
@@ -36,11 +38,13 @@ const KEYS_TIERS: [&str; 4] = [
 // The weather fields the sky is built from, already resolved (and possibly interpolated between two hours) so the builder never indexes the forecast.
 struct HourSample {
     temperature_c: Option<f64>,
+    relative_humidity: Option<f64>,
     reported_cover: Option<f64>,
     cover_low: f64,
     cover_mid: f64,
     cover_high: f64,
     precip_mm: Option<f64>,
+    snowfall_cm: Option<f64>,
     wind_speed: Option<f64>,
     wind_dir: Option<f64>,
     visibility_m: Option<f64>,
@@ -52,11 +56,13 @@ impl HourSample {
         let hr = &forecast.hourly;
         HourSample {
             temperature_c: hr.temperature_2m[h],
+            relative_humidity: hr.relative_humidity_2m.get(h).copied().flatten(),
             reported_cover: hr.cloud_cover.get(h).copied().flatten(),
             cover_low: hr.cloud_cover_low[h].unwrap_or(0.0) / 100.0,
             cover_mid: hr.cloud_cover_mid[h].unwrap_or(0.0) / 100.0,
             cover_high: hr.cloud_cover_high[h].unwrap_or(0.0) / 100.0,
             precip_mm: hr.precipitation[h],
+            snowfall_cm: hr.snowfall.get(h).copied().flatten(),
             wind_speed: hr.wind_speed_10m[h],
             wind_dir: hr.wind_direction_10m[h],
             visibility_m: hr.visibility[h],
@@ -69,11 +75,13 @@ impl HourSample {
         let b = Self::at(forecast, h1);
         HourSample {
             temperature_c: lerp_opt(a.temperature_c, b.temperature_c, frac),
+            relative_humidity: lerp_opt(a.relative_humidity, b.relative_humidity, frac),
             reported_cover: lerp_opt(a.reported_cover, b.reported_cover, frac),
             cover_low: lerp(a.cover_low, b.cover_low, frac),
             cover_mid: lerp(a.cover_mid, b.cover_mid, frac),
             cover_high: lerp(a.cover_high, b.cover_high, frac),
             precip_mm: lerp_opt(a.precip_mm, b.precip_mm, frac),
+            snowfall_cm: lerp_opt(a.snowfall_cm, b.snowfall_cm, frac),
             wind_speed: lerp_opt(a.wind_speed, b.wind_speed, frac),
             wind_dir: lerp_angle_opt(a.wind_dir, b.wind_dir, frac),
             visibility_m: lerp_opt(a.visibility_m, b.visibility_m, frac),
@@ -88,7 +96,10 @@ impl HourSample {
 }
 
 /// View options shared by every sky in a timeline: where the camera points, how dark the site is, and which model paints the daytime background.
+///
+/// Not exhaustively constructible from outside, for the same reason `Config` is not: this is the surface the atmosphere work extends, and every axis added to it (ground albedo, aerosol species) would otherwise break each caller writing a struct literal. Start from [`ComposeOpts::new`], or from `default()` when the facing does not matter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ComposeOpts {
     /// Azimuth at the horizontal center of the frame, in degrees (180 = south).
     pub center_az: f64,
@@ -96,6 +107,29 @@ pub struct ComposeOpts {
     pub bortle: Option<u8>,
     /// Preetham analytic daytime background instead of the palette gradient.
     pub analytic: bool,
+}
+
+impl ComposeOpts {
+    /// Facing is the one option with no universal default, since which way is worth looking depends on the hemisphere. The rest have real defaults and are set through the `with_` methods.
+    #[must_use]
+    pub fn new(center_az: f64) -> Self {
+        Self {
+            center_az,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn with_bortle(mut self, bortle: Option<u8>) -> Self {
+        self.bortle = bortle;
+        self
+    }
+
+    #[must_use]
+    pub fn with_analytic(mut self, analytic: bool) -> Self {
+        self.analytic = analytic;
+        self
+    }
 }
 
 impl Default for ComposeOpts {
@@ -185,13 +219,6 @@ fn bracket_hours(
     Ok((h0, h0 + 1, frac))
 }
 
-// Open-Meteo visibility tops out near 24 km on clear days and falls to a few km in haze/fog. Map clear -> low turbidity (~2), hazy -> high (~9).
-/// Map visibility in metres to the turbidity range used by the analytic sky.
-pub fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
-    let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
-    (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
-}
-
 fn build_sky(
     sample: &HourSample,
     location: &GeoResult,
@@ -211,6 +238,7 @@ fn build_sky(
     let sun_altaz = astro::sun_position(lat, lon, unix_utc);
     let moon_state = astro::moon_state(lat, lon, unix_utc);
 
+    let atmosphere = Atmosphere::from_visibility(sample.visibility_m);
     let total_cover = total_cover(
         sample.reported_cover,
         sample.cover_low,
@@ -244,7 +272,7 @@ fn build_sky(
             exponent: 1.4,
         })
     } else {
-        build_haze(sample.visibility_m)
+        build_haze(&atmosphere)
     };
     let precipitation = build_precipitation(
         sample.weather_code,
@@ -253,6 +281,19 @@ fn build_sky(
         lat,
         lon,
         day_ordinal,
+        center_az,
+    );
+    let snowfall = build_snowfall(
+        sample.weather_code,
+        sample.snowfall_cm,
+        sample.temperature_c,
+        sample.relative_humidity,
+        sample.wind_dir,
+        sample.wind_speed,
+        lat,
+        lon,
+        day_ordinal,
+        unix_utc.rem_euclid(86_400) as u64 / 3_600,
         center_az,
     );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
@@ -279,7 +320,7 @@ fn build_sky(
         sun_alt: sun_altaz.altitude,
         sun_az: sun_altaz.azimuth,
         center_az,
-        turbidity: turbidity_from_visibility(sample.visibility_m),
+        atmosphere,
         // Two things hold the model back. It ramps in over the first 8 degrees of solar elevation, so it crossfades out of the palette through twilight with no seam at sunrise. And it fades out under cloud, because Preetham describes a *clear* sky: run at full strength under an overcast deck it paints a clean blue-to-pale gradient and calls it a grey day. The overcast palette exists precisely for the sky you can actually see when the clear one is hidden.
         blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0) * (1.0 - total_cover).clamp(0.0, 1.0),
     });
@@ -298,6 +339,7 @@ fn build_sky(
         stars,
         moon,
         precipitation,
+        snowfall,
         lightning,
         meteors,
         horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
@@ -610,8 +652,8 @@ fn cloud_layer(
     })
 }
 
-fn build_haze(visibility_m: Option<f64>) -> Option<Haze> {
-    let viz_km = visibility_m? / 1000.0;
+fn build_haze(atmosphere: &Atmosphere) -> Option<Haze> {
+    let viz_km = atmosphere.visibility_m? / 1000.0;
     if viz_km >= 12.0 {
         return None;
     }
@@ -622,6 +664,64 @@ fn build_haze(visibility_m: Option<f64>) -> Option<Haze> {
         strength,
         exponent: 1.6,
     })
+}
+
+/// WMO codes for snow and snow showers. The single place the split between the two precipitation renderers is decided, so neither can claim an hour the other is also drawing.
+fn is_snow_code(weather_code: Option<u32>) -> bool {
+    let code = weather_code.unwrap_or(0);
+    (71..=77).contains(&code) || (85..=86).contains(&code)
+}
+
+/// Falling snow for this hour, or `None` when it is not snowing.
+///
+/// The hour is in the seed, which precipitation's is not. A rain seed carries only the place and the UTC day, so scrubbing a whole forecast day past shows one frozen arrangement of drops for twenty-four hours; clouds get away with that because they are meant to reshape once a day, and falling precipitation is not.
+#[allow(clippy::too_many_arguments)]
+fn build_snowfall(
+    weather_code: Option<u32>,
+    snowfall_cm: Option<f64>,
+    temperature_c: Option<f64>,
+    relative_humidity: Option<f64>,
+    wind_dir: Option<f64>,
+    wind_speed: Option<f64>,
+    lat: f64,
+    lon: f64,
+    day_ordinal: i64,
+    hour_of_day: u64,
+    center_az: f64,
+) -> Option<Snowfall> {
+    if !is_snow_code(weather_code) {
+        return None;
+    }
+    // A snow code with no reported accumulation is still snow; fall back to something light rather than drawing an empty sky.
+    let rate = snowfall_cm.unwrap_or(0.0).max(0.05);
+    // The diagram is drawn against the humidity where the crystal grew, and the forecast reports it at 2 m, so this is an approximation and not a measurement: what is below the cloud is drier than what is inside it. The fallback is 95 rather than a round 90 because it only fires when the field is missing during an hour already coded as snow, and the split between faceted and branched sits at 93 percent at -15 C, so 90 would quietly report every sky as faceted.
+    let form = FlakeForm::select(
+        temperature_c.unwrap_or(-3.0),
+        relative_humidity.unwrap_or(95.0),
+    );
+    Some(Snowfall {
+        form,
+        count: snow::flake_count(rate),
+        seed: mix_seed(&[
+            hash_lat_lon(lat, lon),
+            day_ordinal as u64,
+            hour_of_day,
+            0x0F1E_ECE5,
+        ]),
+        drift: snow_drift(wind_dir, wind_speed, center_az),
+        opacity: 0.75,
+    })
+}
+
+/// Sideways travel in frame widths per second.
+///
+/// Only the across-view component moves a flake on screen: wind blowing away from the viewer changes nothing a flat frame can show. Scaled so a 20 km/h crosswind carries a flake across the frame in about twenty seconds, and capped, because a gale should lean the snow rather than fire it sideways faster than the eye can follow.
+fn snow_drift(wind_dir: Option<f64>, wind_speed: Option<f64>, center_az: f64) -> f64 {
+    let speed = wind_speed.unwrap_or(0.0);
+    let lateral = lateral_offset_deg(wind_dir.unwrap_or(180.0), center_az)
+        .to_radians()
+        .sin();
+    (lateral * speed * 0.0025).clamp(-0.12, 0.12)
 }
 
 fn build_precipitation(
@@ -637,19 +737,16 @@ fn build_precipitation(
     if mm < 0.10 {
         return None;
     }
-    let code = weather_code.unwrap_or(0);
-    let kind = if (71..=77).contains(&code) || (85..=86).contains(&code) {
-        PrecipKind::Snow
-    } else {
-        PrecipKind::Rain
-    };
+    if is_snow_code(weather_code) {
+        return None;
+    }
     let intensity = (mm / 5.0).clamp(0.10, 0.85);
     let dir = wind_dir.unwrap_or(180.0);
     let delta = lateral_offset_deg(dir, center_az);
     let angle_deg = (delta * 0.30).clamp(-25.0, 25.0);
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal as u64, 0xBA17_DA75]);
     Some(Precipitation {
-        kind,
+        kind: PrecipKind::Rain,
         intensity,
         angle_deg,
         seed,
@@ -837,6 +934,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         stars: None,
         moon: None,
         precipitation: None,
+        snowfall: None,
         lightning: None,
         meteors: None,
         horizon_glow: None,

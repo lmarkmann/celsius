@@ -12,11 +12,13 @@ const ENDPOINT: &str = "https://api.open-meteo.com/v1/forecast";
 
 const HOURLY_FIELDS: &str = concat!(
     "temperature_2m,",
+    "relative_humidity_2m,",
     "cloud_cover,",
     "cloud_cover_low,",
     "cloud_cover_mid,",
     "cloud_cover_high,",
     "precipitation,",
+    "snowfall,",
     "wind_speed_10m,",
     "wind_direction_10m,",
     "visibility,",
@@ -43,12 +45,18 @@ pub struct Forecast {
 pub struct HourlyArrays {
     pub time: Vec<String>,
     pub temperature_2m: Vec<Option<f64>>,
+    /// Over water, which is what Open-Meteo reports and not what the snow morphology diagram is drawn against; `snow::supersaturation` is the conversion.
+    #[serde(default)]
+    pub relative_humidity_2m: Vec<Option<f64>>,
     #[serde(default)]
     pub cloud_cover: Vec<Option<f64>>,
     pub cloud_cover_low: Vec<Option<f64>>,
     pub cloud_cover_mid: Vec<Option<f64>>,
     pub cloud_cover_high: Vec<Option<f64>>,
     pub precipitation: Vec<Option<f64>>,
+    /// Snow depth accumulating this hour, in cm. Separate from `precipitation`, which reports the same fall as liquid water equivalent and so understates it by roughly ten to one.
+    #[serde(default)]
+    pub snowfall: Vec<Option<f64>>,
     pub wind_speed_10m: Vec<Option<f64>>,
     pub wind_direction_10m: Vec<Option<f64>>,
     pub visibility: Vec<Option<f64>>,

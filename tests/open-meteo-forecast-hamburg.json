@@ -16,7 +16,9 @@
     "wind_speed_10m": "km/h",
     "wind_direction_10m": "\u00b0",
     "visibility": "m",
-    "weather_code": "wmo code"
+    "weather_code": "wmo code",
+    "relative_humidity_2m": "%",
+    "snowfall": "cm"
   },
   "hourly": {
     "time": [
@@ -34,6 +36,14 @@
       3.2,
       2.9,
       2.6
+    ],
+    "relative_humidity_2m": [
+      88.0,
+      88.0,
+      88.0,
+      88.0,
+      88.0,
+      88.0
     ],
     "cloud_cover_low": [
       0,
@@ -60,6 +70,14 @@
       0
     ],
     "precipitation": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "snowfall": [
       0.0,
       0.0,
       0.0,
@@ -105,8 +123,8 @@
     "sunrise": "iso8601",
     "sunset": "iso8601",
     "daylight_duration": "s",
-    "temperature_2m_max": "°C",
-    "temperature_2m_min": "°C"
+    "temperature_2m_max": "\u00b0C",
+    "temperature_2m_min": "\u00b0C"
   },
   "daily": {
     "time": [
