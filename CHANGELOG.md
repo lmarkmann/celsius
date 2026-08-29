@@ -2,6 +2,17 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-29
+
+### Breaking
+
+- PrecipKind::Snow is removed; snow is celsius::snow. Also
+
+
+### Added
+
+- Anchored exposure, an atmosphere type, and snow that knows what shape it is ([#88](https://github.com/lmarkmann/celsius/pull/88))
+
 ## [0.6.1] - 2026-08-28
 
 ### Performance
