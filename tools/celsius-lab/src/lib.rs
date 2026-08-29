@@ -456,6 +456,7 @@ pub fn analytic_state(sun_alt: f64, turbidity: f64, sun_az_offset: f64) -> SkySt
         stars: None,
         moon: None,
         precipitation: None,
+        snowfall: None,
         lightning: None,
         meteors: None,
         horizon_glow: None,

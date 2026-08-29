@@ -11,6 +11,8 @@
 //! Two rules explain most of the design. **All compositing happens in Oklab**, converting to sRGB only at the final pixel write, because linear interpolation in Oklab is what keeps a dawn gradient from banding. And **the PRNG is bit-compatible with CPython's `random.Random`**, so a given seed produces identical noise, stars and precipitation on every platform; the golden-image tests depend on that exactness.
 //!
 //! Time-varying effects deliberately live *outside* [`render()`]. Lightning, meteors and the easter egg composite onto a rendered buffer from an app clock, so a still image never catches a flash mid-strike and the expensive pixel pipeline stays cacheable across frames.
+//!
+//! Snow is the exception, and the exception has a reason. A still that catches lightning mid-strike is wrong, but a snowfall scene with no flakes in its PNG is not a scene at all, so [`snow::overlay`] is called by `render()` at `t = 0` and by the TUI on its own clock. One function serves both, which is what makes the still an instant the animation actually passes through.
 
 pub mod analytic_sky;
 pub mod astro;
@@ -28,6 +30,7 @@ pub mod precipitation;
 pub mod raster;
 pub mod render;
 pub mod scene;
+pub mod snow;
 pub mod stars;
 pub mod terminal;
 pub mod tui;

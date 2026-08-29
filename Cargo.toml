@@ -14,9 +14,10 @@ categories = ["command-line-utilities", "visualization"]
 # so excluding them would break the publish verification build.
 exclude = [
   "demos/",
-  # dawn and cloudy_day are WIP: reachable by path in a checkout, deliberately not built in, so editing them stays a test: change that cuts no release.
+  # dawn, cloudy_day and snowfall are WIP: reachable by path in a checkout, deliberately not built in, so editing them stays a test: change that cuts no release.
   "scenes/dawn.toml",
   "scenes/cloudy_day.toml",
+  "scenes/snowfall.toml",
   "scripts/",
   # Bootstraps a binary from GitHub Releases, so it is dead weight to anyone installing from the tarball, and shipping it would make every installer edit cut a release.
   "install.sh",

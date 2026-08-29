@@ -1,0 +1,43 @@
+# snowfall
+# Hamburg, 15 January at 09:48 local; low winter daylight beneath a flat overcast, air at -1 C in near-saturated cloud.
+# Visibility about 1 km, which is WMO 73 moderate-to-heavy continuous snow: the haze here is the falling snow itself, not fog, so it is a soft wash rather than the near-total extinction fog.toml carries.
+# Heavy snow under a flat overcast deck. The sky during snowfall is a dull medium grey, not bright white; the brightness people picture is the snow on the ground, not the sky. A medium tone is also what lets the near-white flakes show at all (snow is painted around 242,244,248), and it dodges the engine's cloud palette, which only spans warm cream to cool purple: any deck near the hidden sun picks up an off-genre warm cast. So, no cloud layers. A flat cold gradient plus dense falling snow reads as heavy snowfall far better than a textured and warm-tinged deck would.
+# The gradient is darker than it looks like it should be, and the contact sheet is why. Flakes cover about a quarter of the frame and every one of them is near white, so they carry a lot of the tone: the first version of this scene measured brighter than cloudy_day and high_noon_clear both, which made a snowstorm the most luminous sky in the library. It sits between them now. Judge this one beside its siblings rather than alone, because on its own a too-bright version still looks like snow.
+# The flake form is not decoration and is not free to choose: at -1 C in dense cloud the Nakaya morphology diagram gives sectored plates, so that is what this scene pins. Its own chrome is the check. A scene claiming -1 C and snowing dendrites would be claiming -15 C weather, and dendrites are the flake everyone pictures, which is exactly why it is the wrong one to reach for here.
+# If this breaks, it looks like: flakes clumped in the left third of a wide terminal (frame fractions lost, see rules/reference-size.md), or a sky that reads white rather than grey, at which point the flakes vanish into it and the scene is just fog.
+
+[gradient]
+stops = [
+  { t = 0.00, rgb = [104, 111, 122] },  # cool dull grey zenith
+  { t = 0.35, rgb = [119, 126, 136] },
+  { t = 0.65, rgb = [136, 142, 150] },
+  { t = 0.88, rgb = [148, 153, 159] },
+  { t = 1.00, rgb = [155, 159, 164] },  # lighter toward the snowy murk, still grey
+]
+
+[sun]
+x_frac  = 0.50
+y_frac  = 1.20
+radius  = 2.0
+visible = false
+
+[haze]
+# The murk of falling snow, and the one parameter here that was doing nothing at all. It used to pull toward [180, 184, 189], which is *darker* than the gradient's own horizon stop, so raising its strength from 0.45 to 0.85 moved no pixel by more than 5 of 255 and what it did move it made dimmer. The low visibility was written in the chrome and encoded nowhere. Distance in snow washes pale, so the target has to sit above the horizon stop, not below it.
+# onset_t, exponent and strength are the documented mapping from docs/literature/README.md at 1 km visibility, where the formula clamps to 0.85. The colour is the deliberate departure: [188, 180, 168] there is warm aerosol haze in daylight, and snow murk is cool and bright.
+rgb      = [178, 182, 188]
+onset_t  = 0.10
+strength = 0.85
+exponent = 1.6
+
+[snowfall]
+form    = "sectored_plate"
+count   = 240             # about 1 cm/h through flake_count, which is heavy but still legible
+seed    = 2749
+drift   = -0.02           # NE wind at 11 km/h, of which only the across-view component moves anything
+opacity = 0.75
+
+[chrome]
+header_left  = "celsius"
+header_right = "hamburg   thu 15 jan   09:48"
+footer       = "-1 C  snow   wind ne 11   visibility 1 km"
+keys         = "m map    space pause    <- -> scrub    q quit"

@@ -6,7 +6,7 @@ scenes := "golden_hour_cumulus blue_hour_calm high_noon_clear moonlit_clear_wint
 
 # Vendored in scenes/ but intentionally NOT locked yet: not pretty enough to bless.
 # Render with `just render-wip`, and promote a name into `scenes` once it is good.
-wip_scenes := "dawn cloudy_day"
+wip_scenes := "dawn cloudy_day snowfall"
 
 default: check
 

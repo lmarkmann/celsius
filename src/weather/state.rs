@@ -17,6 +17,7 @@ use crate::scene::{
     Chrome, CloudKind, CloudLayer, Haze, HorizonGlow, Moon, PrecipKind, Precipitation, SkyState,
     Stars, Sun,
 };
+use crate::snow::{self, FlakeForm, Snowfall};
 
 use super::WeatherError;
 use super::bortle;
@@ -37,11 +38,13 @@ const KEYS_TIERS: [&str; 4] = [
 // The weather fields the sky is built from, already resolved (and possibly interpolated between two hours) so the builder never indexes the forecast.
 struct HourSample {
     temperature_c: Option<f64>,
+    relative_humidity: Option<f64>,
     reported_cover: Option<f64>,
     cover_low: f64,
     cover_mid: f64,
     cover_high: f64,
     precip_mm: Option<f64>,
+    snowfall_cm: Option<f64>,
     wind_speed: Option<f64>,
     wind_dir: Option<f64>,
     visibility_m: Option<f64>,
@@ -53,11 +56,13 @@ impl HourSample {
         let hr = &forecast.hourly;
         HourSample {
             temperature_c: hr.temperature_2m[h],
+            relative_humidity: hr.relative_humidity_2m.get(h).copied().flatten(),
             reported_cover: hr.cloud_cover.get(h).copied().flatten(),
             cover_low: hr.cloud_cover_low[h].unwrap_or(0.0) / 100.0,
             cover_mid: hr.cloud_cover_mid[h].unwrap_or(0.0) / 100.0,
             cover_high: hr.cloud_cover_high[h].unwrap_or(0.0) / 100.0,
             precip_mm: hr.precipitation[h],
+            snowfall_cm: hr.snowfall.get(h).copied().flatten(),
             wind_speed: hr.wind_speed_10m[h],
             wind_dir: hr.wind_direction_10m[h],
             visibility_m: hr.visibility[h],
@@ -70,11 +75,13 @@ impl HourSample {
         let b = Self::at(forecast, h1);
         HourSample {
             temperature_c: lerp_opt(a.temperature_c, b.temperature_c, frac),
+            relative_humidity: lerp_opt(a.relative_humidity, b.relative_humidity, frac),
             reported_cover: lerp_opt(a.reported_cover, b.reported_cover, frac),
             cover_low: lerp(a.cover_low, b.cover_low, frac),
             cover_mid: lerp(a.cover_mid, b.cover_mid, frac),
             cover_high: lerp(a.cover_high, b.cover_high, frac),
             precip_mm: lerp_opt(a.precip_mm, b.precip_mm, frac),
+            snowfall_cm: lerp_opt(a.snowfall_cm, b.snowfall_cm, frac),
             wind_speed: lerp_opt(a.wind_speed, b.wind_speed, frac),
             wind_dir: lerp_angle_opt(a.wind_dir, b.wind_dir, frac),
             visibility_m: lerp_opt(a.visibility_m, b.visibility_m, frac),
@@ -276,6 +283,19 @@ fn build_sky(
         day_ordinal,
         center_az,
     );
+    let snowfall = build_snowfall(
+        sample.weather_code,
+        sample.snowfall_cm,
+        sample.temperature_c,
+        sample.relative_humidity,
+        sample.wind_dir,
+        sample.wind_speed,
+        lat,
+        lon,
+        day_ordinal,
+        unix_utc.rem_euclid(86_400) as u64 / 3_600,
+        center_az,
+    );
     let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
     let meteors = build_meteors(
         sun_altaz.altitude,
@@ -319,6 +339,7 @@ fn build_sky(
         stars,
         moon,
         precipitation,
+        snowfall,
         lightning,
         meteors,
         horizon_glow: build_horizon_glow(&sun_altaz, center_az, total_cover),
@@ -645,6 +666,64 @@ fn build_haze(atmosphere: &Atmosphere) -> Option<Haze> {
     })
 }
 
+/// WMO codes for snow and snow showers. The single place the split between the two precipitation renderers is decided, so neither can claim an hour the other is also drawing.
+fn is_snow_code(weather_code: Option<u32>) -> bool {
+    let code = weather_code.unwrap_or(0);
+    (71..=77).contains(&code) || (85..=86).contains(&code)
+}
+
+/// Falling snow for this hour, or `None` when it is not snowing.
+///
+/// The hour is in the seed, which precipitation's is not. A rain seed carries only the place and the UTC day, so scrubbing a whole forecast day past shows one frozen arrangement of drops for twenty-four hours; clouds get away with that because they are meant to reshape once a day, and falling precipitation is not.
+#[allow(clippy::too_many_arguments)]
+fn build_snowfall(
+    weather_code: Option<u32>,
+    snowfall_cm: Option<f64>,
+    temperature_c: Option<f64>,
+    relative_humidity: Option<f64>,
+    wind_dir: Option<f64>,
+    wind_speed: Option<f64>,
+    lat: f64,
+    lon: f64,
+    day_ordinal: i64,
+    hour_of_day: u64,
+    center_az: f64,
+) -> Option<Snowfall> {
+    if !is_snow_code(weather_code) {
+        return None;
+    }
+    // A snow code with no reported accumulation is still snow; fall back to something light rather than drawing an empty sky.
+    let rate = snowfall_cm.unwrap_or(0.0).max(0.05);
+    // The diagram is drawn against the humidity where the crystal grew, and the forecast reports it at 2 m, so this is an approximation and not a measurement: what is below the cloud is drier than what is inside it. The fallback is 95 rather than a round 90 because it only fires when the field is missing during an hour already coded as snow, and the split between faceted and branched sits at 93 percent at -15 C, so 90 would quietly report every sky as faceted.
+    let form = FlakeForm::select(
+        temperature_c.unwrap_or(-3.0),
+        relative_humidity.unwrap_or(95.0),
+    );
+    Some(Snowfall {
+        form,
+        count: snow::flake_count(rate),
+        seed: mix_seed(&[
+            hash_lat_lon(lat, lon),
+            day_ordinal as u64,
+            hour_of_day,
+            0x0F1E_ECE5,
+        ]),
+        drift: snow_drift(wind_dir, wind_speed, center_az),
+        opacity: 0.75,
+    })
+}
+
+/// Sideways travel in frame widths per second.
+///
+/// Only the across-view component moves a flake on screen: wind blowing away from the viewer changes nothing a flat frame can show. Scaled so a 20 km/h crosswind carries a flake across the frame in about twenty seconds, and capped, because a gale should lean the snow rather than fire it sideways faster than the eye can follow.
+fn snow_drift(wind_dir: Option<f64>, wind_speed: Option<f64>, center_az: f64) -> f64 {
+    let speed = wind_speed.unwrap_or(0.0);
+    let lateral = lateral_offset_deg(wind_dir.unwrap_or(180.0), center_az)
+        .to_radians()
+        .sin();
+    (lateral * speed * 0.0025).clamp(-0.12, 0.12)
+}
+
 fn build_precipitation(
     weather_code: Option<u32>,
     precip_mm: Option<f64>,
@@ -658,19 +737,16 @@ fn build_precipitation(
     if mm < 0.10 {
         return None;
     }
-    let code = weather_code.unwrap_or(0);
-    let kind = if (71..=77).contains(&code) || (85..=86).contains(&code) {
-        PrecipKind::Snow
-    } else {
-        PrecipKind::Rain
-    };
+    if is_snow_code(weather_code) {
+        return None;
+    }
     let intensity = (mm / 5.0).clamp(0.10, 0.85);
     let dir = wind_dir.unwrap_or(180.0);
     let delta = lateral_offset_deg(dir, center_az);
     let angle_deg = (delta * 0.30).clamp(-25.0, 25.0);
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal as u64, 0xBA17_DA75]);
     Some(Precipitation {
-        kind,
+        kind: PrecipKind::Rain,
         intensity,
         angle_deg,
         seed,
@@ -858,6 +934,7 @@ pub fn error_sky(msg: &str) -> SkyState {
         stars: None,
         moon: None,
         precipitation: None,
+        snowfall: None,
         lightning: None,
         meteors: None,
         horizon_glow: None,

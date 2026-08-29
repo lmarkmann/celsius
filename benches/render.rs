@@ -13,6 +13,7 @@ use celsius::colorspace::{Oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use celsius::lightning::{self, Lightning};
 use celsius::noise::Noise;
 use celsius::precipitation;
+use celsius::snow::{self, FlakeForm, Snowfall};
 use celsius::tui::{App, Timeline, draw_frame, write_frame};
 use celsius::weather::forecast::Forecast;
 use celsius::weather::location::GeoResult;
@@ -254,6 +255,22 @@ fn bench_overlay(c: &mut Criterion) {
         )
     });
 
+    // A dendrite is the most expensive form (centre plus four arms) at a heavy-snow count. Unlike the rain pair below, the count is an absolute, so the two sizes measure the per-flake draw against the buffer rather than against a density that grows with it.
+    let heavy = Snowfall {
+        form: FlakeForm::Dendrite,
+        count: 320,
+        seed: 2749,
+        drift: 0.02,
+        opacity: 0.75,
+    };
+    g.bench_function("snow_104x50", |b| {
+        b.iter_batched_ref(
+            || base.clone(),
+            |px| snow::overlay(px, &heavy, 3.0),
+            BatchSize::SmallInput,
+        )
+    });
+
     let stormy = load_scene(scene_path("stormy_afternoon_advancing")).unwrap();
     let precip = stormy
         .precipitation
@@ -270,6 +287,14 @@ fn bench_overlay(c: &mut Criterion) {
     });
 
     let wide = render(&clear, 320, 100);
+    g.bench_function("snow_320x100", |b| {
+        b.iter_batched_ref(
+            || wide.clone(),
+            |px| snow::overlay(px, &heavy, 3.0),
+            BatchSize::SmallInput,
+        )
+    });
+
     g.bench_function("precip_320x100", |b| {
         b.iter_batched_ref(
             || wide.clone(),

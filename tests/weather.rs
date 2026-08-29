@@ -348,3 +348,74 @@ fn the_palette_to_analytic_handover_does_not_step() {
         worst.0
     );
 }
+
+/// The two hourly fields the snow morphology needs. Both are `#[serde(default)]` so an older cached response still parses, which means a silent empty vector is the failure mode and only a fixture that actually carries them can tell the difference.
+#[test]
+fn forecast_carries_humidity_and_snowfall() {
+    let parsed: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let hours = parsed.hourly.time.len();
+    assert_eq!(
+        parsed.hourly.relative_humidity_2m.len(),
+        hours,
+        "humidity must arrive for every hour, not default to empty"
+    );
+    assert_eq!(parsed.hourly.snowfall.len(), hours);
+    assert!(
+        parsed.hourly.relative_humidity_2m[0].is_some(),
+        "the fixture must carry a real humidity reading"
+    );
+}
+
+/// Snow and rain are drawn by different renderers now, so exactly one of them may claim any given hour. Overlap would double the precipitation; a gap would drop it.
+#[test]
+fn a_snow_hour_belongs_to_snow_and_not_to_rain() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.weather_code[h] = Some(73); // moderate snowfall
+        forecast.hourly.precipitation[h] = Some(1.2);
+        forecast.hourly.snowfall[h] = Some(0.8);
+        forecast.hourly.temperature_2m[h] = Some(-6.0);
+        forecast.hourly.relative_humidity_2m[h] = Some(99.0);
+    }
+    let opts = celsius::weather::ComposeOpts::default();
+    let t = 1_775_865_600;
+    let sky = celsius::weather::compose_at(&forecast, &hamburg_geo(), t, t, opts).unwrap();
+
+    assert!(sky.snowfall.is_some(), "a snow code must produce snow");
+    assert!(
+        sky.precipitation.is_none(),
+        "and must not also produce rain streaks"
+    );
+    assert_eq!(
+        sky.snowfall.unwrap().form,
+        celsius::snow::FlakeForm::Needle,
+        "-6 C in near-saturated air is the needle band of the diagram"
+    );
+}
+
+/// Precipitation seeds on place and UTC day only, so a whole forecast day of rain scrubs past as one frozen arrangement. Snow carries the hour, which is what makes scrubbing show different snow.
+#[test]
+fn snow_relayouts_each_hour() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.weather_code[h] = Some(73);
+        forecast.hourly.snowfall[h] = Some(0.8);
+        forecast.hourly.temperature_2m[h] = Some(-6.0);
+        forecast.hourly.relative_humidity_2m[h] = Some(99.0);
+    }
+    let opts = celsius::weather::ComposeOpts::default();
+    let geo = hamburg_geo();
+    let base = 1_775_865_600;
+    let first = celsius::weather::compose(&forecast, &geo, 0, base, opts)
+        .unwrap()
+        .snowfall
+        .expect("hour 0 snows");
+    let second = celsius::weather::compose(&forecast, &geo, 1, base, opts)
+        .unwrap()
+        .snowfall
+        .expect("hour 1 snows");
+    assert_ne!(
+        first.seed, second.seed,
+        "consecutive hours must not share a flake layout"
+    );
+}

@@ -1,12 +1,12 @@
-//! Rain and snow, drawn as angled streaks over a finished sky.
+//! Rain, drawn as angled streaks over a finished sky.
 //!
-//! A streak is not a drop, it is a drop's motion blur over an exposure, which is why length is a parameter rather than a physical fall distance. Rain draws long, cool, near-vertical streaks that fade with height; snow draws short bright flakes. Positions come from the seeded MT19937, so a given scene always produces the same fall.
+//! A streak is not a drop, it is a drop's motion blur over an exposure, which is why length is a parameter rather than a physical fall distance. That is also why snow is not here: a flake is slow enough not to smear, and what it looks like instead depends on the air it grew in, which is `snow`. Positions come from the seeded MT19937, so a given scene always produces the same fall.
 //!
 //! This runs as a full-buffer pass after per-pixel compositing, because one streak spans many pixels and the loop is per streak, not per pixel.
 
 use crate::colorspace::{Oklab, PixelBuffer, lerp_oklab, oklab_to_rgb, rgb_u8_to_oklab};
 use crate::noise::Mt19937;
-use crate::scene::{PrecipKind, Precipitation};
+use crate::scene::Precipitation;
 
 fn rain_top() -> Oklab {
     rgb_u8_to_oklab(208, 218, 230)
@@ -14,10 +14,6 @@ fn rain_top() -> Oklab {
 fn rain_bot() -> Oklab {
     rgb_u8_to_oklab(150, 160, 172)
 }
-fn snow() -> Oklab {
-    rgb_u8_to_oklab(242, 244, 248)
-}
-
 pub fn overlay(pixels: &mut PixelBuffer, precip: &Precipitation) {
     let area = pixels.width * pixels.height;
     overlay_scaled(pixels, precip, area);
@@ -31,10 +27,9 @@ pub fn overlay_scaled(pixels: &mut PixelBuffer, precip: &Precipitation, logical_
     let height = pixels.height;
     let mut rng = Mt19937::init_by_array(&[precip.seed as u32]);
     let n = ((logical_area as f64 * precip.intensity * 0.025) as usize).max(1);
-    let is_rain = precip.kind == PrecipKind::Rain;
     let angle_rad = precip.angle_deg.to_radians();
     let dx = angle_rad.tan();
-    let (top, bot, flake) = (rain_top(), rain_bot(), snow());
+    let (top, bot) = (rain_top(), rain_bot());
 
     for _ in 0..n {
         let px = rng.randint(0, width as i32 - 1);
@@ -51,11 +46,7 @@ pub fn overlay_scaled(pixels: &mut PixelBuffer, precip: &Precipitation, logical_
             let vt = sy as f64 / height as f64;
             let depth_fade = 0.55 + 0.45 * vt;
             let alpha = precip.opacity * depth_fade;
-            let color_lab = if is_rain {
-                lerp_oklab(top, bot, vt)
-            } else {
-                flake
-            };
+            let color_lab = lerp_oklab(top, bot, vt);
             let orig = pixels.get(sx as usize, sy as usize);
             let orig_lab = crate::colorspace::rgb_u8_to_oklab(orig.r, orig.g, orig.b);
             let inv = 1.0 - alpha;

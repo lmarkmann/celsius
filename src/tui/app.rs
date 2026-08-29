@@ -29,6 +29,7 @@ use crate::pigs;
 use crate::raster::{self, RasterOpts};
 use crate::render::render_supersampled;
 use crate::scene::{Chrome, SkyState};
+use crate::snow::{self, Snowfall};
 use crate::tui::widget::SkyWidget;
 use crate::weather::location::{GeoResult, geocode, rank};
 
@@ -142,6 +143,8 @@ pub struct App<'a> {
     /// Cloud motion accumulated since the last repaint, as a fraction of the frame. Compared against `DRIFT_REPAINT_PX` once scaled by the rendered width.
     drift_debt: f64,
     overlay: Overlay,
+    /// Lifted off `display` so the cached base render has no snow baked into it. Left in place it would be drawn once by `render()` and again by the per-frame overlay, at double density, with the baked half standing still.
+    snow: Option<Snowfall>,
     overlay_elapsed: Duration,
     egg_frame: u64,
     egg_prev: bool,
@@ -165,11 +168,13 @@ impl std::fmt::Debug for App<'_> {
 impl<'a> App<'a> {
     pub fn new(timeline: &'a Timeline) -> Self {
         let index = timeline.home;
-        let display = timeline.states[index].clone();
+        let mut display = timeline.states[index].clone();
+        let snow = display.snowfall.take();
         Self {
             timeline,
             index,
             display,
+            snow,
             drift_paused: false,
             drift_debt: 0.0,
             overlay: Overlay::None,
@@ -242,6 +247,7 @@ impl<'a> App<'a> {
         changed
             || self.display.lightning.is_some()
             || self.display.meteors.is_some()
+            || self.snow.is_some()
             || egg
             || egg_changed
     }
@@ -273,6 +279,7 @@ impl<'a> App<'a> {
                 if new != self.index {
                     self.index = new;
                     self.display = self.timeline.states[new].clone();
+                    self.snow = self.display.snowfall.take();
                     self.sky_dirty = true;
                 }
             }
@@ -785,11 +792,15 @@ fn draw_sky(buf: &mut Buffer, area: Rect, app: &mut App) {
             })
         }
     };
-    // Lightning, meteors, and the pigs egg composite onto a copy so the cached base stays reusable; their timing is per-frame state, not part of the sky render. `overlay_elapsed` is the shared real-time clock every tick overlay reads.
-    if app.display.lightning.is_some() || app.display.meteors.is_some() || egg {
+    // Lightning, snow, meteors, and the pigs egg composite onto a copy so the cached base stays reusable; their timing is per-frame state, not part of the sky render. `overlay_elapsed` is the shared real-time clock every tick overlay reads.
+    if app.display.lightning.is_some() || app.snow.is_some() || app.display.meteors.is_some() || egg
+    {
         let mut pixels = cache.pixels.clone();
         if let Some(lt) = &app.display.lightning {
             lightning::overlay(&mut pixels, lt, app.overlay_elapsed.as_secs_f64());
+        }
+        if let Some(sn) = &app.snow {
+            snow::overlay(&mut pixels, sn, app.overlay_elapsed.as_secs_f64());
         }
         if let Some(m) = &app.display.meteors {
             meteors::overlay(&mut pixels, m, app.overlay_elapsed.as_secs_f64());
@@ -1261,6 +1272,7 @@ mod tests {
             stars: None,
             moon: None,
             precipitation: None,
+            snowfall: None,
             lightning: None,
             meteors: None,
             horizon_glow: None,
@@ -1277,6 +1289,56 @@ mod tests {
             None,
             0,
         )
+    }
+
+    fn snowy_timeline() -> Timeline {
+        let states = (0..50)
+            .map(|i| {
+                let mut st = sky(&format!("s{i}"));
+                st.snowfall = Some(crate::snow::Snowfall {
+                    form: crate::snow::FlakeForm::Dendrite,
+                    count: 80,
+                    seed: 2749,
+                    drift: 0.0,
+                    opacity: 0.75,
+                });
+                st
+            })
+            .collect();
+        Timeline::new(states, 10, None, 0)
+    }
+
+    /// Snow is the one overlay `render()` also draws, so the app has to take it off the sky before caching the base or the same fall is composited twice: once baked into the cache and standing still, once animating on top, at double density. Nothing about the frame would look obviously broken, which is why this is a test and not an eyeball.
+    #[test]
+    fn the_app_takes_snow_off_the_cached_sky() {
+        let timeline = snowy_timeline();
+        let mut app = App::new(&timeline);
+        assert!(
+            app.display.snowfall.is_none(),
+            "the cached sky must not carry snow for render() to bake in"
+        );
+        assert!(app.snow.is_some(), "and the app must have taken it");
+
+        // Scrubbing replaces `display` wholesale, which is the second place the lift has to happen.
+        app.handle_key(press(KeyCode::Right));
+        assert!(
+            app.display.snowfall.is_none(),
+            "scrubbing must lift snow off the newly cloned sky too"
+        );
+        assert!(app.snow.is_some(), "and keep it on the app");
+    }
+
+    /// A snowy sky is never still, so the drift gate must not stop repainting it the way it correctly stops repainting a clear one.
+    #[test]
+    fn a_snowy_sky_keeps_repainting() {
+        let timeline = snowy_timeline();
+        let mut app = App::new(&timeline);
+        app.display.wind_speed_kmh = 0.0;
+        app.display.clouds.clear();
+        assert!(
+            app.tick(Duration::from_millis(33)),
+            "falling snow is a visible change on every tick"
+        );
     }
 
     fn press(code: KeyCode) -> KeyEvent {
