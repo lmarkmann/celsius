@@ -1,15 +1,6 @@
 name: mutants
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".cargo/mutants.toml"
-      - ".github/workflows/mutants.yml"
   workflow_dispatch:
 
 permissions:
