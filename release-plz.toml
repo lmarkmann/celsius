@@ -39,8 +39,19 @@ header = """# Changelog
 All notable changes to celsius are recorded here. Format roughly follows
 Keep a Changelog and versions follow SemVer.
 """
+# The breaking block is listed first and separately, and it is not decoration. `commit_parsers`
+# below groups on the type alone, so `feat!` lands under Added exactly like `feat` and the release
+# notes never say what stopped compiling. 0.5.0 carries a Breaking section only because someone
+# wrote it by hand; 0.6.0 was equally breaking and shipped without one. git-conventional sets
+# `breaking` for both the `!` marker and a `BREAKING CHANGE:` footer, so this catches either, and
+# a commit appears in both places on purpose: Added for what it adds, Breaking for what it costs.
 body = """
 ## [{{ version }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% set breaking = commits | filter(attribute="breaking", value=true) %}{% if breaking | length > 0 %}
+### Breaking
+{% for commit in breaking %}
+- {{ commit.breaking_description | default(value=commit.message) | upper_first }}{% endfor %}
+{% endif %}
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | upper_first }}
 {% for commit in commits %}
