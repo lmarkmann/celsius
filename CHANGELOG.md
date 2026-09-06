@@ -2,6 +2,17 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-06
+
+### Breaking
+
+- HourlyArrays.time and DailyArrays.time, sunrise and sunset are i64 unix seconds instead of local ISO strings; HourlyArrays gains rain, showers, precipitation_probability, cape, direct_normal_irradiance_instant and aerosol_optical_depth; Sun gains strength; compose_at no longer fails on a timestamp it cannot parse.
+
+
+### Added
+
+- Available forecast window is now dependent the current hour (instead of 12 AM of the day) and implemented quantitive changes to let the OpenMeteo forecast and reflect the amount of sunshine that passes through clouds ([#92](https://github.com/lmarkmann/celsius/pull/92))
+
 ## [0.7.0] - 2026-08-29
 
 ### Breaking
