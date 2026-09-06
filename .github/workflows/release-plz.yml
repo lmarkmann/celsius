@@ -51,7 +51,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: release-plz/action@v0.5
+        id: release-pr
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - if: steps.release-pr.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          PR: ${{ fromJSON(steps.release-pr.outputs.pr).number }}
+        run: gh pr merge --auto --squash "$PR"
