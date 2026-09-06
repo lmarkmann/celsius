@@ -1245,6 +1245,7 @@ mod tests {
                 y_frac: 0.5,
                 radius: 2.0,
                 visible: true,
+                strength: 1.0,
             },
             clouds: vec![CloudLayer {
                 cover: 1.0,

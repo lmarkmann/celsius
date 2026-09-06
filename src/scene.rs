@@ -53,6 +53,9 @@ pub struct Sun {
     pub radius: f64,
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// How much of the disc and its glow to draw, 0 to 1. Live skies set it from the share of the direct beam the forecast says reaches the ground, so the sun behind a deck is a faint patch rather than a crisp disc painted over the cloud. Scenes are hand-lit and default to full strength.
+    #[serde(default = "default_one")]
+    pub strength: f64,
 }
 
 /// Cloud morphology class. Drives noise detail, edge sharpness, and the lit/shadow colors so a thin cirrus veil, a flat stratus deck, and a dark storm tower no longer share one texture. `Generic` reproduces the pre-morphology render exactly, which keeps vendored scenes and the oracle goldens unchanged.
@@ -401,6 +404,10 @@ fn parse_scene(path: &Path, text: &str) -> Result<SkyState, SceneError> {
         wind_speed_kmh: 0.0,
         unix_utc: 0,
     })
+}
+
+fn default_one() -> f64 {
+    1.0
 }
 
 fn default_true() -> bool {

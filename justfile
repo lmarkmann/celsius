@@ -110,6 +110,11 @@ lock:
 bench:
     cargo bench --bench render
 
+# Where the time goes inside a frame, in the Firefox Profiler. Profiles the render bench so runs are repeatable.
+profile:
+    cargo bench --bench render --profile profiling --no-run
+    samply record -o target/profiling/profile.json.gz $(ls -t target/profiling/deps/render-* | rg -v "\.d$" | head -1) --bench --profile-time 10
+
 # Config lives in .cargo/mutants.toml. The whole crate is ~3600 mutants and hours of
 # wall clock, so reach for `mutants-file` or `mutants-diff` unless you mean it.
 # Every mutant the suite fails to kill: code a test runs but nothing asserts on.

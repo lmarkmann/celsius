@@ -7,27 +7,32 @@
   "timezone_abbreviation": "GMT",
   "elevation": 3.0,
   "hourly_units": {
-    "time": "iso8601",
-    "temperature_2m": "\u00b0C",
+    "time": "unixtime",
+    "temperature_2m": "°C",
+    "relative_humidity_2m": "%",
     "cloud_cover_low": "%",
     "cloud_cover_mid": "%",
     "cloud_cover_high": "%",
     "precipitation": "mm",
+    "rain": "mm",
+    "showers": "mm",
+    "snowfall": "cm",
+    "precipitation_probability": "%",
+    "cape": "J/kg",
+    "direct_normal_irradiance_instant": "W/m²",
     "wind_speed_10m": "km/h",
-    "wind_direction_10m": "\u00b0",
+    "wind_direction_10m": "°",
     "visibility": "m",
-    "weather_code": "wmo code",
-    "relative_humidity_2m": "%",
-    "snowfall": "cm"
+    "weather_code": "wmo code"
   },
   "hourly": {
     "time": [
-      "2026-04-11T00:00",
-      "2026-04-11T01:00",
-      "2026-04-11T02:00",
-      "2026-04-11T03:00",
-      "2026-04-11T04:00",
-      "2026-04-11T05:00"
+      1775865600,
+      1775869200,
+      1775872800,
+      1775876400,
+      1775880000,
+      1775883600
     ],
     "temperature_2m": [
       4.8,
@@ -77,6 +82,22 @@
       0.0,
       0.0
     ],
+    "rain": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "showers": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
     "snowfall": [
       0.0,
       0.0,
@@ -84,6 +105,30 @@
       0.0,
       0.0,
       0.0
+    ],
+    "precipitation_probability": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "cape": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "direct_normal_irradiance_instant": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      93.3
     ],
     "wind_speed_10m": [
       4.0,
@@ -119,22 +164,22 @@
     ]
   },
   "daily_units": {
-    "time": "iso8601",
-    "sunrise": "iso8601",
-    "sunset": "iso8601",
+    "time": "unixtime",
+    "sunrise": "unixtime",
+    "sunset": "unixtime",
     "daylight_duration": "s",
-    "temperature_2m_max": "\u00b0C",
-    "temperature_2m_min": "\u00b0C"
+    "temperature_2m_max": "°C",
+    "temperature_2m_min": "°C"
   },
   "daily": {
     "time": [
-      "2026-04-11"
+      1775865600
     ],
     "sunrise": [
-      "2026-04-11T04:38"
+      1775882280
     ],
     "sunset": [
-      "2026-04-11T18:14"
+      1775931240
     ],
     "daylight_duration": [
       48960.0

@@ -1,12 +1,12 @@
 //! Forecast plus coordinates in, [`SkyState`] out. The synthesis layer.
 //!
-//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; WMO weather codes decide rain versus snow and whether the storm gets lightning; and one `Atmosphere` built from the reported visibility feeds both the haze layer and the analytic sky.
+//! `compose` is where numbers become a sky. Solar and lunar position come from the `astro` module; a palette is chosen by sun altitude with overcast overrides; cloud layers are built from the low/mid/high cover triple at fixed altitudes; stars fade in below -3 degrees; the rain, showers and snowfall fields decide what falls and the WMO code whether a storm gets lightning; the model's own direct beam decides how much of the sun and of the clear-sky model to draw; and one `Atmosphere` built from optical depth, or visibility when that is missing, feeds both the haze layer and the analytic sky.
 //!
 //! The judgement calls worth knowing. Cloud seeds mix `(lat, lon, day)` so a sky reshapes once per UTC day rather than every hour, which stops clouds boiling as you scrub the timeline. `compose_at` interpolates between forecast hours for scalars but snaps weather codes to the nearer hour, because a code is categorical and half of "thunderstorm" is not a thing. Wind direction becomes a lateral offset from the facing bearing, so rain leans the way the wind is actually blowing relative to the viewer.
 //!
-//! Times are UTC everywhere inside. Open-Meteo returns local strings under `timezone=auto`, so they are converted in at the boundary and back out only for display.
+//! Times are unix UTC seconds straight from the forecast. The location's offset is applied only for display and for finding the local day in the daily block.
 
-use chrono::{Datelike, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{Datelike, TimeZone, Timelike, Utc};
 
 use crate::analytic_sky::AnalyticSky;
 use crate::astro::{self, AltAz};
@@ -22,7 +22,7 @@ use crate::snow::{self, FlakeForm, Snowfall};
 use super::WeatherError;
 use super::bortle;
 use super::forecast::{DailyArrays, Forecast};
-use super::gradients::{Palette, gradient_for, sky_gradient};
+use super::gradients::{Palette, fog_gradient, gradient_for, sky_gradient};
 use super::location::GeoResult;
 
 const KEYS_HINT: &str = "<- -> scrub   tab day   t now   l location   ? help   q quit";
@@ -44,7 +44,13 @@ struct HourSample {
     cover_mid: f64,
     cover_high: f64,
     precip_mm: Option<f64>,
+    rain_mm: Option<f64>,
+    showers_mm: Option<f64>,
     snowfall_cm: Option<f64>,
+    precip_probability: Option<f64>,
+    cape: Option<f64>,
+    dni: Option<f64>,
+    aod_550: Option<f64>,
     wind_speed: Option<f64>,
     wind_dir: Option<f64>,
     visibility_m: Option<f64>,
@@ -62,7 +68,17 @@ impl HourSample {
             cover_mid: hr.cloud_cover_mid[h].unwrap_or(0.0) / 100.0,
             cover_high: hr.cloud_cover_high[h].unwrap_or(0.0) / 100.0,
             precip_mm: hr.precipitation[h],
+            rain_mm: hr.rain.get(h).copied().flatten(),
+            showers_mm: hr.showers.get(h).copied().flatten(),
             snowfall_cm: hr.snowfall.get(h).copied().flatten(),
+            precip_probability: hr.precipitation_probability.get(h).copied().flatten(),
+            cape: hr.cape.get(h).copied().flatten(),
+            dni: hr
+                .direct_normal_irradiance_instant
+                .get(h)
+                .copied()
+                .flatten(),
+            aod_550: hr.aerosol_optical_depth.get(h).copied().flatten(),
             wind_speed: hr.wind_speed_10m[h],
             wind_dir: hr.wind_direction_10m[h],
             visibility_m: hr.visibility[h],
@@ -81,7 +97,13 @@ impl HourSample {
             cover_mid: lerp(a.cover_mid, b.cover_mid, frac),
             cover_high: lerp(a.cover_high, b.cover_high, frac),
             precip_mm: lerp_opt(a.precip_mm, b.precip_mm, frac),
+            rain_mm: lerp_opt(a.rain_mm, b.rain_mm, frac),
+            showers_mm: lerp_opt(a.showers_mm, b.showers_mm, frac),
             snowfall_cm: lerp_opt(a.snowfall_cm, b.snowfall_cm, frac),
+            precip_probability: lerp_opt(a.precip_probability, b.precip_probability, frac),
+            cape: lerp_opt(a.cape, b.cape, frac),
+            dni: lerp_opt(a.dni, b.dni, frac),
+            aod_550: lerp_opt(a.aod_550, b.aod_550, frac),
             wind_speed: lerp_opt(a.wind_speed, b.wind_speed, frac),
             wind_dir: lerp_angle_opt(a.wind_dir, b.wind_dir, frac),
             visibility_m: lerp_opt(a.visibility_m, b.visibility_m, frac),
@@ -146,7 +168,7 @@ impl Default for ComposeOpts {
 ///
 /// # Errors
 ///
-/// [`WeatherError::Decode`] if the forecast's hour timestamp cannot be parsed. The hourly measurements are all optional, so a forecast with gaps in them still composes.
+/// None today. The hourly measurements are all optional, so a forecast with gaps in them still composes; the `Result` stays so a forecast shape that cannot compose has somewhere to go without changing every caller.
 pub fn compose(
     forecast: &Forecast,
     location: &GeoResult,
@@ -155,7 +177,7 @@ pub fn compose(
     opts: ComposeOpts,
 ) -> Result<SkyState, WeatherError> {
     let h = hour_index.min(forecast.hourly.len().saturating_sub(1));
-    let unix_utc = parse_hour_to_unix(&forecast.hourly.time[h], forecast.utc_offset_seconds)?;
+    let unix_utc = forecast.hourly.time[h];
     let sample = HourSample::at(forecast, h);
     Ok(build_sky(
         &sample,
@@ -172,7 +194,7 @@ pub fn compose(
 ///
 /// # Errors
 ///
-/// [`WeatherError::Decode`] if the forecast timestamps bracketing `target_unix` cannot be parsed.
+/// None today, for the same reason as [`compose`].
 pub fn compose_at(
     forecast: &Forecast,
     location: &GeoResult,
@@ -180,7 +202,7 @@ pub fn compose_at(
     now_unix: i64,
     opts: ComposeOpts,
 ) -> Result<SkyState, WeatherError> {
-    let (h0, h1, frac) = bracket_hours(forecast, target_unix)?;
+    let (h0, h1, frac) = bracket_hours(forecast, target_unix);
     let sample = HourSample::interpolated(forecast, h0, h1, frac);
     Ok(build_sky(
         &sample,
@@ -194,29 +216,16 @@ pub fn compose_at(
 }
 
 // Locate the two forecast hours straddling target_unix and the 0..1 fraction between them. Clamps to the ends when the target falls outside the range.
-fn bracket_hours(
-    forecast: &Forecast,
-    target_unix: i64,
-) -> Result<(usize, usize, f64), WeatherError> {
+fn bracket_hours(forecast: &Forecast, target_unix: i64) -> (usize, usize, f64) {
     let times = &forecast.hourly.time;
-    let offset = forecast.utc_offset_seconds;
     let last = times.len().saturating_sub(1);
-    let mut h0 = 0usize;
-    for (i, t) in times.iter().enumerate() {
-        if parse_hour_to_unix(t, offset)? <= target_unix {
-            h0 = i;
-        } else {
-            break;
-        }
-    }
+    let h0 = times.iter().rposition(|&t| t <= target_unix).unwrap_or(0);
     if h0 >= last {
-        return Ok((last, last, 0.0));
+        return (last, last, 0.0);
     }
-    let t0 = parse_hour_to_unix(&times[h0], offset)?;
-    let t1 = parse_hour_to_unix(&times[h0 + 1], offset)?;
-    let span = (t1 - t0).max(1) as f64;
-    let frac = ((target_unix - t0) as f64 / span).clamp(0.0, 1.0);
-    Ok((h0, h0 + 1, frac))
+    let span = (times[h0 + 1] - times[h0]).max(1) as f64;
+    let frac = ((target_unix - times[h0]) as f64 / span).clamp(0.0, 1.0);
+    (h0, h0 + 1, frac)
 }
 
 fn build_sky(
@@ -238,33 +247,54 @@ fn build_sky(
     let sun_altaz = astro::sun_position(lat, lon, unix_utc);
     let moon_state = astro::moon_state(lat, lon, unix_utc);
 
-    let atmosphere = Atmosphere::from_visibility(sample.visibility_m);
+    let atmosphere = Atmosphere::from_readings(sample.visibility_m, sample.aod_550);
     let total_cover = total_cover(
         sample.reported_cover,
         sample.cover_low,
         sample.cover_mid,
         sample.cover_high,
     );
+    let sun_through = sun_transmission(sun_altaz.altitude, sample.dni, total_cover);
+    let fog = fog_density(
+        sample.weather_code,
+        sample.relative_humidity,
+        sample.visibility_m,
+    );
+    let socked_in = fog.is_some_and(|density| density > 0.5);
 
     let mut gradient = sky_gradient(sun_altaz.altitude, total_cover);
+    if let Some(density) = fog {
+        gradient = fog_gradient(&gradient, sun_altaz.altitude, density);
+    }
     bortle::apply_glow(&mut gradient, bortle, sun_altaz.altitude);
 
     let day_ordinal = unix_utc.div_euclid(86_400);
-    let sun = build_sun(&sun_altaz, center_az);
+    let sun = build_sun(&sun_altaz, center_az, sun_through);
     let moon = build_moon(&moon_state, center_az);
-    let stars = build_stars(sun_altaz.altitude, lat, lon, day_ordinal, bortle);
+    let stars = if socked_in {
+        None
+    } else {
+        build_stars(sun_altaz.altitude, lat, lon, day_ordinal, bortle)
+    };
+    let low_kind = low_cloud_kind(
+        sample.weather_code.unwrap_or(0),
+        sample.cover_low,
+        sample.showers_mm.unwrap_or(0.0),
+    );
     let clouds = build_clouds(
         sample.cover_low,
         sample.cover_mid,
         sample.cover_high,
-        sample.weather_code,
+        low_kind,
         lat,
         lon,
         day_ordinal,
     );
     // A bright-but-clouded daytime sky needs its own horizon haze regardless of reported visibility; this matches the old CloudyDay palette regime.
     let cloudy_day = sun_altaz.altitude > 3.0 && (0.50..0.80).contains(&total_cover);
-    let haze = if cloudy_day {
+    let haze = if let Some(density) = fog {
+        Some(fog_veil(density, sun_altaz.altitude))
+    } else if cloudy_day {
         Some(Haze {
             rgb: [178, 174, 165],
             onset_t: 0.55,
@@ -274,9 +304,17 @@ fn build_sky(
     } else {
         build_haze(&atmosphere)
     };
+    // Rain and showers are the liquid share of the total; when neither was reported the total stands in and the code has to say whether it fell as snow.
+    let (liquid_mm, split_reported) = match (sample.rain_mm, sample.showers_mm) {
+        (None, None) => (sample.precip_mm, false),
+        (rain, showers) => (Some(rain.unwrap_or(0.0) + showers.unwrap_or(0.0)), true),
+    };
+    let certainty = precipitation_certainty(sample.precip_probability);
     let precipitation = build_precipitation(
         sample.weather_code,
-        sample.precip_mm,
+        liquid_mm,
+        split_reported,
+        certainty,
         sample.wind_dir,
         lat,
         lon,
@@ -286,6 +324,7 @@ fn build_sky(
     let snowfall = build_snowfall(
         sample.weather_code,
         sample.snowfall_cm,
+        certainty,
         sample.temperature_c,
         sample.relative_humidity,
         sample.wind_dir,
@@ -296,20 +335,30 @@ fn build_sky(
         unix_utc.rem_euclid(86_400) as u64 / 3_600,
         center_az,
     );
-    let lightning = build_lightning(sample.weather_code, sample.precip_mm, lat, lon, unix_utc);
-    let meteors = build_meteors(
-        sun_altaz.altitude,
-        total_cover,
+    let lightning = build_lightning(
+        sample.weather_code,
+        sample.precip_mm,
+        sample.cape,
         lat,
         lon,
         unix_utc,
-        center_az,
-        opts.bortle,
     );
+    let meteors = if socked_in {
+        None
+    } else {
+        build_meteors(
+            sun_altaz.altitude,
+            total_cover,
+            lat,
+            lon,
+            unix_utc,
+            center_az,
+            opts.bortle,
+        )
+    };
 
-    let date_iso = utc_date_iso(unix_utc + offset);
-    let sun_day = daily.and_then(|d| sun_day_for(d, &date_iso, offset));
-    let high_low = daily.and_then(|d| daily_high_low(d, &date_iso));
+    let sun_day = daily.and_then(|d| sun_day_for(d, unix_utc, offset));
+    let high_low = daily.and_then(|d| daily_high_low(d, unix_utc, offset));
 
     let chrome = build_chrome(
         location, unix_utc, now_unix, offset, sample, sun_day, high_low,
@@ -321,8 +370,8 @@ fn build_sky(
         sun_az: sun_altaz.azimuth,
         center_az,
         atmosphere,
-        // Two things hold the model back. It ramps in over the first 8 degrees of solar elevation, so it crossfades out of the palette through twilight with no seam at sunrise. And it fades out under cloud, because Preetham describes a *clear* sky: run at full strength under an overcast deck it paints a clean blue-to-pale gradient and calls it a grey day. The overcast palette exists precisely for the sky you can actually see when the clear one is hidden.
-        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0) * (1.0 - total_cover).clamp(0.0, 1.0),
+        // Two things hold the model back. It ramps in over the first 8 degrees of solar elevation, so it crossfades out of the palette through twilight with no seam at sunrise; Preetham's zenith formula is not to be trusted that low anyway. And it is weighted by how much of the beam gets through, because Preetham describes a *clear* sky: run at full strength under an overcast deck it paints a clean blue-to-pale gradient and calls it a grey day. Cover used to do that job and did it too well, since a veil of cirrus reports full cover and hides nothing; the beam fraction lets the clear sky show through exactly as much as the sun does.
+        blend: (sun_altaz.altitude / 8.0).clamp(0.0, 1.0) * sun_through,
     });
 
     SkyState {
@@ -374,6 +423,7 @@ fn lerp_angle_opt(a: Option<f64>, b: Option<f64>, f: f64) -> Option<f64> {
 fn build_lightning(
     weather_code: Option<u32>,
     precip_mm: Option<f64>,
+    cape: Option<f64>,
     lat: f64,
     lon: f64,
     unix_utc: i64,
@@ -383,12 +433,74 @@ fn build_lightning(
         return None;
     }
     let with_bolts = matches!(code, 95 | 96 | 99);
-    let mm = precip_mm.unwrap_or(0.4);
-    let intensity = (mm / 5.0).clamp(0.20, 0.85);
+    let intensity = storm_intensity(cape, precip_mm);
     let hour = unix_utc.div_euclid(3_600) as u64;
     let day_ordinal = unix_utc.div_euclid(86_400) as u64;
     let seed = mix_seed(&[hash_lat_lon(lat, lon), day_ordinal, hour, 0x1167_8175]) as u32;
     Some(Lightning::new(seed, intensity, 3_600.0, with_bolts))
+}
+
+// The code only says a storm exists; CAPE is its fuel, and 2500 J/kg is the conventional mark for large instability. Without it the rain rate stands in, which makes a wet stratiform storm flash harder than a dry violent one.
+fn storm_intensity(cape: Option<f64>, precip_mm: Option<f64>) -> f64 {
+    match cape {
+        Some(cape) => (cape / 2500.0).clamp(0.20, 0.85),
+        None => (precip_mm.unwrap_or(0.4) / 5.0).clamp(0.20, 0.85),
+    }
+}
+
+// Extraterrestrial normal irradiance in W/m2. The 3.3 percent annual swing from the earth-sun distance is far below the clear-sky model's own error, so it is not tracked.
+const SOLAR_CONSTANT: f64 = 1361.0;
+
+/// How much of the sun gets through, 0 under a deck and 1 on a clear day: the model's direct beam against what a clean atmosphere would pass at this elevation.
+///
+/// This is the quantity the analytic sky's weight and the sun disc both want, and it beats cloud cover for both because cover is opaque by definition: a full sky of thin cirrus reports 100 percent and lets most of the beam through. The clean-atmosphere reference is Meinel's fit, `0.7^(m^0.678)` with Kasten-Young air mass, which lands on measured clear-sky DNI within about ten percent above ten degrees of elevation. Below that both the fit and the model drift, and that is the band the altitude ramp on the analytic blend already fades. Without a beam reading the old cover fade stands in.
+fn sun_transmission(sun_alt_deg: f64, dni: Option<f64>, total_cover: f64) -> f64 {
+    match dni {
+        Some(dni) if sun_alt_deg > 0.0 => {
+            (dni / SOLAR_CONSTANT / clear_sky_beam(sun_alt_deg)).clamp(0.0, 1.0)
+        }
+        _ => (1.0 - total_cover).clamp(0.0, 1.0),
+    }
+}
+
+fn clear_sky_beam(sun_alt_deg: f64) -> f64 {
+    let alt = sun_alt_deg.max(0.0);
+    let air_mass = 1.0 / (alt.to_radians().sin() + 0.50572 * (alt + 6.07995).powf(-1.6364));
+    0.7f64.powf(air_mass.powf(0.678))
+}
+
+// A twenty percent chance on day six must not paint the same downpour as certain rain in an hour. The floor keeps light-but-certain rain from vanishing when a model reports low probabilities for drizzle.
+fn precipitation_certainty(probability_pct: Option<f64>) -> f64 {
+    probability_pct.map_or(1.0, |p| (p / 100.0).clamp(0.3, 1.0))
+}
+
+/// Fog as a density in 0.4..=1, or `None` when the air is merely humid. Either the code says fog (45, 48) or the hour is saturated with under a kilometre of visibility, which is the WMO definition. Mist, one to four kilometres, stays with the ordinary haze curve, which is already at 0.8 by two.
+fn fog_density(
+    weather_code: Option<u32>,
+    relative_humidity: Option<f64>,
+    visibility_m: Option<f64>,
+) -> Option<f64> {
+    let coded = matches!(weather_code, Some(45 | 48));
+    let saturated =
+        relative_humidity.is_some_and(|rh| rh >= 97.0) && visibility_m.is_some_and(|v| v < 1000.0);
+    if !coded && !saturated {
+        return None;
+    }
+    Some(visibility_m.map_or(0.8, |v| (1.0 - v / 1000.0).clamp(0.4, 1.0)))
+}
+
+// The fog scene's veil: a full-frame haze, daylight grey, going dark with the sun, since fog at night is lit only by whatever the ground throws up.
+fn fog_veil(density: f64, sun_alt_deg: f64) -> Haze {
+    let night = bortle::night_factor(sun_alt_deg);
+    let day = [208.0, 207.0, 202.0];
+    let dark = [60.0, 62.0, 66.0];
+    let rgb = [0, 1, 2].map(|i| (day[i] + (dark[i] - day[i]) * night).round() as u8);
+    Haze {
+        rgb,
+        onset_t: 0.0,
+        strength: 0.55 + 0.30 * density,
+        exponent: 1.15,
+    }
 }
 
 // Meteors show on a dark, clear-enough sky: sun well below the horizon and not overcast. Seeded per (place, day) like the clouds and lightning.
@@ -413,13 +525,6 @@ fn build_meteors(
     ))
 }
 
-// Open-Meteo returns its time strings already in the location's local zone (timezone=auto), so subtract the location's UTC offset to recover true UTC; the whole internal pipeline then runs in UTC.
-fn parse_hour_to_unix(time_str: &str, offset: i64) -> Result<i64, WeatherError> {
-    let naive = NaiveDateTime::parse_from_str(time_str, "%Y-%m-%dT%H:%M")
-        .map_err(|e| WeatherError::Decode(format!("hour timestamp '{time_str}': {e}")))?;
-    Ok(naive.and_utc().timestamp() - offset)
-}
-
 #[derive(Debug, Clone, PartialEq)]
 enum SunDay {
     Times { rise_unix: i64, set_unix: i64 },
@@ -427,16 +532,22 @@ enum SunDay {
     PolarNight,
 }
 
-fn utc_date_iso(unix_utc: i64) -> String {
-    Utc.timestamp_opt(unix_utc, 0)
-        .single()
-        .map(|dt| dt.date_naive().to_string())
-        .unwrap_or_default()
+fn local_day(unix: i64, offset: i64) -> i64 {
+    (unix + offset).div_euclid(86_400)
 }
 
-// Open-Meteo encodes polar day/night as sentinel values, not nulls: polar day -> daylight_duration == 86400, sunrise YYYY-MM-DDT00:00, sunset next-day T00:00. polar night -> daylight_duration == 0, sunrise == sunset == YYYY-MM-DDT00:00. Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
-fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDay> {
-    let i = daily.time.iter().position(|d| d == date_iso)?;
+// Daily rows are local days and carry the instant of their local midnight, so the row for an hour is the one whose midnight falls on the same local date.
+fn daily_row(daily: &DailyArrays, unix_utc: i64, offset: i64) -> Option<usize> {
+    let day = local_day(unix_utc, offset);
+    daily
+        .time
+        .iter()
+        .position(|&midnight| local_day(midnight, offset) == day)
+}
+
+// Open-Meteo encodes polar day/night as sentinel values, not nulls: polar day -> daylight_duration == 86400, sunrise at local midnight, sunset at the next one. polar night -> daylight_duration == 0, sunrise == sunset == local midnight. Slop guards (>= 86_399, <= 1) are insurance against future float drift, not currently needed.
+fn sun_day_for(daily: &DailyArrays, unix_utc: i64, offset: i64) -> Option<SunDay> {
+    let i = daily_row(daily, unix_utc, offset)?;
     let dur = daily.daylight_duration.get(i).copied()?;
     if dur >= 86_399.0 {
         return Some(SunDay::PolarDay);
@@ -444,17 +555,15 @@ fn sun_day_for(daily: &DailyArrays, date_iso: &str, offset: i64) -> Option<SunDa
     if dur <= 1.0 {
         return Some(SunDay::PolarNight);
     }
-    let rise = parse_hour_to_unix(daily.sunrise.get(i)?, offset).ok()?;
-    let set = parse_hour_to_unix(daily.sunset.get(i)?, offset).ok()?;
     Some(SunDay::Times {
-        rise_unix: rise,
-        set_unix: set,
+        rise_unix: *daily.sunrise.get(i)?,
+        set_unix: *daily.sunset.get(i)?,
     })
 }
 
 // The day's high/low for the date of the displayed hour, so a scrubbed future hour shows that day's envelope, not today's. Both ends must be present or the footer omits the H/L segment entirely (no half pair).
-fn daily_high_low(daily: &DailyArrays, date_iso: &str) -> Option<(f64, f64)> {
-    let i = daily.time.iter().position(|d| d == date_iso)?;
+fn daily_high_low(daily: &DailyArrays, unix_utc: i64, offset: i64) -> Option<(f64, f64)> {
+    let i = daily_row(daily, unix_utc, offset)?;
     let high = daily.temperature_2m_max.get(i).copied().flatten()?;
     let low = daily.temperature_2m_min.get(i).copied().flatten()?;
     Some((high, low))
@@ -484,7 +593,7 @@ fn format_sun_segment(sun_day: Option<&SunDay>, offset: i64) -> String {
     }
 }
 
-fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
+fn build_sun(altaz: &AltAz, center_az: f64, strength: f64) -> Sun {
     // Behind the viewing plane there is no screen position at all; park the disc off-frame and let `visible` do the hiding.
     let (x_frac, y_frac) = astro::to_sky_fracs(altaz, center_az).unwrap_or((-1.0, -1.0));
     let in_view = astro::in_view(altaz, center_az);
@@ -492,7 +601,8 @@ fn build_sun(altaz: &AltAz, center_az: f64) -> Sun {
         x_frac,
         y_frac,
         radius: 3.5,
-        visible: altaz.altitude > -2.0 && in_view,
+        visible: altaz.altitude > -2.0 && in_view && strength > 0.02,
+        strength,
     }
 }
 
@@ -576,25 +686,17 @@ fn build_clouds(
     cover_low: f64,
     cover_mid: f64,
     cover_high: f64,
-    weather_code: Option<u32>,
+    low_kind: CloudKind,
     lat: f64,
     lon: f64,
     day_ordinal: i64,
 ) -> Vec<CloudLayer> {
     let pos_hash = hash_lat_lon(lat, lon);
-    let code = weather_code.unwrap_or(0);
     let mut layers = Vec::new();
     let bands = [
         (cover_high, 0.20, 4.5, 2.4, 0u32, CloudKind::Cirrus),
         (cover_mid, 0.40, 3.6, 2.4, 1, CloudKind::Altocumulus),
-        (
-            cover_low,
-            0.60,
-            3.0,
-            2.2,
-            2,
-            low_cloud_kind(code, cover_low),
-        ),
+        (cover_low, 0.60, 3.0, 2.2, 2, low_kind),
     ];
     for (cover, altitude_t, scale_x, scale_y, idx, kind) in bands {
         let seed = mix_seed(&[pos_hash, day_ordinal as u64, 0xC10D_5EED ^ idx as u64]);
@@ -605,9 +707,9 @@ fn build_clouds(
     layers
 }
 
-// The low band carries the weather: showers and thunderstorms are convective towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather cumulus, and anything else is a flat stratus deck.
-fn low_cloud_kind(weather_code: u32, cover_low: f64) -> CloudKind {
-    if (80..=82).contains(&weather_code) || (95..=99).contains(&weather_code) {
+// The low band carries the weather: showers and thunderstorms are convective towers (dark cumulonimbus), light/partly-cloudy skies are fair-weather cumulus, and anything else is a flat stratus deck. Any convective rain at all is a tower whatever the code says, since the code reports the dominant weather and an hour of rain with showers in it is still built of cumulonimbus.
+fn low_cloud_kind(weather_code: u32, cover_low: f64, showers_mm: f64) -> CloudKind {
+    if showers_mm >= 0.1 || (80..=82).contains(&weather_code) || (95..=99).contains(&weather_code) {
         CloudKind::Cumulonimbus
     } else if matches!(weather_code, 1 | 2) && cover_low < 0.6 {
         CloudKind::Cumulus
@@ -679,6 +781,7 @@ fn is_snow_code(weather_code: Option<u32>) -> bool {
 fn build_snowfall(
     weather_code: Option<u32>,
     snowfall_cm: Option<f64>,
+    certainty: f64,
     temperature_c: Option<f64>,
     relative_humidity: Option<f64>,
     wind_dir: Option<f64>,
@@ -701,7 +804,9 @@ fn build_snowfall(
     );
     Some(Snowfall {
         form,
-        count: snow::flake_count(rate),
+        count: (f64::from(snow::flake_count(rate)) * certainty)
+            .round()
+            .max(1.0) as u32,
         seed: mix_seed(&[
             hash_lat_lon(lat, lon),
             day_ordinal as u64,
@@ -724,23 +829,27 @@ fn snow_drift(wind_dir: Option<f64>, wind_speed: Option<f64>, center_az: f64) ->
     (lateral * speed * 0.0025).clamp(-0.12, 0.12)
 }
 
+/// Rain streaks for this hour, from the liquid share of what fell. `split_reported` says whether that share came from the rain and showers fields or is the whole total, in which case the code has to keep snow hours away from the rain renderer; with the split, a sleet hour draws both.
+#[allow(clippy::too_many_arguments)]
 fn build_precipitation(
     weather_code: Option<u32>,
-    precip_mm: Option<f64>,
+    liquid_mm: Option<f64>,
+    split_reported: bool,
+    certainty: f64,
     wind_dir: Option<f64>,
     lat: f64,
     lon: f64,
     day_ordinal: i64,
     center_az: f64,
 ) -> Option<Precipitation> {
-    let mm = precip_mm.unwrap_or(0.0);
+    let mm = liquid_mm.unwrap_or(0.0);
     if mm < 0.10 {
         return None;
     }
-    if is_snow_code(weather_code) {
+    if !split_reported && is_snow_code(weather_code) {
         return None;
     }
-    let intensity = (mm / 5.0).clamp(0.10, 0.85);
+    let intensity = (mm / 5.0).clamp(0.10, 0.85) * certainty;
     let dir = wind_dir.unwrap_or(180.0);
     let delta = lateral_offset_deg(dir, center_az);
     let angle_deg = (delta * 0.30).clamp(-25.0, 25.0);
@@ -919,6 +1028,7 @@ pub fn error_sky(msg: &str) -> SkyState {
             y_frac: 1.5,
             radius: 0.0,
             visible: false,
+            strength: 0.0,
         },
         clouds: vec![],
         chrome: Chrome {
@@ -968,24 +1078,14 @@ mod tests {
         assert_eq!(mix_seed(&[1, 2]), 0x7717_9803_63c8_e066);
     }
 
-    #[test]
-    fn parse_hour_round_trip() {
-        let unix = parse_hour_to_unix("2026-04-11T00:00", 0).unwrap();
-        // 2026-04-11T00:00:00Z, verified against `date -u -d @1775865600`
-        assert_eq!(unix, 1_775_865_600);
-    }
-
-    #[test]
-    fn parse_hour_subtracts_local_offset() {
-        // Under timezone=auto the string is local; UTC+8 02:00 is 18:00Z prior.
-        let local = parse_hour_to_unix("2026-06-16T02:00", 8 * 3600).unwrap();
-        let utc = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
-        assert_eq!(local, utc);
-    }
+    // 2026-06-15T18:00Z, verified against `date -u -r 1781546400`.
+    const JUNE_15_18Z: i64 = 1_781_546_400;
+    // 2026-04-11T00:00Z, the forecast fixture's first hour.
+    const APRIL_11: i64 = 1_775_865_600;
 
     #[test]
     fn local_hhmm_applies_offset() {
-        let unix = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
+        let unix = JUNE_15_18Z;
         assert_eq!(local_hhmm(unix, 8 * 3600), "02:00");
         assert_eq!(local_hhmm(unix, 0), "18:00");
     }
@@ -993,7 +1093,7 @@ mod tests {
     #[test]
     fn format_label_uses_location_offset_not_machine() {
         // 18:00Z is 02:00 the next local day at UTC+8; with "now" at the same instant the header reads the location's wall clock, not the machine's.
-        let unix = parse_hour_to_unix("2026-06-15T18:00", 0).unwrap();
+        let unix = JUNE_15_18Z;
         assert_eq!(format_label(unix, unix, 8 * 3600), "today 02:00");
         let next = unix + 86_400;
         assert_eq!(format_label(next, unix, 8 * 3600), "tomorrow 02:00");
@@ -1059,15 +1159,15 @@ mod tests {
     }
 
     fn daily_one_day(
-        date: &str,
-        sunrise: &str,
-        sunset: &str,
+        midnight: i64,
+        sunrise: i64,
+        sunset: i64,
         daylight_duration: f64,
     ) -> DailyArrays {
         DailyArrays {
-            time: vec![date.to_string()],
-            sunrise: vec![sunrise.to_string()],
-            sunset: vec![sunset.to_string()],
+            time: vec![midnight],
+            sunrise: vec![sunrise],
+            sunset: vec![sunset],
             daylight_duration: vec![daylight_duration],
             temperature_2m_max: vec![],
             temperature_2m_min: vec![],
@@ -1076,18 +1176,13 @@ mod tests {
 
     #[test]
     fn sun_day_normal_returns_times() {
-        let daily = daily_one_day(
-            "2026-04-11",
-            "2026-04-11T04:38",
-            "2026-04-11T18:14",
-            48_960.0,
-        );
-        match sun_day_for(&daily, "2026-04-11", 0) {
+        // +4h38m = +16_680, +18h14m = +65_640.
+        let daily = daily_one_day(APRIL_11, APRIL_11 + 16_680, APRIL_11 + 65_640, 48_960.0);
+        match sun_day_for(&daily, APRIL_11 + 12 * 3_600, 0) {
             Some(SunDay::Times {
                 rise_unix,
                 set_unix,
             }) => {
-                // 2026-04-11T00:00Z = 1_775_865_600 (per parse_hour_round_trip); +4h38m = +16_680, +18h14m = +65_640.
                 assert_eq!(rise_unix, 1_775_882_280);
                 assert_eq!(set_unix, 1_775_931_240);
             }
@@ -1097,40 +1192,48 @@ mod tests {
 
     #[test]
     fn sun_day_polar_day_from_full_daylight() {
-        let daily = daily_one_day(
-            "2026-05-09",
-            "2026-05-09T00:00",
-            "2026-05-10T00:00",
-            86_400.0,
+        let may_9 = APRIL_11 + 28 * 86_400;
+        let daily = daily_one_day(may_9, may_9, may_9 + 86_400, 86_400.0);
+        assert_eq!(
+            sun_day_for(&daily, may_9 + 3_600, 0),
+            Some(SunDay::PolarDay)
         );
-        assert_eq!(sun_day_for(&daily, "2026-05-09", 0), Some(SunDay::PolarDay));
     }
 
     #[test]
     fn sun_day_polar_night_from_zero_daylight() {
-        let daily = daily_one_day("2025-12-22", "2025-12-22T00:00", "2025-12-22T00:00", 0.0);
+        let dec_22 = APRIL_11 - 110 * 86_400;
+        let daily = daily_one_day(dec_22, dec_22, dec_22, 0.0);
         assert_eq!(
-            sun_day_for(&daily, "2025-12-22", 0),
+            sun_day_for(&daily, dec_22 + 3_600, 0),
             Some(SunDay::PolarNight)
         );
     }
 
     #[test]
     fn sun_day_unknown_date_returns_none() {
-        let daily = daily_one_day(
-            "2026-04-11",
-            "2026-04-11T04:38",
-            "2026-04-11T18:14",
-            48_960.0,
-        );
-        assert_eq!(sun_day_for(&daily, "2026-04-12", 0), None);
+        let daily = daily_one_day(APRIL_11, APRIL_11 + 16_680, APRIL_11 + 65_640, 48_960.0);
+        assert_eq!(sun_day_for(&daily, APRIL_11 + 86_400, 0), None);
     }
 
-    fn daily_with_high_low(date: &str, high: Option<f64>, low: Option<f64>) -> DailyArrays {
+    #[test]
+    fn daily_row_follows_the_local_date_not_the_utc_one() {
+        // Local midnight at UTC+2 is 22:00Z the evening before. 23:00 local is still that row; 00:30 local the next day is not, though it is the same UTC date.
+        let offset = 2 * 3_600;
+        let midnight = APRIL_11 - offset;
+        let daily = daily_one_day(midnight, midnight + 16_680, midnight + 65_640, 48_960.0);
+        assert_eq!(daily_row(&daily, midnight + 23 * 3_600, offset), Some(0));
+        assert_eq!(
+            daily_row(&daily, midnight + 24 * 3_600 + 1_800, offset),
+            None
+        );
+    }
+
+    fn daily_with_high_low(midnight: i64, high: Option<f64>, low: Option<f64>) -> DailyArrays {
         DailyArrays {
-            time: vec![date.to_string()],
-            sunrise: vec![format!("{date}T06:00")],
-            sunset: vec![format!("{date}T20:00")],
+            time: vec![midnight],
+            sunrise: vec![midnight + 6 * 3_600],
+            sunset: vec![midnight + 20 * 3_600],
             daylight_duration: vec![48_960.0],
             temperature_2m_max: vec![high],
             temperature_2m_min: vec![low],
@@ -1139,23 +1242,104 @@ mod tests {
 
     #[test]
     fn daily_high_low_reads_matching_day() {
-        let daily = daily_with_high_low("2026-06-15", Some(22.4), Some(14.6));
-        assert_eq!(daily_high_low(&daily, "2026-06-15"), Some((22.4, 14.6)));
+        let daily = daily_with_high_low(APRIL_11, Some(22.4), Some(14.6));
+        assert_eq!(
+            daily_high_low(&daily, APRIL_11 + 15 * 3_600, 0),
+            Some((22.4, 14.6))
+        );
     }
 
     #[test]
     fn daily_high_low_missing_end_returns_none() {
-        let daily = daily_with_high_low("2026-06-15", Some(22.0), None);
-        assert_eq!(daily_high_low(&daily, "2026-06-15"), None);
-        assert_eq!(daily_high_low(&daily, "2026-06-16"), None);
+        let daily = daily_with_high_low(APRIL_11, Some(22.0), None);
+        assert_eq!(daily_high_low(&daily, APRIL_11, 0), None);
+        assert_eq!(daily_high_low(&daily, APRIL_11 + 86_400, 0), None);
     }
 
     #[test]
-    fn utc_date_iso_round_trip() {
-        // 2026-04-11T00:00Z
-        assert_eq!(utc_date_iso(1_775_865_600), "2026-04-11");
-        // 2026-04-11T23:59Z still resolves to the same UTC date
-        assert_eq!(utc_date_iso(1_775_865_600 + 86_399), "2026-04-11");
+    fn sun_transmission_reads_the_beam_when_there_is_one() {
+        // A clean noon: Meinel passes about two thirds of the constant at 60 degrees, and the model reports exactly that much.
+        let clear_noon = clear_sky_beam(60.0);
+        assert!(clear_noon > 0.62 && clear_noon < 0.72, "got {clear_noon}");
+        assert!(
+            (sun_transmission(60.0, Some(SOLAR_CONSTANT * clear_noon), 0.0) - 1.0).abs() < 1e-9
+        );
+        assert_eq!(
+            sun_transmission(60.0, Some(0.0), 0.0),
+            0.0,
+            "no beam under a deck"
+        );
+        let cirrus = sun_transmission(45.0, Some(400.0), 1.0);
+        assert!(
+            cirrus > 0.3 && cirrus < 0.8,
+            "a veil reports full cover and still passes some sun, got {cirrus}"
+        );
+        assert_eq!(
+            sun_transmission(45.0, None, 0.25),
+            0.75,
+            "no beam reading falls back to cover"
+        );
+        assert_eq!(
+            sun_transmission(-1.0, Some(0.0), 0.25),
+            0.75,
+            "below the horizon the beam says nothing"
+        );
+    }
+
+    #[test]
+    fn storm_intensity_prefers_cape() {
+        assert_eq!(storm_intensity(Some(3_000.0), Some(0.2)), 0.85);
+        assert_eq!(storm_intensity(Some(400.0), Some(4.0)), 0.20);
+        assert_eq!(storm_intensity(None, Some(2.5)), 0.5);
+    }
+
+    #[test]
+    fn fog_needs_saturation_and_a_short_view_or_the_code() {
+        assert_eq!(fog_density(Some(0), Some(99.0), Some(300.0)), Some(0.7));
+        assert_eq!(fog_density(Some(0), Some(99.0), Some(8_000.0)), None);
+        assert_eq!(fog_density(Some(0), Some(80.0), Some(300.0)), None);
+        assert_eq!(fog_density(Some(45), None, None), Some(0.8));
+        assert_eq!(fog_density(Some(48), Some(90.0), Some(5_000.0)), Some(0.4));
+    }
+
+    #[test]
+    fn showers_make_the_low_deck_convective() {
+        assert_eq!(low_cloud_kind(61, 0.8, 0.5), CloudKind::Cumulonimbus);
+        assert_eq!(low_cloud_kind(61, 0.8, 0.0), CloudKind::Stratus);
+        assert_eq!(low_cloud_kind(1, 0.3, 0.0), CloudKind::Cumulus);
+    }
+
+    #[test]
+    fn precipitation_scales_with_its_probability() {
+        let certain =
+            build_precipitation(Some(61), Some(2.0), true, 1.0, None, 53.5, 10.0, 0, 180.0)
+                .expect("rain");
+        let unlikely = build_precipitation(
+            Some(61),
+            Some(2.0),
+            true,
+            precipitation_certainty(Some(20.0)),
+            None,
+            53.5,
+            10.0,
+            0,
+            180.0,
+        )
+        .expect("still drawn, fainter");
+        assert!((unlikely.intensity - certain.intensity * 0.3).abs() < 1e-9);
+        assert_eq!(precipitation_certainty(None), 1.0);
+    }
+
+    #[test]
+    fn a_split_total_lets_sleet_rain_while_a_bare_total_defers_to_the_code() {
+        assert!(
+            build_precipitation(Some(73), Some(1.0), true, 1.0, None, 53.5, 10.0, 0, 180.0)
+                .is_some()
+        );
+        assert!(
+            build_precipitation(Some(73), Some(1.0), false, 1.0, None, 53.5, 10.0, 0, 180.0)
+                .is_none()
+        );
     }
 
     #[test]

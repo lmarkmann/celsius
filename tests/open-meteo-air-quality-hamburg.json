@@ -1,0 +1,31 @@
+{
+  "latitude": 53.6,
+  "longitude": 10.0,
+  "generationtime_ms": 0.22113323211669922,
+  "utc_offset_seconds": 0,
+  "timezone": "GMT",
+  "timezone_abbreviation": "GMT",
+  "elevation": 3.0,
+  "hourly_units": {
+    "time": "unixtime",
+    "aerosol_optical_depth": ""
+  },
+  "hourly": {
+    "time": [
+      1788721200,
+      1788724800,
+      1788728400,
+      1788732000,
+      1788735600,
+      1788739200
+    ],
+    "aerosol_optical_depth": [
+      0.19,
+      0.21,
+      0.22,
+      0.19,
+      0.16,
+      0.13
+    ]
+  }
+}

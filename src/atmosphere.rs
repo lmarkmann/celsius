@@ -15,12 +15,24 @@ pub struct Atmosphere {
 }
 
 impl Atmosphere {
-    /// The live path, where everything follows from what the forecast reported.
+    /// The live path when only visibility is known.
     #[must_use]
     pub fn from_visibility(visibility_m: Option<f64>) -> Self {
         Self {
             visibility_m,
             turbidity: turbidity_from_visibility(visibility_m),
+        }
+    }
+
+    /// The live path with both readings. Turbidity is a column quantity and optical depth measures the column, so it wins whenever the air-quality forecast covered the hour; visibility is kept for the haze layer, which is a near-ground effect and reads it directly.
+    #[must_use]
+    pub fn from_readings(visibility_m: Option<f64>, aod_550: Option<f64>) -> Self {
+        Self {
+            visibility_m,
+            turbidity: aod_550.map_or_else(
+                || turbidity_from_visibility(visibility_m),
+                turbidity_from_aod,
+            ),
         }
     }
 
@@ -40,4 +52,38 @@ impl Atmosphere {
 pub fn turbidity_from_visibility(vis_m: Option<f64>) -> f64 {
     let vis_km = vis_m.unwrap_or(24_000.0) / 1000.0;
     (2.0 + (24.0 - vis_km.clamp(2.0, 24.0)) / 22.0 * 7.0).clamp(2.0, 9.0)
+}
+
+/// Map aerosol optical depth at 550 nm to Preetham turbidity.
+///
+/// Preetham relates turbidity to the Angstrom coefficient by `beta = 0.04608 T - 0.04586`, and with the Angstrom exponent of 1.3 the paper assumes, `AOD_550 = beta * 0.55^-1.3 = 2.176 beta`. Inverting gives AOD 0.1, 0.3 and 0.6 as T 2, 4 and 7, which matches the visibility curve's clear and hazy ends. The floor is the lowest turbidity the analytic tests exercise; above 9 the Perez fit is outside its published range.
+#[must_use]
+pub fn turbidity_from_aod(aod_550: f64) -> f64 {
+    ((aod_550 / 2.176 + 0.04586) / 0.04608).clamp(1.5, 9.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aod_mapping_meets_the_visibility_curve_at_both_ends() {
+        assert!((turbidity_from_aod(0.1) - 2.0).abs() < 0.05);
+        assert!((turbidity_from_aod(0.3) - 4.0).abs() < 0.05);
+        assert!((turbidity_from_aod(0.6) - 7.0).abs() < 0.05);
+        assert_eq!(turbidity_from_aod(0.0), 1.5);
+        assert_eq!(turbidity_from_aod(3.0), 9.0);
+    }
+
+    #[test]
+    fn readings_prefer_optical_depth_and_keep_visibility() {
+        let both = Atmosphere::from_readings(Some(4_000.0), Some(0.1));
+        assert!(
+            (both.turbidity - 2.0).abs() < 0.05,
+            "a clear column beats a misty surface"
+        );
+        assert_eq!(both.visibility_m, Some(4_000.0));
+        let fallback = Atmosphere::from_readings(Some(4_000.0), None);
+        assert_eq!(fallback.turbidity, turbidity_from_visibility(Some(4_000.0)));
+    }
 }

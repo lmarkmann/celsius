@@ -15,7 +15,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use celsius::config::{self, LocationPref};
 use celsius::raster::{ColorDepth, Geometry, RasterOpts, detect_depth};
 use celsius::tui::{RunOutcome, Timeline};
-use celsius::weather::{ComposeOpts, compose, compose_at, error_sky, forecast, location};
+use celsius::weather::{ComposeOpts, aerosol, compose, compose_at, error_sky, forecast, location};
 use celsius::{SkyState, builtin_names, load_builtin_scene, load_scene, tui};
 #[cfg(feature = "png")]
 use celsius::{render, terminal};
@@ -393,8 +393,17 @@ fn build_live_timeline(params: &FetchParams, location: &location::GeoResult) -> 
         None => now_unix,
     };
 
-    let forecast = forecast::fetch(location.latitude, location.longitude)
-        .with_context(|| format!("fetching forecast for {}", location.label()))?;
+    // Two hosts, one round trip of latency: the aerosol request runs beside the forecast and is optional, so a failure there leaves the field unattached and turbidity falls back to visibility. Nothing reports it, because the app has no log channel and the sky is correct without it.
+    let (forecast, aerosol) = std::thread::scope(|scope| {
+        let aerosol_task = scope.spawn(|| aerosol::fetch(location.latitude, location.longitude));
+        let forecast = forecast::fetch(location.latitude, location.longitude);
+        (forecast, aerosol_task.join())
+    });
+    let mut forecast =
+        forecast.with_context(|| format!("fetching forecast for {}", location.label()))?;
+    if let Ok(Ok(aerosol)) = aerosol {
+        forecast.attach_aerosol(&aerosol);
+    }
     let hours = forecast.hourly.len();
     if hours == 0 {
         bail!("forecast returned zero hours for {}", location.label());
@@ -592,12 +601,7 @@ fn parse_relative(s: &str, now_unix: i64) -> Result<i64> {
 fn nearest_hour_index(forecast: &forecast::Forecast, target_unix: i64) -> usize {
     let mut best = 0usize;
     let mut best_dist = i64::MAX;
-    for (i, t) in forecast.hourly.time.iter().enumerate() {
-        let Ok(naive) = NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M") else {
-            continue;
-        };
-        // Forecast times are local (timezone=auto); shift to UTC to compare.
-        let unix = naive.and_utc().timestamp() - forecast.utc_offset_seconds;
+    for (i, &unix) in forecast.hourly.time.iter().enumerate() {
         let dist = (unix - target_unix).abs();
         if dist < best_dist {
             best_dist = dist;

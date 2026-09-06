@@ -1,3 +1,4 @@
+use celsius::weather::aerosol::{AerosolForecast, AerosolHourly};
 use celsius::weather::forecast::Forecast;
 use celsius::weather::location::GeoResult;
 use serde::Deserialize;
@@ -11,6 +12,7 @@ struct GeoResponse {
 const GEOCODING_HAMBURG: &str = include_str!("open-meteo-geocoding-hamburg.json");
 const FORECAST_HAMBURG: &str = include_str!("open-meteo-forecast-hamburg.json");
 const FORECAST_NULLS: &str = include_str!("open-meteo-forecast-with-nulls.json");
+const AIR_QUALITY_HAMBURG: &str = include_str!("open-meteo-air-quality-hamburg.json");
 
 #[test]
 fn geocoding_response_parses_hamburg() {
@@ -80,10 +82,10 @@ fn forecast_response_parses_hamburg() {
     assert!((parsed.latitude - 53.56).abs() < 0.1);
     assert!((parsed.longitude - 10.0).abs() < 0.1);
     assert_eq!(parsed.timezone, "GMT");
-    // Fixture predates timezone=auto and carries no offset; serde defaults it to 0, so its UTC times survive the local->UTC boundary unchanged.
+    // Fixture predates timezone=auto and carries no offset; serde defaults it to 0.
     assert_eq!(parsed.utc_offset_seconds, 0);
     assert_eq!(parsed.hourly.len(), 6);
-    assert_eq!(parsed.hourly.time[0], "2026-04-11T00:00");
+    assert_eq!(parsed.hourly.time[0], 1_775_865_600, "2026-04-11T00:00Z");
     assert_eq!(parsed.hourly.temperature_2m[0], Some(4.8));
     assert_eq!(parsed.hourly.weather_code[0], Some(0));
     let daily = parsed.daily.expect("daily block present");
@@ -100,7 +102,7 @@ fn forecast_captures_utc_offset_when_present() {
         "timezone": "Asia/Hong_Kong",
         "utc_offset_seconds": 28800,
         "hourly": {
-            "time": ["2026-06-16T02:00"],
+            "time": [1781546400],
             "temperature_2m": [28.0],
             "cloud_cover_low": [10.0],
             "cloud_cover_mid": [0.0],
@@ -130,6 +132,125 @@ fn forecast_equal_length_across_variables() {
     assert_eq!(h.wind_direction_10m.len(), n);
     assert_eq!(h.visibility.len(), n);
     assert_eq!(h.weather_code.len(), n);
+    assert_eq!(h.rain.len(), n);
+    assert_eq!(h.showers.len(), n);
+    assert_eq!(h.cape.len(), n);
+    assert_eq!(h.direct_normal_irradiance_instant.len(), n);
+    assert_eq!(h.precipitation_probability.len(), n);
+    assert!(
+        h.aerosol_optical_depth.is_empty(),
+        "optical depth never arrives in the forecast response; it is attached"
+    );
+}
+
+/// The air-quality endpoint answers on the forecast's hourly grid but with its own horizon, so attaching is a timestamp match and every hour it does not cover stays unknown.
+#[test]
+fn aerosol_response_parses_and_attaches_by_timestamp() {
+    let parsed: AerosolForecast =
+        serde_json::from_str(AIR_QUALITY_HAMBURG).expect("air-quality fixture must deserialize");
+    assert_eq!(parsed.hourly.time.len(), 6);
+    assert_eq!(parsed.hourly.aerosol_optical_depth[0], Some(0.19));
+
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let t0 = forecast.hourly.time[0];
+    let partial = AerosolForecast {
+        hourly: AerosolHourly {
+            time: vec![t0 - 3_600, t0, t0 + 3_600, t0 + 3 * 3_600],
+            aerosol_optical_depth: vec![Some(0.9), Some(0.1), None, Some(0.6)],
+        },
+    };
+    forecast.attach_aerosol(&partial);
+    assert_eq!(
+        forecast.hourly.aerosol_optical_depth,
+        vec![Some(0.1), None, None, Some(0.6), None, None]
+    );
+}
+
+/// Optical depth is the column the analytic sky's turbidity describes, so when it is attached it wins over the visibility curve, and when it is not the visibility curve still stands.
+#[test]
+fn optical_depth_sets_the_analytic_turbidity() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let opts = celsius::weather::ComposeOpts::default().with_analytic(true);
+    let t05 = 1_775_865_600 + 5 * 3_600; // sun just up, so an analytic sky is attached
+    let from_visibility = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, opts)
+        .unwrap()
+        .analytic
+        .expect("daytime attaches the analytic sky")
+        .atmosphere
+        .turbidity;
+    assert_eq!(
+        from_visibility,
+        celsius::atmosphere::turbidity_from_visibility(forecast.hourly.visibility[5])
+    );
+
+    let hazy = AerosolForecast {
+        hourly: AerosolHourly {
+            time: forecast.hourly.time.clone(),
+            aerosol_optical_depth: vec![Some(0.6); 6],
+        },
+    };
+    forecast.attach_aerosol(&hazy);
+    let from_aod = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, opts)
+        .unwrap()
+        .analytic
+        .unwrap()
+        .atmosphere
+        .turbidity;
+    assert!(
+        (from_aod - 7.0).abs() < 0.05,
+        "AOD 0.6 is turbidity 7, got {from_aod}"
+    );
+}
+
+/// The beam is what says whether you can see the sun. At the fixture's hour 5 the model passes 93 W/m2 of a low sun, which is a visible but softened disc; with the beam zeroed the disc goes with it, whatever the cover fields say.
+#[test]
+fn the_sun_dims_with_the_beam() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let facing_east = celsius::weather::ComposeOpts::new(90.0);
+    let t05 = 1_775_865_600 + 5 * 3_600;
+    let lit = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, facing_east)
+        .unwrap()
+        .sun;
+    assert!(lit.visible, "the morning sun is in an east-facing frame");
+    assert!(
+        lit.strength > 0.3 && lit.strength < 0.9,
+        "a low clear sun passes part of Meinel's beam, got {}",
+        lit.strength
+    );
+
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.direct_normal_irradiance_instant[h] = Some(0.0);
+    }
+    let hidden = celsius::weather::compose_at(&forecast, &hamburg_geo(), t05, t05, facing_east)
+        .unwrap()
+        .sun;
+    assert!(!hidden.visible, "no beam, no disc");
+    assert_eq!(hidden.strength, 0.0);
+}
+
+/// Fog is the one condition that has to reach the whole frame: a saturated hour with a few hundred metres of visibility becomes a full-frame veil and takes the stars with it, while the same humidity with a long view is the ordinary horizon haze.
+#[test]
+fn fog_hours_veil_the_frame_and_hide_the_stars() {
+    let mut forecast: Forecast = serde_json::from_str(FORECAST_HAMBURG).unwrap();
+    let opts = celsius::weather::ComposeOpts::default();
+    let t00 = 1_775_865_600; // night
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.relative_humidity_2m[h] = Some(99.0);
+        forecast.hourly.visibility[h] = Some(300.0);
+    }
+    let fogged = celsius::weather::compose_at(&forecast, &hamburg_geo(), t00, t00, opts).unwrap();
+    let veil = fogged.haze.expect("fog is a haze layer");
+    assert_eq!(veil.onset_t, 0.0, "the veil starts at the top of the frame");
+    assert!(veil.strength > 0.7);
+    assert!(fogged.stars.is_none(), "no stars through fog");
+
+    for h in 0..forecast.hourly.time.len() {
+        forecast.hourly.visibility[h] = Some(8_000.0);
+    }
+    let humid = celsius::weather::compose_at(&forecast, &hamburg_geo(), t00, t00, opts).unwrap();
+    let haze = humid.haze.expect("8 km is still hazy");
+    assert!(haze.onset_t > 0.0, "ordinary haze rises from the horizon");
+    assert!(humid.stars.is_some());
 }
 
 #[test]
@@ -288,7 +409,7 @@ fn live_geocoding_returns_hamburg() {
 
 #[test]
 #[ignore]
-fn live_forecast_returns_168_hours() {
+fn live_forecast_returns_192_hours() {
     let forecast = celsius::weather::forecast::fetch(53.5511, 9.9937).expect("live request");
     // timezone=auto resolves the zone from the coordinates: Hamburg is Berlin, CET (+3600) in winter or CEST (+7200) under summer time.
     assert_eq!(forecast.timezone, "Europe/Berlin");
@@ -297,10 +418,10 @@ fn live_forecast_returns_168_hours() {
         "Berlin offset should be CET or CEST, got {}",
         forecast.utc_offset_seconds
     );
-    assert_eq!(
-        forecast.hourly.len(),
-        168,
-        "7 days x 24 hours = 168 hourly samples"
+    assert_eq!(forecast.hourly.len(), 192, "24 hours back plus 168 forward");
+    assert!(
+        forecast.hourly.direct_normal_irradiance_instant[0].is_some(),
+        "the beam field must be a real array, not a serde default"
     );
     assert_eq!(forecast.hourly.temperature_2m.len(), forecast.hourly.len());
 }

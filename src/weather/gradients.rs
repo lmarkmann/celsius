@@ -15,6 +15,7 @@ pub(super) enum Palette {
     Night,
     CloudyDay,
     Overcast,
+    Fog,
 }
 
 const DAY: &[(f64, [u8; 3])] = &[
@@ -92,6 +93,15 @@ const OVERCAST: &[(f64, [u8; 3])] = &[
     (1.00, [190, 182, 168]),
 ];
 
+// Dense daytime fog: the sky collapses to one luminous grey with the warmest band where the sun sits, and the horizon is lost. Taken from the fog scene draft.
+const FOG: &[(f64, [u8; 3])] = &[
+    (0.00, [190, 192, 195]),
+    (0.30, [204, 204, 203]),
+    (0.55, [212, 210, 205]),
+    (0.78, [208, 206, 201]),
+    (1.00, [200, 198, 193]),
+];
+
 pub(super) fn gradient_for(palette: Palette) -> Gradient {
     let stops: &[(f64, [u8; 3])] = match palette {
         Palette::Day => DAY,
@@ -101,6 +111,7 @@ pub(super) fn gradient_for(palette: Palette) -> Gradient {
         Palette::Night => NIGHT,
         Palette::CloudyDay => CLOUDY_DAY,
         Palette::Overcast => OVERCAST,
+        Palette::Fog => FOG,
     };
     Gradient::from_rgb_stops(stops)
 }
@@ -150,6 +161,15 @@ pub(super) fn sky_gradient(sun_alt_deg: f64, total_cover: f64) -> Gradient {
             .blend(&gradient_for(Palette::Overcast), (cover - 0.5) / 0.5)
     };
     clear.blend(&clouded, daylight)
+}
+
+/// Fog pulls the sky toward one luminous grey. The pull fades with daylight because the fog palette is a daytime colour; at night the veil, a full-frame haze layer, carries the fog and the gradient stays the night sky it is drawn over.
+pub(super) fn fog_gradient(base: &Gradient, sun_alt_deg: f64, density: f64) -> Gradient {
+    let daylight = smoothstep01((sun_alt_deg + 3.0) / 9.0);
+    base.blend(
+        &gradient_for(Palette::Fog),
+        (density * daylight).clamp(0.0, 1.0),
+    )
 }
 
 fn smoothstep01(x: f64) -> f64 {
