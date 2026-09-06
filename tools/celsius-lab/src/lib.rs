@@ -441,6 +441,7 @@ pub fn analytic_state(sun_alt: f64, turbidity: f64, sun_az_offset: f64) -> SkySt
             y_frac: sun_y,
             radius: 4.0,
             visible: sun_alt > 0.0,
+            strength: 1.0,
         },
         clouds: Vec::new(),
         chrome: Chrome {

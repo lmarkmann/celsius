@@ -70,3 +70,5 @@ just lab-new harbor_dawn 53.5511 9.9937 2026-04-11T06:14Z --visibility 18
 ```
 
 See [the celsius-lab guide](tools/celsius-lab/README.md) for the scene and output layout.
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Place names from [GeoNames](https://www.geonames.org/).

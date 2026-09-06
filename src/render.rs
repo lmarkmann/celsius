@@ -267,7 +267,7 @@ pub fn render_supersampled(state: &SkyState, width: u32, height: u32, factor: u3
                 let dx = (px as f64 - sun_px) / width as f64;
                 let dy = (py as f64 - sun_py) / height as f64;
                 let d = (dx * dx + dy * dy * 3.2).sqrt();
-                let glow = (1.0 - d / 0.60).max(0.0).powi(2);
+                let glow = (1.0 - d / 0.60).max(0.0).powi(2) * sun.strength;
                 l += glow * 0.11;
                 a += glow * 0.020;
                 b += glow * 0.055;
@@ -350,7 +350,7 @@ pub fn render_supersampled(state: &SkyState, width: u32, height: u32, factor: u3
                 let ey = py as f64 - sun_py;
                 let sd = (ex * ex + ey * ey).sqrt();
                 if sd < sun_r {
-                    let k = (1.0 - (sd / sun_r).powi(2)).max(0.0);
+                    let k = (1.0 - (sd / sun_r).powi(2)).max(0.0) * sun.strength;
                     let inv = 1.0 - k;
                     l = l * inv + sun_disc.l * k;
                     a = a * inv + sun_disc.a * k;

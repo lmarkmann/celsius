@@ -337,8 +337,9 @@ fn week_long(base: &Forecast) -> Forecast {
     };
 
     let hourly = &mut forecast.hourly;
+    let base_unix = src.time[0];
     hourly.time = (0..WEEK_HOURS)
-        .map(|i| format!("2026-04-{:02}T{:02}:00", 11 + i / 24, i % 24))
+        .map(|i| base_unix + i as i64 * 3_600)
         .collect();
     hourly.temperature_2m = cycle(&src.temperature_2m);
     hourly.cloud_cover = cycle(&src.cloud_cover);
@@ -356,14 +357,12 @@ fn week_long(base: &Forecast) -> Forecast {
         let days = WEEK_HOURS / 24;
         let src_daily = base.daily.as_ref().expect("cloned from Some");
         let m = src_daily.time.len();
-        daily.time = (0..days)
-            .map(|d| format!("2026-04-{:02}", 11 + d))
-            .collect();
+        daily.time = (0..days).map(|d| base_unix + d as i64 * 86_400).collect();
         daily.sunrise = (0..days)
-            .map(|d| format!("2026-04-{:02}T04:38", 11 + d))
+            .map(|d| base_unix + d as i64 * 86_400 + 16_680)
             .collect();
         daily.sunset = (0..days)
-            .map(|d| format!("2026-04-{:02}T18:14", 11 + d))
+            .map(|d| base_unix + d as i64 * 86_400 + 65_640)
             .collect();
         daily.daylight_duration = (0..days)
             .map(|d| src_daily.daylight_duration[d % m])
