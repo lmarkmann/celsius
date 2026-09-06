@@ -36,7 +36,7 @@ fn scene_path(root: &Path, name: &str) -> PathBuf {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
-    format!("{:x}", h.finalize())
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Render a scene the way the oracle does and return its scene-TOML hash, the PNG bytes, and the PNG hash. The checker and the bless writer both go through here, so a locked manifest can never disagree with what the test verifies.
