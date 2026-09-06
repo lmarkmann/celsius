@@ -2,6 +2,13 @@
 
 All notable changes to celsius are recorded here. The format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-09-06
+
+
+### Ci
+
+- Size badge from the release asset, and let the release PR merge itself ([#94](https://github.com/lmarkmann/celsius/pull/94))
+
 ## [0.8.0] - 2026-09-06
 
 ### Breaking
